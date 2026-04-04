@@ -1,0 +1,1357 @@
+<%#
+  路由管家 - 网络管理控制面板
+  功能：设备列表、流量统计、WiFi管理
+  设计风格：深色科技风
+-%>
+
+<%+header%>
+
+<style>
+    /* 基础变量 */
+    :root {
+        --bg-primary: #0a1628;
+        --bg-secondary: #0d1b2a;
+        --bg-card: rgba(16, 33, 60, 0.6);
+        --border-color: rgba(100, 200, 255, 0.1);
+        --text-primary: #e8f4f8;
+        --text-secondary: #8b9dc3;
+        --accent-cyan: #00d4ff;
+        --accent-blue: #1e90ff;
+        --accent-green: #00e676;
+        --accent-orange: #ff9100;
+        --accent-red: #ff5252;
+        --gradient-cyan: linear-gradient(135deg, #00d4ff 0%, #0099cc 100%);
+        --gradient-blue: linear-gradient(135deg, #1e90ff 0%, #0066cc 100%);
+        --gradient-green: linear-gradient(135deg, #00e676 0%, #00c853 100%);
+        --gradient-orange: linear-gradient(135deg, #ff9100 0%, #ff6d00 100%);
+        --gradient-card-1: linear-gradient(135deg, rgba(0, 212, 255, 0.15) 0%, rgba(30, 144, 255, 0.08) 100%);
+        --gradient-card-2: linear-gradient(135deg, rgba(0, 230, 118, 0.15) 0%, rgba(0, 200, 83, 0.08) 100%);
+        --gradient-card-3: linear-gradient(135deg, rgba(255, 145, 0, 0.15) 0%, rgba(255, 109, 0, 0.08) 100%);
+        --shadow-glow: 0 0 20px rgba(0, 212, 255, 0.15);
+    }
+
+    .rm-container {
+        padding: 20px;
+        max-width: 1400px;
+        margin: 0 auto;
+        background: var(--bg-primary);
+        min-height: 600px;
+        border-radius: 16px;
+    }
+
+    /* 头部样式 */
+    .rm-header {
+        background: var(--gradient-card-1);
+        border: 1px solid var(--border-color);
+        border-radius: 16px;
+        padding: 24px 32px;
+        margin-bottom: 24px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        backdrop-filter: blur(10px);
+    }
+
+    .rm-header-left {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+    }
+
+    .rm-header-icon {
+        width: 48px;
+        height: 48px;
+        background: var(--gradient-cyan);
+        border-radius: 12px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 24px;
+        box-shadow: var(--shadow-glow);
+    }
+
+    .rm-header-title {
+        color: var(--text-primary);
+        font-size: 24px;
+        font-weight: 700;
+        margin: 0;
+        letter-spacing: 1px;
+    }
+
+    .rm-header-subtitle {
+        color: var(--text-secondary);
+        font-size: 13px;
+        margin-top: 4px;
+    }
+
+    .rm-header-status {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        gap: 8px;
+    }
+
+    .rm-status-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 16px;
+        background: rgba(0, 212, 255, 0.1);
+        border: 1px solid rgba(0, 212, 255, 0.3);
+        border-radius: 20px;
+        color: var(--accent-cyan);
+        font-size: 13px;
+        font-weight: 500;
+    }
+
+    .rm-status-badge::before {
+        content: '';
+        width: 8px;
+        height: 8px;
+        background: var(--accent-green);
+        border-radius: 50%;
+        animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.5; }
+    }
+
+    .rm-status-time {
+        color: var(--text-secondary);
+        font-size: 12px;
+    }
+
+    /* 标签页样式 */
+    .rm-tabs {
+        display: flex;
+        gap: 12px;
+        margin-bottom: 24px;
+        background: var(--bg-card);
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        padding: 6px;
+    }
+
+    .rm-tab {
+        flex: 1;
+        padding: 14px 24px;
+        border: none;
+        background: transparent;
+        color: var(--text-secondary);
+        font-size: 14px;
+        font-weight: 500;
+        cursor: pointer;
+        border-radius: 8px;
+        transition: all 0.3s ease;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+    }
+
+    .rm-tab:hover {
+        background: rgba(255, 255, 255, 0.05);
+        color: var(--text-primary);
+    }
+
+    .rm-tab.active {
+        background: var(--gradient-cyan);
+        color: #000;
+        font-weight: 600;
+        box-shadow: 0 4px 15px rgba(0, 212, 255, 0.3);
+    }
+
+    /* 统计卡片样式 */
+    .rm-stats {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 20px;
+        margin-bottom: 24px;
+    }
+
+    .rm-stat-card {
+        background: var(--bg-card);
+        border: 1px solid var(--border-color);
+        border-radius: 16px;
+        padding: 24px;
+        position: relative;
+        overflow: hidden;
+        backdrop-filter: blur(10px);
+        transition: transform 0.3s ease, box-shadow 0.3s ease;
+    }
+
+    .rm-stat-card:hover {
+        transform: translateY(-2px);
+        box-shadow: var(--shadow-glow);
+    }
+
+    .rm-stat-card::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 3px;
+    }
+
+    .rm-stat-card.cyan::before { background: var(--gradient-cyan); }
+    .rm-stat-card.green::before { background: var(--gradient-green); }
+    .rm-stat-card.orange::before { background: var(--gradient-orange); }
+
+    .rm-stat-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 16px;
+    }
+
+    .rm-stat-label {
+        color: var(--text-secondary);
+        font-size: 13px;
+        font-weight: 500;
+    }
+
+    .rm-stat-tag {
+        padding: 4px 10px;
+        border-radius: 12px;
+        font-size: 11px;
+        font-weight: 600;
+    }
+
+    .rm-stat-tag.cyan {
+        background: rgba(0, 212, 255, 0.15);
+        color: var(--accent-cyan);
+    }
+
+    .rm-stat-tag.green {
+        background: rgba(0, 230, 118, 0.15);
+        color: var(--accent-green);
+    }
+
+    .rm-stat-tag.orange {
+        background: rgba(255, 145, 0, 0.15);
+        color: var(--accent-orange);
+    }
+
+    .rm-stat-value {
+        font-size: 42px;
+        font-weight: 700;
+        color: var(--text-primary);
+        line-height: 1;
+        margin-bottom: 8px;
+    }
+
+    .rm-stat-value.cyan { color: var(--accent-cyan); }
+    .rm-stat-value.green { color: var(--accent-green); }
+    .rm-stat-value.orange { color: var(--accent-orange); }
+
+    .rm-stat-unit {
+        font-size: 16px;
+        font-weight: 400;
+        margin-left: 4px;
+    }
+
+    .rm-stat-desc {
+        color: var(--text-secondary);
+        font-size: 12px;
+    }
+
+    /* 内容卡片样式 */
+    .rm-card {
+        background: var(--bg-card);
+        border: 1px solid var(--border-color);
+        border-radius: 16px;
+        overflow: hidden;
+        backdrop-filter: blur(10px);
+    }
+
+    .rm-card-header {
+        padding: 20px 24px;
+        border-bottom: 1px solid var(--border-color);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .rm-card-title {
+        font-size: 16px;
+        font-weight: 600;
+        color: var(--text-primary);
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    .rm-card-title::before {
+        content: '';
+        width: 4px;
+        height: 20px;
+        background: var(--gradient-cyan);
+        border-radius: 2px;
+    }
+
+    .rm-card-body {
+        padding: 0;
+    }
+
+    /* 表格样式 */
+    .rm-table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+
+    .rm-table th {
+        padding: 16px 20px;
+        text-align: left;
+        color: var(--text-secondary);
+        font-size: 12px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        background: rgba(0, 0, 0, 0.2);
+        border-bottom: 1px solid var(--border-color);
+    }
+
+    .rm-table td {
+        padding: 16px 20px;
+        color: var(--text-primary);
+        font-size: 14px;
+        border-bottom: 1px solid var(--border-color);
+    }
+
+    .rm-table tr:last-child td {
+        border-bottom: none;
+    }
+
+    .rm-table tr:hover {
+        background: rgba(255, 255, 255, 0.02);
+    }
+
+    /* 设备名称 */
+    .rm-device-name {
+        font-weight: 600;
+        color: var(--text-primary);
+    }
+
+    .rm-device-ip {
+        color: var(--text-secondary);
+        font-size: 12px;
+        margin-top: 2px;
+    }
+
+    /* MAC地址 */
+    .rm-mac {
+        font-family: 'SF Mono', Monaco, monospace;
+        font-size: 13px;
+        color: var(--text-secondary);
+        background: rgba(0, 0, 0, 0.3);
+        padding: 4px 10px;
+        border-radius: 6px;
+    }
+
+    /* 状态标签 */
+    .rm-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 12px;
+        border-radius: 20px;
+        font-size: 12px;
+        font-weight: 500;
+    }
+
+    .rm-badge::before {
+        content: '';
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+    }
+
+    .rm-badge-wifi {
+        background: rgba(0, 212, 255, 0.15);
+        color: var(--accent-cyan);
+    }
+
+    .rm-badge-wifi::before {
+        background: var(--accent-cyan);
+        box-shadow: 0 0 8px var(--accent-cyan);
+    }
+
+    .rm-badge-wired {
+        background: rgba(0, 230, 118, 0.15);
+        color: var(--accent-green);
+    }
+
+    .rm-badge-wired::before {
+        background: var(--accent-green);
+        box-shadow: 0 0 8px var(--accent-green);
+    }
+
+    /* 流量样式 */
+    .rm-traffic-rx {
+        color: var(--accent-cyan);
+        font-weight: 600;
+    }
+
+    .rm-traffic-tx {
+        color: var(--accent-green);
+        font-weight: 600;
+    }
+
+    .rm-traffic-total {
+        color: var(--accent-orange);
+        font-weight: 700;
+    }
+
+    /* 踢出按钮 */
+    .rm-kick-btn {
+        padding: 8px 16px;
+        background: transparent;
+        border: 1px solid var(--accent-red);
+        color: var(--accent-red);
+        border-radius: 8px;
+        cursor: pointer;
+        font-size: 12px;
+        font-weight: 500;
+        transition: all 0.3s ease;
+    }
+
+    .rm-kick-btn:hover {
+        background: var(--accent-red);
+        color: #fff;
+        box-shadow: 0 0 15px rgba(255, 82, 82, 0.4);
+    }
+
+    /* WiFi信息网格 */
+    .rm-info-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 20px;
+        padding: 24px;
+    }
+
+    .rm-info-card {
+        background: var(--gradient-card-1);
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        padding: 24px;
+        text-align: center;
+        transition: transform 0.3s ease;
+    }
+
+    .rm-info-card:hover {
+        transform: translateY(-2px);
+    }
+
+    .rm-info-icon {
+        width: 48px;
+        height: 48px;
+        background: var(--gradient-cyan);
+        border-radius: 12px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 24px;
+        margin: 0 auto 16px;
+        box-shadow: var(--shadow-glow);
+    }
+
+    .rm-info-value {
+        font-size: 18px;
+        font-weight: 600;
+        color: var(--text-primary);
+        margin-bottom: 4px;
+    }
+
+    .rm-info-label {
+        font-size: 12px;
+        color: var(--text-secondary);
+    }
+
+    /* 加密标签 */
+    .rm-encryption {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 12px;
+        background: rgba(0, 230, 118, 0.15);
+        color: var(--accent-green);
+        border-radius: 20px;
+        font-size: 12px;
+        font-weight: 500;
+    }
+
+    .rm-wifi-selector {
+        display: flex;
+        gap: 8px;
+    }
+
+    .rm-wifi-btn {
+        padding: 6px 14px;
+        background: transparent;
+        border: 1px solid var(--border-color);
+        color: var(--text-secondary);
+        border-radius: 6px;
+        font-size: 12px;
+        cursor: pointer;
+        transition: all 0.3s ease;
+    }
+
+    .rm-wifi-btn:hover {
+        background: rgba(255, 255, 255, 0.05);
+        color: var(--text-primary);
+    }
+
+    .rm-wifi-btn.active {
+        background: var(--gradient-cyan);
+        border-color: transparent;
+        color: #000;
+        font-weight: 600;
+    }
+
+    /* 加载和空状态 */
+    .rm-loading {
+        text-align: center;
+        padding: 60px 20px;
+        color: var(--text-secondary);
+    }
+
+    .rm-loading-spinner {
+        width: 40px;
+        height: 40px;
+        border: 3px solid rgba(0, 212, 255, 0.2);
+        border-top-color: var(--accent-cyan);
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+        margin: 0 auto 16px;
+    }
+
+    @keyframes spin {
+        to { transform: rotate(360deg); }
+    }
+
+    .rm-empty {
+        text-align: center;
+        padding: 60px 20px;
+        color: var(--text-secondary);
+    }
+
+    .rm-empty-icon {
+        font-size: 48px;
+        margin-bottom: 16px;
+        opacity: 0.5;
+    }
+
+    /* 页脚 */
+    .rm-footer {
+        text-align: center;
+        padding: 24px;
+        color: var(--text-secondary);
+        font-size: 12px;
+        border-top: 1px solid var(--border-color);
+        margin-top: 40px;
+    }
+
+    /* 响应式 */
+    @media (max-width: 768px) {
+        .rm-stats {
+            grid-template-columns: 1fr;
+        }
+
+        .rm-info-grid {
+            grid-template-columns: 1fr;
+        }
+
+        .rm-tabs {
+            flex-direction: column;
+        }
+
+        .rm-header {
+            flex-direction: column;
+            gap: 16px;
+            text-align: center;
+        }
+
+        .rm-header-status {
+            align-items: center;
+        }
+
+        .rm-table {
+            font-size: 12px;
+        }
+
+        .rm-table th,
+        .rm-table td {
+            padding: 12px 10px;
+        }
+    }
+
+    /* 隐藏内容 */
+    .rm-tab-content {
+        display: none;
+    }
+
+    .rm-tab-content.active {
+        display: block;
+    }
+</style>
+
+<div class="rm-container">
+    <!-- 头部 -->
+    <div class="rm-header">
+        <div class="rm-header-left">
+            <div class="rm-header-icon">📶</div>
+            <div>
+                <h2 class="rm-header-title">路由管家</h2>
+                <div class="rm-header-subtitle">网络管理系统</div>
+            </div>
+        </div>
+        <div class="rm-header-status">
+            <div class="rm-status-badge">系统运行中</div>
+            <div class="rm-status-time" id="global-status">实时刷新中，更新：--:--:--</div>
+        </div>
+    </div>
+
+    <!-- 标签页 -->
+    <div class="rm-tabs">
+        <button class="rm-tab active" data-tab="devices">
+            <span>📱</span> 设备列表
+        </button>
+        <button class="rm-tab" data-tab="traffic">
+            <span>📊</span> 流量统计
+        </button>
+        <button class="rm-tab" data-tab="wifi">
+            <span>📶</span> WiFi管理
+        </button>
+    </div>
+
+    <!-- 设备列表 -->
+    <div id="tab-devices" class="rm-tab-content active">
+        <div class="rm-stats">
+            <div class="rm-stat-card cyan">
+                <div class="rm-stat-header">
+                    <span class="rm-stat-label">总设备数</span>
+                    <span class="rm-stat-tag cyan">在线</span>
+                </div>
+                <div class="rm-stat-value cyan" id="stat-total">0</div>
+                <div class="rm-stat-desc">当前连接的设备总数</div>
+            </div>
+            <div class="rm-stat-card green">
+                <div class="rm-stat-header">
+                    <span class="rm-stat-label">有线设备</span>
+                    <span class="rm-stat-tag green">稳定</span>
+                </div>
+                <div class="rm-stat-value green" id="stat-wired">0</div>
+                <div class="rm-stat-desc">通过网线连接的设备</div>
+            </div>
+            <div class="rm-stat-card orange">
+                <div class="rm-stat-header">
+                    <span class="rm-stat-label">无线设备</span>
+                    <span class="rm-stat-tag orange">WiFi</span>
+                </div>
+                <div class="rm-stat-value orange" id="stat-wifi">0</div>
+                <div class="rm-stat-desc">通过WiFi连接的设备</div>
+            </div>
+        </div>
+
+        <div class="rm-card">
+            <div class="rm-card-header">
+                <div class="rm-card-title">已连接设备</div>
+            </div>
+            <div class="rm-card-body">
+                <div id="devices-loading" class="rm-loading">
+                    <div class="rm-loading-spinner"></div>
+                    <p>正在加载设备数据...</p>
+                </div>
+                <div id="devices-empty" class="rm-empty" style="display:none;">
+                    <div class="rm-empty-icon">📡</div>
+                    <p>未找到连接设备</p>
+                </div>
+                <div id="devices-table" style="display:none;">
+                    <table class="rm-table">
+                        <thead>
+                            <tr>
+                                <th>设备信息</th>
+                                <th>MAC地址</th>
+                                <th>连接类型</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody id="devices-tbody"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 流量统计 -->
+    <div id="tab-traffic" class="rm-tab-content">
+        <div class="rm-stats">
+            <div class="rm-stat-card cyan">
+                <div class="rm-stat-header">
+                    <span class="rm-stat-label">总接收</span>
+                    <span class="rm-stat-tag cyan">RX</span>
+                </div>
+                <div class="rm-stat-value cyan" id="stat-total-rx">0<span class="rm-stat-unit">B</span></div>
+                <div class="rm-stat-desc">所有设备接收的数据总量</div>
+            </div>
+            <div class="rm-stat-card green">
+                <div class="rm-stat-header">
+                    <span class="rm-stat-label">总发送</span>
+                    <span class="rm-stat-tag green">TX</span>
+                </div>
+                <div class="rm-stat-value green" id="stat-total-tx">0<span class="rm-stat-unit">B</span></div>
+                <div class="rm-stat-desc">所有设备发送的数据总量</div>
+            </div>
+            <div class="rm-stat-card orange">
+                <div class="rm-stat-header">
+                    <span class="rm-stat-label">在线设备</span>
+                    <span class="rm-stat-tag orange">活跃</span>
+                </div>
+                <div class="rm-stat-value orange" id="stat-device-count">0</div>
+                <div class="rm-stat-desc">当前活跃的网络设备数</div>
+            </div>
+        </div>
+
+        <div class="rm-card">
+            <div class="rm-card-header">
+                <div class="rm-card-title">设备流量消耗排行</div>
+            </div>
+            <div class="rm-card-body">
+                <div id="traffic-loading" class="rm-loading">
+                    <div class="rm-loading-spinner"></div>
+                    <p>正在加载流量数据...</p>
+                </div>
+                <div id="traffic-empty" class="rm-empty" style="display:none;">
+                    <div class="rm-empty-icon">📊</div>
+                    <p>暂无流量统计数据</p>
+                </div>
+                <div id="traffic-table" style="display:none;">
+                    <table class="rm-table">
+                        <thead>
+                            <tr>
+                                <th>设备信息</th>
+                                <th>MAC地址</th>
+                                <th>接收 (RX)</th>
+                                <th>发送 (TX)</th>
+                                <th>总计</th>
+                            </tr>
+                        </thead>
+                        <tbody id="traffic-tbody"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- WiFi管理 -->
+    <div id="tab-wifi" class="rm-tab-content">
+        <div class="rm-stats">
+            <div class="rm-stat-card cyan">
+                <div class="rm-stat-header">
+                    <span class="rm-stat-label">WiFi网络</span>
+                    <span class="rm-stat-tag cyan">AP</span>
+                </div>
+                <div class="rm-stat-value cyan" id="stat-wifi-count">0</div>
+                <div class="rm-stat-desc">当前可用的WiFi接入点</div>
+            </div>
+            <div class="rm-stat-card green">
+                <div class="rm-stat-header">
+                    <span class="rm-stat-label">连接设备</span>
+                    <span class="rm-stat-tag green">STA</span>
+                </div>
+                <div class="rm-stat-value green" id="stat-wifi-devices">0</div>
+                <div class="rm-stat-desc">已连接的WiFi客户端</div>
+            </div>
+            <div class="rm-stat-card orange">
+                <div class="rm-stat-header">
+                    <span class="rm-stat-label">当前信道</span>
+                    <span class="rm-stat-tag orange">CH</span>
+                </div>
+                <div class="rm-stat-value orange" id="stat-channel">-</div>
+                <div class="rm-stat-desc">WiFi工作信道</div>
+            </div>
+        </div>
+
+        <div class="rm-card" style="margin-bottom: 20px;">
+            <div class="rm-card-header">
+                <div class="rm-card-title">WiFi状态概览</div>
+                <div class="rm-wifi-selector" id="wifi-selector"></div>
+            </div>
+            <div class="rm-info-grid" id="wifi-info-grid" style="display:none;">
+                <div class="rm-info-card">
+                    <div class="rm-info-icon">📡</div>
+                    <div class="rm-info-value" id="wifi-ssid">-</div>
+                    <div class="rm-info-label">网络名称 (SSID)</div>
+                </div>
+                <div class="rm-info-card">
+                    <div class="rm-info-icon">📶</div>
+                    <div class="rm-info-value" id="wifi-signal">-</div>
+                    <div class="rm-info-label">信号强度 (dBm)</div>
+                </div>
+                <div class="rm-info-card">
+                    <div class="rm-info-icon">🔒</div>
+                    <div class="rm-info-value" id="wifi-encryption">-</div>
+                    <div class="rm-info-label">加密方式</div>
+                </div>
+                <div class="rm-info-card">
+                    <div class="rm-info-icon">🔌</div>
+                    <div class="rm-info-value" id="wifi-status">-</div>
+                    <div class="rm-info-label">连接状态</div>
+                </div>
+                <div class="rm-info-card">
+                    <div class="rm-info-icon">🌐</div>
+                    <div class="rm-info-value" id="wifi-ip">-</div>
+                    <div class="rm-info-label">接口IP</div>
+                </div>
+                <div class="rm-info-card">
+                    <div class="rm-info-icon">📤</div>
+                    <div class="rm-info-value" id="wifi-tx">-</div>
+                    <div class="rm-info-label">发送速率</div>
+                </div>
+                <div class="rm-info-card">
+                    <div class="rm-info-icon">📥</div>
+                    <div class="rm-info-value" id="wifi-rx">-</div>
+                    <div class="rm-info-label">接收速率</div>
+                </div>
+                <div class="rm-info-card">
+                    <div class="rm-info-icon">📋</div>
+                    <div class="rm-info-value" id="wifi-mode">-</div>
+                    <div class="rm-info-label">工作模式</div>
+                </div>
+                <div class="rm-info-card">
+                    <div class="rm-info-icon">📺</div>
+                    <div class="rm-info-value" id="wifi-freq">-</div>
+                    <div class="rm-info-label">工作频率</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="rm-card">
+            <div class="rm-card-header">
+                <div class="rm-card-title">WiFi设备列表</div>
+            </div>
+            <div class="rm-card-body">
+                <div id="wifi-loading" class="rm-loading">
+                    <div class="rm-loading-spinner"></div>
+                    <p>正在加载WiFi信息...</p>
+                </div>
+                <div id="wifi-empty" class="rm-empty" style="display:none;">
+                    <div class="rm-empty-icon">📶</div>
+                    <p>未找到WiFi设备</p>
+                </div>
+                <div id="wifi-table" style="display:none;">
+                    <table class="rm-table">
+                        <thead>
+                            <tr>
+                                <th>接口</th>
+                                <th>SSID</th>
+                                <th>模式</th>
+                                <th>信道</th>
+                                <th>信号</th>
+                                <th>加密</th>
+                            </tr>
+                        </thead>
+                        <tbody id="wifi-tbody"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 页脚 -->
+    <div class="rm-footer" id="version-info">
+        路由管家 v1.0.0 | 作者：MH
+    </div>
+</div>
+
+<script>
+// 获取版本信息
+function loadVersion() {
+    XHR.get('<%=luci.dispatcher.build_url("admin/services/router_assistant/get_version")%>', null,
+        function(xhr) {
+            try {
+                var res = JSON.parse(xhr.responseText);
+                if (res.code === 0) {
+                    document.getElementById('version-info').innerHTML =
+                        '路由管家 v' + res.version + ' | 作者：' + res.author;
+                }
+            } catch (e) {}
+        }
+    );
+}
+
+function kickDevice(mac, device) {
+    if (!mac || mac === '') {
+        alert('MAC地址无效');
+        return;
+    }
+
+    if (!confirm('确定要踢出该设备 (' + escapeHtml(mac) + ') 吗？设备将断开网络连接。')) {
+        return;
+    }
+
+    var params = 'mac=' + encodeURIComponent(mac);
+    if (device) {
+        params += '&device=' + encodeURIComponent(device);
+    }
+
+    XHR.post('<%=luci.dispatcher.build_url("admin/services/router_assistant/kick_device")%>', params,
+        function(xhr) {
+            try {
+                var res = JSON.parse(xhr.responseText);
+                if (res.code === 0) {
+                    alert('设备已成功踢出');
+                    loadDevices();
+                } else {
+                    alert('踢出失败：' + escapeHtml(res.message || '未知错误'));
+                }
+            } catch (e) {
+                alert('操作失败，请稍后重试');
+            }
+        },
+        function(xhr) {
+            alert('网络错误，踢出失败，请检查网络连接');
+        }
+    );
+}
+
+function renderDevices(devices, checkOnly) {
+    var wired = 0, wifi = 0;
+    var html = '';
+
+    devices.forEach(function(dev) {
+        var isWifi = dev.is_wifi === true || (dev.device && dev.device.toLowerCase().includes('wlan'));
+        if (isWifi) wifi++;
+        else wired++;
+
+        var kickBtn = '<button class="rm-kick-btn" onclick="kickDevice(\'' + escapeHtml(dev.mac) + '\', \'' + escapeHtml(dev.device || '') + '\')">踢出</button>';
+
+        html += '<tr>' +
+            '<td>' +
+                '<div class="rm-device-name">' + escapeHtml(dev.hostname || '未知设备') + '</div>' +
+                '<div class="rm-device-ip">' + escapeHtml(dev.ip) + '</div>' +
+            '</td>' +
+            '<td><span class="rm-mac">' + escapeHtml(dev.mac) + '</span></td>' +
+            '<td><span class="rm-badge ' + (isWifi ? 'rm-badge-wifi' : 'rm-badge-wired') + '">' +
+            (isWifi ? 'WiFi' : '有线') + '</span></td>' +
+            '<td>' + kickBtn + '</td>' +
+            '</tr>';
+    });
+
+    document.getElementById('stat-total').textContent = devices.length;
+    document.getElementById('stat-wired').textContent = wired;
+    document.getElementById('stat-wifi').textContent = wifi;
+
+    if (checkOnly) {
+        var currentHtml = document.getElementById('devices-tbody').innerHTML;
+        if (currentHtml === html) {
+            return false;
+        }
+    }
+
+    document.getElementById('devices-tbody').innerHTML = html;
+    document.getElementById('devices-table').style.display = 'block';
+    return true;
+}
+
+function renderTraffic(devices, checkOnly) {
+    var totalRx = 0, totalTx = 0;
+    var html = '';
+
+    devices.forEach(function(dev) {
+        totalRx += dev.rx;
+        totalTx += dev.tx;
+
+        html += '<tr>' +
+            '<td>' +
+                '<div class="rm-device-name">' + escapeHtml(dev.hostname || '未知设备') + '</div>' +
+                '<div class="rm-device-ip">' + escapeHtml(dev.ip) + '</div>' +
+            '</td>' +
+            '<td><span class="rm-mac">' + escapeHtml(dev.mac) + '</span></td>' +
+            '<td class="rm-traffic-rx">↓ ' + escapeHtml(dev.rx_display) + '</td>' +
+            '<td class="rm-traffic-tx">↑ ' + escapeHtml(dev.tx_display) + '</td>' +
+            '<td class="rm-traffic-total">' + escapeHtml(dev.total_display) + '</td>' +
+            '</tr>';
+    });
+
+    document.getElementById('stat-total-rx').innerHTML = formatSize(totalRx) + '<span class="rm-stat-unit"></span>';
+    document.getElementById('stat-total-tx').innerHTML = formatSize(totalTx) + '<span class="rm-stat-unit"></span>';
+    document.getElementById('stat-device-count').textContent = devices.length;
+
+    if (checkOnly) {
+        var currentHtml = document.getElementById('traffic-tbody').innerHTML;
+        if (currentHtml === html) {
+            return false;
+        }
+    }
+
+    document.getElementById('traffic-tbody').innerHTML = html;
+    document.getElementById('traffic-table').style.display = 'block';
+    return true;
+}
+
+function renderWifi(wifiList, checkOnly) {
+    var html = '';
+
+    if (wifiList.length > 0) {
+        document.getElementById('wifi-ssid').textContent = wifiList[0].ssid || '-';
+        document.getElementById('wifi-signal').textContent = wifiList[0].signal || '-';
+        document.getElementById('wifi-encryption').textContent = wifiList[0].encryption || '-';
+        document.getElementById('stat-channel').textContent = wifiList[0].channel || '-';
+        document.getElementById('wifi-info-grid').style.display = 'grid';
+    }
+
+    wifiList.forEach(function(wifi) {
+        html += '<tr>' +
+            '<td><strong>' + escapeHtml(wifi.iface) + '</strong></td>' +
+            '<td>' + escapeHtml(wifi.ssid) + '</td>' +
+            '<td>' + escapeHtml(wifi.mode) + '</td>' +
+            '<td>' + escapeHtml(wifi.channel) + '</td>' +
+            '<td>' + escapeHtml(wifi.signal) + '</td>' +
+            '<td><span class="rm-encryption">' + escapeHtml(wifi.encryption) + '</span></td>' +
+            '</tr>';
+    });
+
+    document.getElementById('stat-wifi-count').textContent = wifiList.length;
+
+    if (checkOnly) {
+        var currentHtml = document.getElementById('wifi-tbody').innerHTML;
+        if (currentHtml === html) {
+            return false;
+        }
+    }
+
+    document.getElementById('wifi-tbody').innerHTML = html;
+    document.getElementById('wifi-table').style.display = 'block';
+    return true;
+}
+
+function escapeHtml(str) {
+    if (str === null || str === undefined) return '';
+    var div = document.createElement('div');
+    div.textContent = String(str);
+    return div.innerHTML;
+}
+
+function formatSize(bytes) {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+    return (bytes / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
+}
+
+var devicesTimer = null;
+var trafficTimer = null;
+var wifiTimer = null;
+var currentTab = 'devices';
+
+var refreshConfig = {
+    interval: 1000,
+    maxRetries: 3,
+    retryDelay: 2000,
+    staleThreshold: 5000
+};
+
+var requestCache = {
+    devices: { data: null, timestamp: 0 },
+    traffic: { data: null, timestamp: 0 },
+    wifi: { data: null, timestamp: 0 }
+};
+
+var pendingRequests = {
+    devices: false,
+    traffic: false,
+    wifi: false
+};
+
+function safeXHR(url, callback, errorCallback) {
+    var xhr = new XMLHttpRequest();
+    xhr.open('GET', url, true);
+    xhr.timeout = 5000;
+
+    xhr.onload = function() {
+        if (xhr.status >= 200 && xhr.status < 300) {
+            try {
+                callback(JSON.parse(xhr.responseText));
+            } catch (e) {
+                if (errorCallback) errorCallback('JSON解析失败');
+            }
+        } else {
+            if (errorCallback) errorCallback('请求失败: ' + xhr.status);
+        }
+    };
+
+    xhr.onerror = function() {
+        if (errorCallback) errorCallback('网络错误');
+    };
+
+    xhr.ontimeout = function() {
+        if (errorCallback) errorCallback('请求超时');
+    };
+
+    xhr.send();
+    return xhr;
+}
+
+function updateGlobalStatus(success) {
+    var now = new Date();
+    var timeStr = now.toTimeString().split(' ')[0];
+    var statusEl = document.getElementById('global-status');
+    if (statusEl) {
+        if (success === false) {
+            statusEl.textContent = '连接异常，正在重试...';
+            statusEl.style.color = 'var(--accent-red)';
+        } else {
+            statusEl.textContent = '实时刷新中，更新：' + timeStr;
+            statusEl.style.color = 'var(--text-secondary)';
+        }
+    }
+}
+
+function loadDevices(retryCount) {
+    if (pendingRequests.devices) return;
+    if (retryCount === undefined) retryCount = 0;
+
+    pendingRequests.devices = true;
+    var loading = document.getElementById('devices-loading');
+    var empty = document.getElementById('devices-empty');
+    var table = document.getElementById('devices-table');
+
+    if (retryCount === 0 && loading) {
+        loading.style.display = 'block';
+    }
+    if (empty) empty.style.display = 'none';
+    if (table && retryCount === 0) table.style.display = 'none';
+
+    safeXHR(
+        '<%=luci.dispatcher.build_url("admin/services/router_assistant/get_devices")%>',
+        function(res) {
+            pendingRequests.devices = false;
+            if (loading) loading.style.display = 'none';
+            if (res.code === 0 && res.devices && res.devices.length > 0) {
+                var changed = renderDevices(res.devices, true);
+                if (table) table.style.display = 'block';
+                updateGlobalStatus(true);
+            } else {
+                if (empty) empty.style.display = 'block';
+            }
+        },
+        function(error) {
+            pendingRequests.devices = false;
+            if (loading) loading.style.display = 'none';
+            updateGlobalStatus(false);
+            if (retryCount < refreshConfig.maxRetries) {
+                setTimeout(function() {
+                    loadDevices(retryCount + 1);
+                }, refreshConfig.retryDelay);
+            } else {
+                if (empty) {
+                    empty.style.display = 'block';
+                    empty.innerHTML = '<div class="rm-empty-icon">📡</div><p>连接失败，请检查网络</p>';
+                }
+            }
+        }
+    );
+}
+
+function loadTraffic(retryCount) {
+    if (pendingRequests.traffic) return;
+    if (retryCount === undefined) retryCount = 0;
+
+    pendingRequests.traffic = true;
+    var loading = document.getElementById('traffic-loading');
+    var empty = document.getElementById('traffic-empty');
+    var table = document.getElementById('traffic-table');
+
+    if (retryCount === 0 && loading) {
+        loading.style.display = 'block';
+    }
+    if (empty) empty.style.display = 'none';
+    if (table && retryCount === 0) table.style.display = 'none';
+
+    safeXHR(
+        '<%=luci.dispatcher.build_url("admin/services/router_assistant/get_traffic")%>',
+        function(res) {
+            pendingRequests.traffic = false;
+            if (loading) loading.style.display = 'none';
+            if (res.code === 0 && res.devices && res.devices.length > 0) {
+                var changed = renderTraffic(res.devices, true);
+                if (table) table.style.display = 'block';
+                updateGlobalStatus(true);
+            } else {
+                if (empty) empty.style.display = 'block';
+            }
+        },
+        function(error) {
+            pendingRequests.traffic = false;
+            if (loading) loading.style.display = 'none';
+            updateGlobalStatus(false);
+            if (retryCount < refreshConfig.maxRetries) {
+                setTimeout(function() {
+                    loadTraffic(retryCount + 1);
+                }, refreshConfig.retryDelay);
+            } else {
+                if (empty) {
+                    empty.style.display = 'block';
+                    empty.innerHTML = '<div class="rm-empty-icon">📊</div><p>连接失败，请检查网络</p>';
+                }
+            }
+        }
+    );
+}
+
+function loadWifi(retryCount) {
+    if (pendingRequests.wifi) return;
+    if (retryCount === undefined) retryCount = 0;
+
+    pendingRequests.wifi = true;
+    var loading = document.getElementById('wifi-loading');
+    var empty = document.getElementById('wifi-empty');
+    var table = document.getElementById('wifi-table');
+
+    if (retryCount === 0 && loading) {
+        loading.style.display = 'block';
+    }
+    if (empty) empty.style.display = 'none';
+    if (table && retryCount === 0) table.style.display = 'none';
+
+    safeXHR(
+        '<%=luci.dispatcher.build_url("admin/services/router_assistant/get_wifi")%>',
+        function(res) {
+            pendingRequests.wifi = false;
+            if (loading) loading.style.display = 'none';
+            if (res.code === 0) {
+                var changed = renderWifi(res.wifi, true);
+                if (table) table.style.display = 'block';
+                loadWifiStatus();
+                updateGlobalStatus(true);
+            } else {
+                if (empty) empty.style.display = 'block';
+            }
+        },
+        function(error) {
+            pendingRequests.wifi = false;
+            if (loading) loading.style.display = 'none';
+            updateGlobalStatus(false);
+            if (retryCount < refreshConfig.maxRetries) {
+                setTimeout(function() {
+                    loadWifi(retryCount + 1);
+                }, refreshConfig.retryDelay);
+            }
+        }
+    );
+}
+
+function loadWifiStatus() {
+    safeXHR(
+        '<%=luci.dispatcher.build_url("admin/services/router_assistant/get_wifi_status")%>',
+        function(res) {
+            if (res.code === 0 && res.wifi_status) {
+                renderWifiStatus(res.wifi_status);
+            }
+        },
+        function(error) {}
+    );
+}
+
+function renderWifiStatus(statusList) {
+    if (!statusList || statusList.length === 0) return;
+
+    var grid = document.getElementById('wifi-info-grid');
+    var selector = document.getElementById('wifi-selector');
+    if (grid) grid.style.display = 'grid';
+
+    if (selector) {
+        selector.innerHTML = '';
+        statusList.forEach(function(status, index) {
+            var btn = document.createElement('button');
+            btn.className = 'rm-wifi-btn' + (index === 0 ? ' active' : '');
+            btn.textContent = status.ssid && status.ssid !== 'N/A' ? status.ssid : status.iface;
+            btn.dataset.index = index;
+            btn.onclick = function() {
+                document.querySelectorAll('.rm-wifi-btn').forEach(function(b) { b.classList.remove('active'); });
+                btn.classList.add('active');
+                renderWifiStatusByIndex(statusList, index);
+            };
+            selector.appendChild(btn);
+        });
+    }
+
+    renderWifiStatusByIndex(statusList, 0);
+
+    var totalStations = 0;
+    statusList.forEach(function(status) {
+        if (status.connected_stations) {
+            totalStations += status.connected_stations.length;
+        }
+    });
+    var wifiDevicesEl = document.getElementById('stat-wifi-devices');
+    if (wifiDevicesEl) wifiDevicesEl.textContent = totalStations;
+
+    var totalWifi = statusList.length;
+    var wifiCountEl = document.getElementById('stat-wifi-count');
+    if (wifiCountEl) wifiCountEl.textContent = totalWifi;
+}
+
+function renderWifiStatusByIndex(statusList, index) {
+    if (!statusList || !statusList[index]) return;
+    var status = statusList[index];
+
+    document.getElementById('wifi-ssid').textContent = status.ssid || '-';
+    document.getElementById('wifi-signal').textContent = status.signal || '-';
+    document.getElementById('wifi-encryption').textContent = status.encryption || '-';
+    document.getElementById('wifi-status').textContent = status.status === 'connected' ? '已连接' : '未连接';
+    document.getElementById('wifi-status').style.color = status.status === 'connected' ? 'var(--accent-green)' : 'var(--accent-red)';
+    document.getElementById('wifi-ip').textContent = status.ip || '-';
+    document.getElementById('wifi-tx').textContent = status.tx_bitrate || '-';
+    document.getElementById('wifi-rx').textContent = status.rx_bitrate || '-';
+    document.getElementById('wifi-mode').textContent = status.mode || '-';
+    document.getElementById('wifi-freq').textContent = status.frequency || '-';
+
+    var channelEl = document.getElementById('stat-channel');
+    if (channelEl) channelEl.textContent = status.channel || '-';
+}
+
+function stopAllTimers() {
+    if (devicesTimer) { clearInterval(devicesTimer); devicesTimer = null; }
+    if (trafficTimer) { clearInterval(trafficTimer); trafficTimer = null; }
+    if (wifiTimer) { clearInterval(wifiTimer); wifiTimer = null; }
+}
+
+function startAllRefresh() {
+    stopAllTimers();
+    loadDevices();
+    loadTraffic();
+    loadWifi();
+    devicesTimer = setInterval(loadDevices, refreshConfig.interval);
+    trafficTimer = setInterval(loadTraffic, refreshConfig.interval);
+    wifiTimer = setInterval(loadWifi, refreshConfig.interval);
+}
+
+function startTabRefresh(tabName) {
+    currentTab = tabName;
+}
+
+document.querySelectorAll('.rm-tab').forEach(function(tab) {
+    tab.addEventListener('click', function() {
+        document.querySelectorAll('.rm-tab').forEach(function(t) { t.classList.remove('active'); });
+        document.querySelectorAll('.rm-tab-content').forEach(function(c) { c.classList.remove('active'); });
+
+        tab.classList.add('active');
+        var tabId = 'tab-' + tab.dataset.tab;
+        document.getElementById(tabId).classList.add('active');
+
+        startTabRefresh(tab.dataset.tab);
+    });
+});
+
+document.addEventListener('DOMContentLoaded', function() {
+    loadVersion();
+    startAllRefresh();
+});
+</script>
+
+<%+footer%>

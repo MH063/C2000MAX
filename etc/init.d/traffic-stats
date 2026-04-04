@@ -1,0 +1,172 @@
+#!/bin/sh
+# 流量统计初始化脚本
+# 用于 OpenWrt 路由器启动时恢复 ipset 和 iptables 规则
+
+LOGGER="logger -t traffic-stats"
+IPSET_RX="traffic_stats_rx"
+IPSET_TX="traffic_stats_tx"
+CHAIN_RX="TRAFFIC_STATS_RX"
+CHAIN_TX="TRAFFIC_STATS_TX"
+DATA_DIR="/tmp/traffic_stats"
+STATS_FILE="${DATA_DIR}/device_stats.json"
+
+log() {
+    ${LOGGER} "$1"
+}
+
+check_ipset() {
+    command -v ipset >/dev/null 2>&1
+}
+
+init_ipset() {
+    log "Initializing ipset..."
+
+    ipset create ${IPSET_RX} hash:mac counters 2>/dev/null
+    ipset create ${IPSET_TX} hash:mac counters 2>/dev/null
+
+    local existing_rx=$(ipset list ${IPSET_RX} 2>/dev/null | grep -c "^[0-9a-fA-F][0-9a-fA-F]:")
+    local existing_tx=$(ipset list ${IPSET_TX} 2>/dev/null | grep -c "^[0-9a-fA-F][0-9a-fA-F]:")
+
+    log "ipset ${IPSET_RX}: ${existing_rx} entries, ${IPSET_TX}: ${existing_tx} entries"
+}
+
+init_iptables() {
+    log "Initializing iptables rules..."
+
+    iptables -t mangle -N ${CHAIN_RX} 2>/dev/null
+    iptables -t mangle -F ${CHAIN_RX}
+    iptables -t mangle -A ${CHAIN_RX} -j RETURN
+    iptables -t mangle -D FORWARD -j ${CHAIN_RX} 2>/dev/null
+    iptables -t mangle -I FORWARD -j ${CHAIN_RX}
+
+    iptables -t mangle -N ${CHAIN_TX} 2>/dev/null
+    iptables -t mangle -F ${CHAIN_TX}
+    iptables -t mangle -A ${CHAIN_TX} -j RETURN
+    iptables -t mangle -D FORWARD -j ${CHAIN_TX} 2>/dev/null
+    iptables -t mangle -I FORWARD -j ${CHAIN_TX}
+
+    log "iptables rules initialized"
+}
+
+restore_devices() {
+    local lease_file="/tmp/dhcp.leases"
+    local count=0
+
+    if [ -f "${lease_file}" ]; then
+        while read -r line; do
+            mac=$(echo "${line}" | awk '{print $2}' | tr '[:lower:]' '[:upper:]')
+            if [ -n "${mac}" ] && [ "${mac}" != "MAC" ] && [ "${mac}" != "00:00:00:00:00:00" ]; then
+                ipset -q add ${IPSET_RX} ${mac}
+                ipset -q add ${IPSET_TX} ${mac}
+                count=$((count + 1))
+            fi
+        done < "${lease_file}"
+    fi
+
+    log "Restored ${count} devices from dhcp.leases"
+}
+
+restore_from_stats() {
+    if [ ! -f "${STATS_FILE}" ]; then
+        log "No stats file found, skipping restore"
+        return
+    fi
+
+    local count=0
+    local macs=$(grep -oE '([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}' "${STATS_FILE}" 2>/dev/null | sort -u)
+    for mac in ${macs}; do
+        local upper_mac=$(echo "${mac}" | tr '[:lower:]' '[:upper:]')
+        ipset -q add ${IPSET_RX} ${upper_mac}
+        ipset -q add ${IPSET_TX} ${upper_mac}
+        count=$((count + 1))
+    done
+
+    log "Restored ${count} devices from previous stats"
+}
+
+start() {
+    if ! check_ipset; then
+        log "ipset not found, skipping..."
+        return 1
+    fi
+
+    log "Starting traffic statistics service..."
+
+    init_ipset
+    init_iptables
+    restore_devices
+    restore_from_stats
+
+    log "Traffic statistics service started"
+}
+
+stop() {
+    log "Stopping traffic statistics service..."
+
+    iptables -t mangle -D FORWARD -j ${CHAIN_RX} 2>/dev/null
+    iptables -t mangle -D FORWARD -j ${CHAIN_TX} 2>/dev/null
+    iptables -t mangle -F ${CHAIN_RX} 2>/dev/null
+    iptables -t mangle -F ${CHAIN_TX} 2>/dev/null
+    iptables -t mangle -X ${CHAIN_RX} 2>/dev/null
+    iptables -t mangle -X ${CHAIN_TX} 2>/dev/null
+
+    log "Traffic statistics service stopped"
+}
+
+reload() {
+    restore_devices
+    restore_from_stats
+}
+
+status() {
+    echo "=== Traffic Stats Status ==="
+    echo ""
+    echo "ipset ${IPSET_RX} entries:"
+    ipset list ${IPSET_RX} 2>/dev/null | head -20
+    echo ""
+    echo "ipset ${IPSET_TX} entries:"
+    ipset list ${IPSET_TX} 2>/dev/null | head -20
+    echo ""
+    echo "iptables mangle rules:"
+    iptables -t mangle -L ${CHAIN_RX} -n 2>/dev/null
+    iptables -t mangle -L ${CHAIN_TX} -n 2>/dev/null
+}
+
+enable() {
+    mkdir -p /etc/rc.d
+    ln -sf ../init.d/traffic-stats /etc/rc.d/S95traffic-stats
+}
+
+disable() {
+    rm -f /etc/rc.d/S95traffic-stats
+}
+
+case "$1" in
+    start)
+        start
+        ;;
+    stop)
+        stop
+        ;;
+    restart)
+        stop
+        sleep 1
+        start
+        ;;
+    reload)
+        reload
+        ;;
+    status)
+        status
+        ;;
+    enable)
+        enable
+        ;;
+    disable)
+        disable
+        ;;
+    *)
+        echo "Usage: $0 {start|stop|restart|reload|status|enable|disable}"
+        exit 1
+        ;;
+esac

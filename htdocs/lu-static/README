@@ -1,0 +1,3 @@
+# Static web resources for luci-app-router-assistant
+# Place CSS, JS, images etc. here
+# These will be served under /lu-static/

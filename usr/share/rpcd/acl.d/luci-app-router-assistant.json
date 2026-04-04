@@ -1,0 +1,33 @@
+{
+        "luci-app-router-assistant": {
+                "description": "RouterAssistant - Network Management",
+                "read": {
+                        "uci": [ "*" ],
+                        "file": {
+                                "/proc/net/arp": [ "read" ],
+                                "/etc/hosts": [ "read" ],
+                                "/etc/ethers": [ "read" ],
+                                "/tmp/dhcp.leases": [ "read" ],
+                                "/usr/share/router-assistant/version.json": [ "read" ]
+                        },
+                        "exec": {
+                                "/usr/bin/iw": [ "exec" ],
+                                "/usr/sbin/nmblookup": [ "exec" ],
+                                "/usr/sbin/iptables": [ "exec" ],
+                                "/usr/bin/curl": [ "exec" ],
+                                "/usr/lib/traffic_stats/collect.lua": [ "exec" ],
+                                "/usr/lib/traffic_stats/store.lua": [ "exec" ]
+                        }
+                },
+                "write": {
+                        "uci": [ "*" ],
+                        "file": {
+                                "/etc/config/*": [ "write" ]
+                        },
+                        "exec": {
+                                "/usr/sbin/iptables": [ "exec" ],
+                                "/etc/init.d/traffic-stats": [ "exec" ]
+                        }
+                }
+        }
+}

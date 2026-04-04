@@ -1,0 +1,12 @@
+{
+	"admin/services/router_assistant": {
+		"title": "RouterAssistant",
+		"action": {
+			"type": "view",
+			"path": "router_assistant/panel"
+		},
+		"depends": {
+			"acl": "luci-app-router-assistant"
+		}
+	}
+}
