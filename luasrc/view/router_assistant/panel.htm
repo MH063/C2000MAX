@@ -870,7 +870,7 @@
 <script>
 // 获取版本信息
 function loadVersion() {
-    XHR.get('<%=luci.dispatcher.build_url("admin/services/router_assistant/get_version")%>', null,
+    XHR.get('<%=luci.dispatcher.build_url("admin/status/router_assistant/get_version")%>', null,
         function(xhr) {
             try {
                 var res = JSON.parse(xhr.responseText);
@@ -898,7 +898,7 @@ function kickDevice(mac, device) {
         params += '&device=' + encodeURIComponent(device);
     }
 
-    XHR.post('<%=luci.dispatcher.build_url("admin/services/router_assistant/kick_device")%>', params,
+    XHR.post('<%=luci.dispatcher.build_url("admin/status/router_assistant/kick_device")%>', params,
         function(xhr) {
             try {
                 var res = JSON.parse(xhr.responseText);
@@ -1127,7 +1127,7 @@ function loadDevices(retryCount) {
     if (table && retryCount === 0) table.style.display = 'none';
 
     safeXHR(
-        '<%=luci.dispatcher.build_url("admin/services/router_assistant/get_devices")%>',
+        '<%=luci.dispatcher.build_url("admin/status/router_assistant/get_devices")%>',
         function(res) {
             pendingRequests.devices = false;
             if (loading) loading.style.display = 'none';
@@ -1173,7 +1173,7 @@ function loadTraffic(retryCount) {
     if (table && retryCount === 0) table.style.display = 'none';
 
     safeXHR(
-        '<%=luci.dispatcher.build_url("admin/services/router_assistant/get_traffic")%>',
+        '<%=luci.dispatcher.build_url("admin/status/router_assistant/get_traffic")%>',
         function(res) {
             pendingRequests.traffic = false;
             if (loading) loading.style.display = 'none';
@@ -1219,7 +1219,7 @@ function loadWifi(retryCount) {
     if (table && retryCount === 0) table.style.display = 'none';
 
     safeXHR(
-        '<%=luci.dispatcher.build_url("admin/services/router_assistant/get_wifi")%>',
+        '<%=luci.dispatcher.build_url("admin/status/router_assistant/get_wifi")%>',
         function(res) {
             pendingRequests.wifi = false;
             if (loading) loading.style.display = 'none';
@@ -1247,7 +1247,7 @@ function loadWifi(retryCount) {
 
 function loadWifiStatus() {
     safeXHR(
-        '<%=luci.dispatcher.build_url("admin/services/router_assistant/get_wifi_status")%>',
+        '<%=luci.dispatcher.build_url("admin/status/router_assistant/get_wifi_status")%>',
         function(res) {
             if (res.code === 0 && res.wifi_status) {
                 renderWifiStatus(res.wifi_status);
