@@ -1,16 +1,15 @@
 module("luci.controller.router_assistant", package.seeall)
 
 function index()
-    entry({"admin", "services", "router_assistant"}, alias("admin", "services", "router_assistant", "panel"), _("RouterAssistant"), 50, true).index = true
-    entry({"admin", "services", "router_assistant", "panel"}, template("router_assistant/panel"), nil, nil, true).leaf = true
-    entry({"admin", "services", "router_assistant", "get_devices"}, call("api_get_devices"), nil, nil, true).leaf = true
-    entry({"admin", "services", "router_assistant", "get_traffic"}, call("api_get_traffic"), nil, nil, true).leaf = true
-    entry({"admin", "services", "router_assistant", "get_wifi"}, call("api_get_wifi"), nil, nil, true).leaf = true
-    entry({"admin", "services", "router_assistant", "get_wifi_status"}, call("api_get_wifi_status"), nil, nil, true).leaf = true
-    entry({"admin", "services", "router_assistant", "get_version"}, call("api_get_version"), nil, nil, true).leaf = true
-    entry({"admin", "services", "router_assistant", "kick_device"}, post("api_kick_device"), nil, nil, true).leaf = true
-    entry({"admin", "services", "router_assistant", "enable_device"}, post("api_enable_device"), nil, nil, true).leaf = true
-    entry({"admin", "services", "router_assistant", "get_blocked"}, call("api_get_blocked_devices"), nil, nil, true).leaf = true
+    entry({"admin", "status", "router_assistant"}, template("router_assistant/panel"), "路由助手", 50).dependent = true
+    entry({"admin", "status", "router_assistant", "get_devices"}, call("api_get_devices")).leaf = true
+    entry({"admin", "status", "router_assistant", "get_traffic"}, call("api_get_traffic")).leaf = true
+    entry({"admin", "status", "router_assistant", "get_wifi"}, call("api_get_wifi")).leaf = true
+    entry({"admin", "status", "router_assistant", "get_wifi_status"}, call("api_get_wifi_status")).leaf = true
+    entry({"admin", "status", "router_assistant", "get_version"}, call("api_get_version")).leaf = true
+    entry({"admin", "status", "router_assistant", "kick_device"}, post("api_kick_device")).leaf = true
+    entry({"admin", "status", "router_assistant", "enable_device"}, post("api_enable_device")).leaf = true
+    entry({"admin", "status", "router_assistant", "get_blocked"}, call("api_get_blocked_devices")).leaf = true
 end
 
 function api_get_devices()
@@ -98,125 +97,34 @@ function api_get_traffic()
 
     local ok, err = pcall(function()
         local util = require("luci.util")
+        local json = require("luci.jsonc")
 
-        local history_dir = nil
-        local history_file = nil
-
-        local tf_cache_file = "/tmp/.tf_card_cache"
-        local cache_fd = io.open(tf_cache_file, "r")
-        if cache_fd then
-            local cached_base = cache_fd:read("*line")
-            cache_fd:close()
-            if cached_base and cached_base ~= "" and cached_base ~= "/tmp/traffic_history_tmp" then
-                local test_fd = io.open(cached_base .. "/.write_test", "w")
-                if test_fd then
-                    test_fd:close()
-                    os.execute("rm -f " .. cached_base .. "/.write_test 2>/dev/null")
-                    history_dir = cached_base .. "/traffic_history"
-                    history_file = history_dir .. "/devices.json"
-                    os.execute("echo 'Using cached TF path: " .. history_dir .. "' >> /tmp/traffic_debug.log")
-                else
-                    os.execute("echo 'Cached TF path not writable, rechecking: " .. cached_base .. "' >> /tmp/traffic_debug.log")
-                    os.execute("rm -f " .. tf_cache_file .. " 2>/dev/null")
-                    cached_base = nil
-                end
-            else
-                if cached_base then
-                    os.execute("echo 'Cached memory path, skipping cache: " .. cached_base .. "' >> /tmp/traffic_debug.log")
-                end
-                os.execute("rm -f " .. tf_cache_file .. " 2>/dev/null")
-                cached_base = nil
-            end
+        local history_file = "/mnt/sdcard/traffic_stats.json"
+        if not util.exec("test -d /mnt/sdcard && echo 'exists'") then
+            history_file = "/tmp/traffic_stats.json"
         end
-
-        if not history_dir then
-            local tf_dev = "/dev/mmcblk0"
-            local dev_check = io.open(tf_dev, "r")
-            if dev_check then
-                dev_check:close()
-                local mount_output = util.exec("cat /proc/mounts | grep mmcblk0")
-                if mount_output and mount_output ~= "" then
-                    local mount_path = mount_output:match("/([%w_]+/mmcblk0p1)%s+f2fs")
-                    if mount_path then
-                        mount_path = "/" .. mount_path
-                    else
-                        mount_path = mount_output:match("(/tmp/storage/mmcblk0p1)")
-                    end
-                    if not mount_path then
-                        mount_path = mount_output:match("(/mnt/mmcblk0p1)")
-                    end
-                    if not mount_path then
-                        mount_path = mount_output:match("(/tmp/mnt/mmcblk0p1)")
-                    end
-
-                    if mount_path then
-                        local test_fd = io.open(mount_path .. "/.write_test", "w")
-                        if test_fd then
-                            test_fd:close()
-                            os.execute("rm -f " .. mount_path .. "/.write_test 2>/dev/null")
-                            history_dir = mount_path .. "/traffic_history"
-                            history_file = history_dir .. "/devices.json"
-                            os.execute("echo 'New TF path detected: " .. history_dir .. "' >> /tmp/traffic_debug.log")
-                            local cache_out = io.open(tf_cache_file, "w")
-                            if cache_out then
-                                cache_out:write(mount_path)
-                                cache_out:close()
-                                os.execute("echo 'TF cache updated: " .. mount_path .. "' >> /tmp/traffic_debug.log")
-                            else
-                                os.execute("echo 'Failed to update TF cache' >> /tmp/traffic_debug.log")
-                            end
-                        else
-                            os.execute("echo 'TF path not writable: " .. mount_path .. "' >> /tmp/traffic_debug.log")
-                        end
-                    else
-                        os.execute("echo 'TF card mounted but path not matched' >> /tmp/traffic_debug.log")
-                    end
-                else
-                    os.execute("echo 'TF card device exists but not mounted' >> /tmp/traffic_debug.log")
-                end
-            else
-                os.execute("echo 'TF card not detected' >> /tmp/traffic_debug.log")
-            end
-        end
-
-        if not history_dir then
-            history_dir = "/tmp/traffic_history_tmp"
-            history_file = history_dir .. "/devices.json"
-            os.execute("echo 'Using temp memory storage' >> /tmp/traffic_debug.log")
-        end
-
-        os.execute("mkdir -p " .. history_dir .. " 2>/dev/null")
 
         local history = {}
         local history_fd = io.open(history_file, "r")
         if history_fd then
-            local content = history_fd:read("*a")
+            local content = history_fd:read("*all")
             history_fd:close()
             if content and content ~= "" then
-                local json = require("luci.jsonc")
-                local parse_ok, data = pcall(json.parse, content)
-                if parse_ok and type(data) == "table" then
-                    history = data
-                    local hist_count = 0
-                    for _ in pairs(history) do hist_count = hist_count + 1 end
-                    os.execute("echo 'Loaded history: " .. tostring(hist_count) .. " devices' >> /tmp/traffic_debug.log")
+                local parse_ok, parsed = pcall(json.parse, content)
+                if parse_ok and parsed then
+                    history = parsed
                 end
             end
-        else
-            os.execute("echo 'No history file, starting fresh' >> /tmp/traffic_debug.log")
         end
+
+        local current_traffic = {}
+        local devices_list = {}
+        local device_count = 0
 
         local cmd = "ubus call infocd terminal 2>/dev/null"
         local output = util.exec(cmd)
 
-        os.execute("echo 'ubus output length: " .. tostring(#output) .. "' >> /tmp/traffic_debug.log")
-
-        local devices_list = {}
-        local current_traffic = {}
-        local device_count = 0
-
         if output and output ~= "" then
-            local json = require("luci.jsonc")
             local parse_ok, data = pcall(json.parse, output)
             if parse_ok and data and data.client then
                 for mac, client in pairs(data.client) do
@@ -321,7 +229,6 @@ function api_get_traffic()
             end
         end
 
-        local json = require("luci.jsonc")
         local json_str = "{}"
         local serialize_ok, serialize_err = pcall(json.stringify, current_traffic)
         if serialize_ok then
@@ -581,11 +488,11 @@ function api_kick_device()
 
         os.execute("ubus call infocdp trigger \"{'sync':1}\" >/dev/null")
 
-        local message = "设备已踢出"
+        local message = "设备已断开"
         if kicked and blocked then
             message = "设备已强制断开并加入黑名单"
         elseif kicked then
-            message = "设备已强制断开（黑名单可能失败）"
+            message = "设备已强制断开"
         elseif blocked then
             message = "设备已加入黑名单"
         end
@@ -635,7 +542,7 @@ function api_enable_device()
 
         os.execute("ubus call infocdp trigger \"{'sync':1}\" >/dev/null")
 
-        response_data.message = "设备已解禁"
+        response_data.message = "设备已解除限制"
         response_data.mac = mac_colon
         response_data.success = true
     end)
@@ -704,8 +611,7 @@ function api_get_blocked_devices()
 end
 
 function format_bytes(bytes)
-    -- 安全处理：确保 bytes 是有效数字
-    if not bytes or type(bytes) ~= "number" or bytes ~= bytes then -- bytes ~= bytes 是 NaN 检查
+    if not bytes or type(bytes) ~= "number" or bytes ~= bytes then
         return "0 B"
     end
     if bytes < 0 then

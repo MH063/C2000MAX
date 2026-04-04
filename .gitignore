@@ -7,6 +7,7 @@ Desktop.ini
 *.tmp
 *.temp
 *.log
+1.txt
 
 # IDE 和编辑器
 .idea/
@@ -17,6 +18,16 @@ Desktop.ini
 # 构建输出
 *.pyc
 __pycache__/
+
+# 固件相关文件（不提交）
+*.bin
+*.bin.extracted/
+
+# IPK包文件（不提交）
+*.ipk
+
+# 测试文件夹
+测试文件/
 
 # 上级目录文件（排除）
 ../*

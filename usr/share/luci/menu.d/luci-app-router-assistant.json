@@ -1,12 +1,13 @@
 {
-	"admin/services/router_assistant": {
-		"title": "RouterAssistant",
+	"admin/status/router_assistant": {
+		"title": "路由助手",
+		"order": 50,
 		"action": {
 			"type": "view",
 			"path": "router_assistant/panel"
 		},
 		"depends": {
-			"acl": "luci-app-router-assistant"
+			"acl": ["luci-app-router-assistant"]
 		}
 	}
 }
