@@ -467,6 +467,8 @@ function api_get_traffic()
                         total_tx = total_tx + device_total_tx
                         online_count = online_count + 1
 
+                        local is_wifi = is_wifi_device(client)
+
                         table.insert(online_devices, {
                             mac = device_id,
                             hostname = hostname,
@@ -478,7 +480,9 @@ function api_get_traffic()
                             tx_display = format_bytes(device_total_tx),
                             total_display = format_bytes(device_total),
                             online = true,
-                            first_seen = hist.first_seen or current_time
+                            first_seen = hist.first_seen or current_time,
+                            is_wifi = is_wifi,
+                            ifname = ifname
                         })
                         current_traffic[device_id] = {
                             tx = device_total_tx,

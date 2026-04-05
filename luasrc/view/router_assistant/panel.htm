@@ -23,6 +23,31 @@
         --shadow-glow: 0 0 20px rgba(0, 212, 255, 0.15);
     }
 
+    .rm-icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 24px;
+        height: 24px;
+        position: relative;
+        vertical-align: middle;
+    }
+
+    .rm-icon svg {
+        width: 100%;
+        height: 100%;
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 2;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+    }
+
+    .rm-icon-filled svg {
+        fill: currentColor;
+        stroke: none;
+    }
+
     .rm-container {
         padding: 20px;
         max-width: 1400px;
@@ -58,7 +83,7 @@
         display: flex;
         align-items: center;
         justify-content: center;
-        font-size: 24px;
+        color: #000;
         box-shadow: var(--shadow-glow);
     }
 
@@ -150,22 +175,6 @@
 
     .rm-storage-status.memory .rm-storage-text {
         color: var(--accent-orange);
-    }
-
-    .rm-storage-btn {
-        background: rgba(255, 255, 255, 0.1);
-        border: 1px solid rgba(255, 255, 255, 0.2);
-        border-radius: 4px;
-        padding: 2px 6px;
-        margin-left: 8px;
-        cursor: pointer;
-        font-size: 12px;
-        transition: all 0.2s ease;
-    }
-
-    .rm-storage-btn:hover {
-        background: rgba(255, 255, 255, 0.2);
-        border-color: rgba(255, 255, 255, 0.3);
     }
 
     .rm-toast-container {
@@ -560,7 +569,7 @@
         display: flex;
         align-items: center;
         justify-content: center;
-        font-size: 24px;
+        color: #000;
         margin: 0 auto 16px;
         box-shadow: var(--shadow-glow);
     }
@@ -764,9 +773,17 @@
         cursor: pointer;
         padding: 0;
         line-height: 1;
+        width: 32px;
+        height: 32px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 8px;
+        transition: all 0.2s;
     }
 
     .rm-modal-close:hover {
+        background: rgba(255, 255, 255, 0.1);
         color: var(--text-primary);
     }
 
@@ -1054,7 +1071,13 @@
         <div class="rm-modal">
             <div class="rm-modal-header">
                 <div class="rm-modal-title">编辑设备备注</div>
-                <button class="rm-modal-close" onclick="closeNoteModal()">✕</button>
+                <button class="rm-modal-close" onclick="closeNoteModal()">
+                    <!-- 关闭图标 - 更专业的设计 -->
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                        <line x1="18" y1="6" x2="6" y2="18"/>
+                        <line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                </button>
             </div>
             <div class="rm-modal-body">
                 <div class="rm-form-group">
@@ -1082,7 +1105,13 @@
         <div class="rm-modal">
             <div class="rm-modal-header">
                 <div class="rm-modal-title">流量报警设置</div>
-                <button class="rm-modal-close" onclick="closeAlertModal()">✕</button>
+                <button class="rm-modal-close" onclick="closeAlertModal()">
+                    <!-- 关闭图标 - 更专业的设计 -->
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                        <line x1="18" y1="6" x2="6" y2="18"/>
+                        <line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                </button>
             </div>
             <div class="rm-modal-body">
                 <div class="rm-form-group">
@@ -1120,7 +1149,18 @@
 
     <div class="rm-header">
         <div class="rm-header-left">
-            <div class="rm-header-icon">🌐</div>
+            <div class="rm-header-icon">
+                <!-- 路由器图标 - 更专业的设计 -->
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="2" y="8" width="20" height="10" rx="2.5" ry="2.5"/>
+                    <circle cx="6" cy="13" r="1.5" fill="currentColor" stroke="none"/>
+                    <circle cx="10" cy="13" r="1.5" fill="currentColor" stroke="none"/>
+                    <circle cx="14" cy="13" r="1.5" fill="currentColor" stroke="none"/>
+                    <path d="M18 13h2" stroke-width="2"/>
+                    <path d="M12 8V5" stroke-width="2"/>
+                    <path d="M8 5a4 4 0 0 1 8 0" stroke-width="1.5"/>
+                </svg>
+            </div>
             <div>
                 <h2 class="rm-header-title">路由管家</h2>
                 <div class="rm-header-subtitle">网络管理系统</div>
@@ -1130,7 +1170,15 @@
             <div class="rm-status-badge">系统运行中</div>
             <div class="rm-status-time" id="global-status">实时刷新中，更新：--:--:--</div>
             <div class="rm-storage-status" id="storage-status" style="display:none;">
-                <span class="rm-storage-icon" id="storage-icon">💾</span>
+                <span class="rm-storage-icon" id="storage-icon">
+                    <!-- 存储图标 - 更专业的设计 -->
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>
+                        <path d="M12 12h.01"/>
+                        <path d="M8 12h.01"/>
+                        <path d="M16 12h.01"/>
+                    </svg>
+                </span>
                 <span class="rm-storage-text" id="storage-text">存储检测中...</span>
             </div>
         </div>
@@ -1138,13 +1186,33 @@
 
     <div class="rm-tabs">
         <button class="rm-tab active" data-tab="devices">
-            <span>📱</span> 设备列表
+            <!-- 设备列表图标 - 更专业的设计 -->
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="margin-right:6px;">
+                <rect x="4" y="4" width="7" height="7" rx="1.5"/>
+                <rect x="13" y="4" width="7" height="7" rx="1.5"/>
+                <rect x="4" y="13" width="7" height="7" rx="1.5"/>
+                <rect x="13" y="13" width="7" height="7" rx="1.5"/>
+            </svg>
+            设备列表
         </button>
         <button class="rm-tab" data-tab="traffic">
-            <span>📊</span> 流量统计
+            <!-- 流量统计图标 - 更专业的设计 -->
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="margin-right:6px;">
+                <path d="M3 3v18h18"/>
+                <path d="M7 16l4-4 3 3 5-5"/>
+                <circle cx="19" cy="10" r="1.5" fill="currentColor" stroke="none"/>
+            </svg>
+            流量统计
         </button>
         <button class="rm-tab" data-tab="wifi">
-            <span>📡</span> WiFi管理
+            <!-- WiFi图标 - 更专业的设计 -->
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="margin-right:6px;">
+                <path d="M5 12.55a11 11 0 0 1 14.08 0" stroke-width="1.5"/>
+                <path d="M1.42 9a16 16 0 0 1 21.16 0" stroke-width="1.5"/>
+                <path d="M8.53 16.11a6 6 0 0 1 6.95 0" stroke-width="1.5"/>
+                <circle cx="12" cy="20" r="1.5" fill="currentColor" stroke="none"/>
+            </svg>
+            WiFi管理
         </button>
     </div>
 
@@ -1186,7 +1254,17 @@
                     <p>正在加载设备数据...</p>
                 </div>
                 <div id="devices-empty" class="rm-empty" style="display:none;">
-                    <div class="rm-empty-icon">📭</div>
+                    <div class="rm-empty-icon">
+                        <!-- 空状态设备图标 - 更专业的设计 -->
+                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                            <rect x="3" y="6" width="18" height="12" rx="2"/>
+                            <circle cx="7" cy="12" r="1.5" fill="currentColor" stroke="none"/>
+                            <circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/>
+                            <circle cx="17" cy="12" r="1.5" fill="currentColor" stroke="none"/>
+                            <path d="M12 6V4" stroke-width="2"/>
+                            <path d="M9 4h6" stroke-width="1.5"/>
+                        </svg>
+                    </div>
                     <p>未找到连接设备</p>
                 </div>
                 <div id="devices-table" style="display:none;">
@@ -1290,7 +1368,16 @@
                     <p>正在加载流量数据...</p>
                 </div>
                 <div id="traffic-empty" class="rm-empty" style="display:none;">
-                    <div class="rm-empty-icon">📈</div>
+                    <div class="rm-empty-icon">
+                        <!-- 空状态流量图标 - 更专业的设计 -->
+                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M3 3v18h18"/>
+                            <path d="M7 16l4-4 3 3 5-5"/>
+                            <circle cx="19" cy="10" r="2" fill="currentColor" stroke="none"/>
+                            <path d="M18 3v4" stroke-width="1.5"/>
+                            <path d="M21 6h-4" stroke-width="1.5"/>
+                        </svg>
+                    </div>
                     <p>暂无流量统计数据</p>
                 </div>
                 <div id="traffic-table" style="display:none;">
@@ -1316,7 +1403,16 @@
             </div>
             <div class="rm-card-body">
                 <div id="offline-empty" class="rm-empty">
-                    <div class="rm-empty-icon">📋</div>
+                    <div class="rm-empty-icon">
+                        <!-- 空状态离线设备图标 - 更专业的设计 -->
+                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+                            <circle cx="9" cy="7" r="4"/>
+                            <path d="M23 21v-2a4 4 0 0 0-3-3.87" stroke-dasharray="2 2"/>
+                            <path d="M16 3.13a4 4 0 0 1 0 7.75" stroke-dasharray="2 2"/>
+                            <path d="M18 11l2 2 2-2" stroke-width="1.5"/>
+                        </svg>
+                    </div>
                     <p>暂无离线设备记录</p>
                 </div>
                 <div id="offline-table">
@@ -1371,42 +1467,109 @@
                 <div class="rm-wifi-selector" id="wifi-selector"></div>
             </div>
             <div class="rm-wifi-hint" id="wifi-hint">
-                <span class="rm-wifi-hint-icon">👆</span>
+                <span class="rm-wifi-hint-icon">
+                    <!-- 提示图标 - 更专业的设计 -->
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="10" stroke-width="1.5"/>
+                        <line x1="12" y1="16" x2="12" y2="11" stroke-width="2"/>
+                        <circle cx="12" cy="8" r="1" fill="currentColor" stroke="none"/>
+                    </svg>
+                </span>
                 <span>点击上方网络名称查看详细信息</span>
             </div>
             <div class="rm-info-grid" id="wifi-info-grid" style="display:none;">
                 <div class="rm-info-card">
-                    <div class="rm-info-icon">📶</div>
+                    <div class="rm-info-icon">
+                        <!-- SSID图标 - 更专业的设计 -->
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M5 12.55a11 11 0 0 1 14.08 0" stroke-width="1.5"/>
+                            <path d="M1.42 9a16 16 0 0 1 21.16 0" stroke-width="1.5"/>
+                            <path d="M8.53 16.11a6 6 0 0 1 6.95 0" stroke-width="1.5"/>
+                            <circle cx="12" cy="20" r="1.5" fill="currentColor" stroke="none"/>
+                        </svg>
+                    </div>
                     <div class="rm-info-value" id="wifi-ssid">-</div>
                     <div class="rm-info-label">网络名称 (SSID)</div>
                 </div>
                 <div class="rm-info-card">
-                    <div class="rm-info-icon">📡</div>
+                    <div class="rm-info-icon">
+                        <!-- 信号图标 - 更专业的设计 -->
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z" stroke-width="1.5"/>
+                            <circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"/>
+                            <path d="M12 5V7" stroke-width="2"/>
+                            <path d="M12 17v2" stroke-width="2"/>
+                            <path d="M5 12H7" stroke-width="2"/>
+                            <path d="M17 12h2" stroke-width="2"/>
+                        </svg>
+                    </div>
                     <div class="rm-info-value" id="wifi-signal">-</div>
                     <div class="rm-info-label">信号强度 (dBm)</div>
                 </div>
                 <div class="rm-info-card">
-                    <div class="rm-info-icon">🔒</div>
+                    <div class="rm-info-icon">
+                        <!-- 加密图标 - 更专业的设计 -->
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                            <rect x="5" y="11" width="14" height="10" rx="2"/>
+                            <path d="M7 11V7a5 5 0 0 1 10 0v4" stroke-width="1.5"/>
+                            <circle cx="12" cy="16" r="1.5" fill="currentColor" stroke="none"/>
+                            <path d="M12 16v2" stroke-width="2"/>
+                        </svg>
+                    </div>
                     <div class="rm-info-value" id="wifi-encryption">-</div>
                     <div class="rm-info-label">加密方式</div>
                 </div>
                 <div class="rm-info-card">
-                    <div class="rm-info-icon">✅</div>
+                    <div class="rm-info-icon">
+                        <!-- 连接状态图标 - 更专业的设计 -->
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" stroke-width="1.5"/>
+                            <polyline points="22 4 12 14.01 9 11.01" stroke-width="2"/>
+                        </svg>
+                    </div>
                     <div class="rm-info-value" id="wifi-status">-</div>
                     <div class="rm-info-label">连接状态</div>
                 </div>
                 <div class="rm-info-card">
-                    <div class="rm-info-icon">⬆️</div>
+                    <div class="rm-info-icon">
+                        <!-- 发送速率图标 - 更专业的设计 -->
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M12 2v20" stroke-width="1.5"/>
+                            <path d="M17 7l-5-5-5 5" stroke-width="2"/>
+                            <path d="M17 17l-5 5-5-5" stroke-width="2"/>
+                            <circle cx="12" cy="12" r="2" fill="currentColor" stroke="none"/>
+                        </svg>
+                    </div>
                     <div class="rm-info-value" id="wifi-tx">-</div>
                     <div class="rm-info-label">发送速率</div>
                 </div>
                 <div class="rm-info-card">
-                    <div class="rm-info-icon">🔄</div>
+                    <div class="rm-info-icon">
+                        <!-- 工作模式图标 - 更专业的设计 -->
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                            <rect x="2" y="3" width="20" height="14" rx="2"/>
+                            <path d="M8 21h8" stroke-width="2"/>
+                            <path d="M12 17v4" stroke-width="2"/>
+                            <circle cx="7" cy="10" r="1.5" fill="currentColor" stroke="none"/>
+                            <circle cx="12" cy="10" r="1.5" fill="currentColor" stroke="none"/>
+                            <circle cx="17" cy="10" r="1.5" fill="currentColor" stroke="none"/>
+                        </svg>
+                    </div>
                     <div class="rm-info-value" id="wifi-mode">-</div>
                     <div class="rm-info-label">工作模式</div>
                 </div>
                 <div class="rm-info-card">
-                    <div class="rm-info-icon">📻</div>
+                    <div class="rm-info-icon">
+                        <!-- 频率图标 - 更专业的设计 -->
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M2 12h4" stroke-width="2"/>
+                            <path d="M18 12h4" stroke-width="2"/>
+                            <path d="M6 12a6 6 0 0 1 12 0" stroke-width="1.5"/>
+                            <circle cx="12" cy="12" r="2" fill="currentColor" stroke="none"/>
+                            <path d="M12 6V4" stroke-width="2"/>
+                            <path d="M12 20v-2" stroke-width="2"/>
+                        </svg>
+                    </div>
                     <div class="rm-info-value" id="wifi-freq">-</div>
                     <div class="rm-info-label">工作频率</div>
                 </div>
@@ -1423,7 +1586,17 @@
                     <p>正在加载WiFi信息...</p>
                 </div>
                 <div id="wifi-empty" class="rm-empty" style="display:none;">
-                    <div class="rm-empty-icon">📡</div>
+                    <div class="rm-empty-icon">
+                        <!-- 空状态WiFi图标 - 更专业的设计 -->
+                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M5 12.55a11 11 0 0 1 14.08 0" stroke-width="1.5"/>
+                            <path d="M1.42 9a16 16 0 0 1 21.16 0" stroke-width="1.5"/>
+                            <path d="M8.53 16.11a6 6 0 0 1 6.95 0" stroke-width="1.5"/>
+                            <circle cx="12" cy="20" r="2" fill="currentColor" stroke="none"/>
+                            <path d="M20 4l2 2" stroke-width="2"/>
+                            <path d="M22 4l-2 2" stroke-width="2"/>
+                        </svg>
+                    </div>
                     <p>未找到WiFi设备</p>
                 </div>
                 <div id="wifi-table" style="display:none;">
@@ -1460,15 +1633,19 @@ function showToast(message, type, duration) {
     if (!container) return;
 
     var icons = {
-        success: '✅',
-        error: '❌',
-        warning: '⚠️',
-        info: 'ℹ️'
+        // 成功图标 - 更专业的设计
+        success: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" stroke-width="1.5"/><polyline points="22 4 12 14.01 9 11.01" stroke-width="2.5"/></svg>',
+        // 错误图标 - 更专业的设计
+        error: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10" stroke-width="1.5"/><line x1="15" y1="9" x2="9" y2="15" stroke-width="2.5"/><line x1="9" y1="9" x2="15" y2="15" stroke-width="2.5"/></svg>',
+        // 警告图标 - 更专业的设计
+        warning: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" stroke-width="1.5"/><line x1="12" y1="9" x2="12" y2="13" stroke-width="2.5"/><circle cx="12" cy="17" r="1" fill="currentColor" stroke="none"/></svg>',
+        // 信息图标 - 更专业的设计
+        info: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10" stroke-width="1.5"/><line x1="12" y1="16" x2="12" y2="12" stroke-width="2.5"/><circle cx="12" cy="8" r="1" fill="currentColor" stroke="none"/></svg>'
     };
 
     var toast = document.createElement('div');
     toast.className = 'rm-toast ' + type;
-    toast.innerHTML = '<span style="font-size:18px">' + icons[type] + '</span><span>' + message + '</span>';
+    toast.innerHTML = icons[type] + '<span>' + message + '</span>';
 
     container.appendChild(toast);
 
@@ -1937,8 +2114,10 @@ function renderTraffic(data) {
                 onlineDuration +
             '</td>' +
             '<td><span class="rm-mac">' + escapeHtml(dev.mac) + '</span></td>' +
-            '<td class="rm-traffic-rx">⬇️ ' + escapeHtml(dev.rx_display) + '</td>' +
-            '<td class="rm-traffic-tx">⬆️ ' + escapeHtml(dev.tx_display) + '</td>' +
+            // 接收(RX)图标 - 更专业的设计
+            '<td class="rm-traffic-rx"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:4px;"><path d="M12 5v14"/><path d="M19 12l-7 7-7-7"/></svg> ' + escapeHtml(dev.rx_display) + '</td>' +
+            // 发送(TX)图标 - 更专业的设计
+            '<td class="rm-traffic-tx"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:4px;"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg> ' + escapeHtml(dev.tx_display) + '</td>' +
             '<td class="rm-traffic-total" ' + totalColorClass + '>' + escapeHtml(dev.total_display) + '</td>' +
             '</tr>';
     });
@@ -1994,8 +2173,10 @@ function renderTraffic(data) {
                     lastSeen +
                 '</td>' +
                 '<td><span class="rm-mac">' + escapeHtml(dev.mac) + '</span></td>' +
-                '<td class="rm-traffic-rx">⬇️ ' + escapeHtml(dev.rx_display) + '</td>' +
-                '<td class="rm-traffic-tx">⬆️ ' + escapeHtml(dev.tx_display) + '</td>' +
+                // 接收(RX)图标 - 更专业的设计
+                '<td class="rm-traffic-rx"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:4px;"><path d="M12 5v14"/><path d="M19 12l-7 7-7-7"/></svg> ' + escapeHtml(dev.rx_display) + '</td>' +
+                // 发送(TX)图标 - 更专业的设计
+                '<td class="rm-traffic-tx"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:4px;"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg> ' + escapeHtml(dev.tx_display) + '</td>' +
                 '<td class="rm-traffic-total" ' + totalColorClass + '>' + escapeHtml(dev.total_display) + '</td>' +
                 '</tr>';
         });
@@ -2108,12 +2289,13 @@ function renderStorageStatus(data) {
 
     if (data.tf_card && data.tf_card.exists) {
         statusEl.className = 'rm-storage-status tf-card';
-        iconEl.textContent = 'TF';
+        iconEl.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>';
         var availGB = (data.tf_card.available / (1024 * 1024 * 1024)).toFixed(1);
         textEl.innerHTML = 'TF卡: ' + availGB + 'GB可用 / ' + data.tf_card.percent + '已用';
     } else {
         statusEl.className = 'rm-storage-status memory';
-        iconEl.textContent = 'MEM';
+        // 内存存储图标 - 更专业的设计
+        iconEl.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M8 9h8" stroke-width="1.5"/><path d="M8 12h8" stroke-width="1.5"/><path d="M8 15h5" stroke-width="1.5"/></svg>';
         textEl.innerHTML = '内存存储（重启丢失）';
     }
 }
@@ -2324,7 +2506,7 @@ function loadDevices(retryCount) {
             } else {
                 if (empty) {
                     empty.style.display = 'block';
-                    empty.innerHTML = '<div class="rm-empty-icon">⚠️</div><p>连接失败，请检查网络</p>';
+                    empty.innerHTML = '<div class="rm-empty-icon"><svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg></div><p>连接失败，请检查网络</p>';
                 }
             }
         }
@@ -2373,7 +2555,7 @@ function loadTraffic(retryCount) {
             } else {
                 if (empty) {
                     empty.style.display = 'block';
-                    empty.innerHTML = '<div class="rm-empty-icon">⚠️</div><p>连接失败，请检查网络</p>';
+                    empty.innerHTML = '<div class="rm-empty-icon"><svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg></div><p>连接失败，请检查网络</p>';
                 }
             }
         }
