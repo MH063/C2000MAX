@@ -258,6 +258,97 @@ local function save_with_fallback(file_path, data)
     return false, err
 end
 
+local function get_data_dir()
+    local storage_path = get_storage_path()
+    return storage_path:match("^(.+)/[^/]+$") or "/tmp/router_assistant"
+end
+
+local function sanitize_input(str)
+    if not str or type(str) ~= "string" then return "" end
+    str = str:gsub("<", "&lt;")
+    str = str:gsub(">", "&gt;")
+    str = str:gsub('"', "&quot;")
+    str = str:gsub("'", "&#39;")
+    str = str:gsub("&", "&amp;")
+    str = str:sub(1, 64)
+    return str
+end
+
+local function load_json_file(filename)
+    local dir = get_data_dir()
+    local filepath = dir .. "/" .. filename
+    local fd = io.open(filepath, "r")
+    if not fd then return nil end
+    local content = fd:read("*all")
+    fd:close()
+    if not content or content == "" then return nil end
+    local json = require("luci.jsonc")
+    local ok, data = pcall(json.parse, content)
+    if ok and data then return data end
+    return nil
+end
+
+local function save_json_file(filename, data)
+    local dir = get_data_dir()
+    ensure_directory(dir)
+    local filepath = dir .. "/" .. filename
+    local json = require("luci.jsonc")
+    local json_str = json.stringify(data) or "{}"
+    return save_data_atomic(filepath, json_str)
+end
+
+local function aggregate_traffic_history()
+    local history = load_json_file(HISTORY_FILE_NAME) or {hourly = {}, daily = {}}
+    local current_traffic = load_json_file(DATA_FILE_NAME) or {}
+    local current_time = os.time()
+    local current_hour = os.date("%Y%m%d%H", current_time)
+    local current_day = os.date("%Y%m%d", current_time)
+    local total_rx = 0
+    local total_tx = 0
+    for mac, data in pairs(current_traffic) do
+        total_rx = total_rx + (data.rx or 0)
+        total_tx = total_tx + (data.tx or 0)
+    end
+    local last_hour = history.last_hour or ""
+    if last_hour ~= current_hour then
+        history.hourly[current_hour] = {
+            rx = total_rx,
+            tx = total_tx,
+            timestamp = current_time
+        }
+        history.last_hour = current_hour
+        local hour_keys = {}
+        for k, _ in pairs(history.hourly) do
+            table.insert(hour_keys, k)
+        end
+        table.sort(hour_keys)
+        while #hour_keys > 168 do
+            local oldest = table.remove(hour_keys, 1)
+            history.hourly[oldest] = nil
+        end
+    end
+    local last_day = history.last_day or ""
+    if last_day ~= current_day then
+        history.daily[current_day] = {
+            rx = total_rx,
+            tx = total_tx,
+            timestamp = current_time
+        }
+        history.last_day = current_day
+        local day_keys = {}
+        for k, _ in pairs(history.daily) do
+            table.insert(day_keys, k)
+        end
+        table.sort(day_keys)
+        while #day_keys > 30 do
+            local oldest = table.remove(day_keys, 1)
+            history.daily[oldest] = nil
+        end
+    end
+    save_json_file(HISTORY_FILE_NAME, history)
+    return history
+end
+
 function api_get_traffic()
     local response_data = nil
 
@@ -440,6 +531,7 @@ function api_get_wifi()
 
     local ok, err = pcall(function()
         local iwinfo = require("iwinfo")
+        local uci = require("luci.model.uci").cursor()
 
         local devices = iwinfo.devices() or {}
 
@@ -450,13 +542,28 @@ function api_get_wifi()
                 if iface then
                     local ssid = iface.ssid(dev) or "-"
                     if ssid ~= "" and ssid ~= "-" then
+                        local disabled = nil
+                        uci:foreach("wireless", "wifi-iface", function(s)
+                            if s.ifname == dev then
+                                disabled = s.disabled
+                            end
+                        end)
+                        
+                        local status = "connected"
+                        if disabled == "1" then
+                            status = "disabled"
+                        elseif ssid == "-" or ssid == "" then
+                            status = "disconnected"
+                        end
+                        
                         table.insert(result.wifi, {
                             iface = dev,
                             ssid = ssid,
                             mode = iface.mode(dev) or "-",
                             channel = iface.channel(dev) or "-",
                             signal = iface.signal(dev) or "-",
-                            encryption = get_encryption(iface, dev)
+                            encryption = get_encryption(iface, dev),
+                            status = status
                         })
                     end
                 end
@@ -471,58 +578,22 @@ function api_get_wifi()
     if #result.wifi == 0 then
         local uci = require("luci.model.uci").cursor()
         uci:foreach("wireless", "wifi-iface", function(s)
+            local disabled = s.disabled
+            local status = disabled == "1" and "disabled" or "disconnected"
             table.insert(result.wifi, {
-                iface = s[".name"] or "-",
+                iface = s.ifname or s[".name"] or "-",
                 ssid = s.ssid or "-",
                 mode = s.mode or "ap",
                 channel = "-",
                 signal = "-",
-                encryption = s.encryption or "none"
+                encryption = s.encryption or "none",
+                status = status
             })
         end)
     end
 
     luci.http.prepare_content("application/json")
     luci.http.write_json(result)
-end
-
-local function get_data_dir()
-    local storage_path = get_storage_path()
-    return storage_path:match("^(.+)/[^/]+$") or "/tmp/router_assistant"
-end
-
-local function sanitize_input(str)
-    if not str or type(str) ~= "string" then return "" end
-    str = str:gsub("<", "&lt;")
-    str = str:gsub(">", "&gt;")
-    str = str:gsub('"', "&quot;")
-    str = str:gsub("'", "&#39;")
-    str = str:gsub("&", "&amp;")
-    str = str:sub(1, 64)
-    return str
-end
-
-local function load_json_file(filename)
-    local dir = get_data_dir()
-    local filepath = dir .. "/" .. filename
-    local fd = io.open(filepath, "r")
-    if not fd then return nil end
-    local content = fd:read("*all")
-    fd:close()
-    if not content or content == "" then return nil end
-    local json = require("luci.jsonc")
-    local ok, data = pcall(json.parse, content)
-    if ok and data then return data end
-    return nil
-end
-
-local function save_json_file(filename, data)
-    local dir = get_data_dir()
-    ensure_directory(dir)
-    local filepath = dir .. "/" .. filename
-    local json = require("luci.jsonc")
-    local json_str = json.stringify(data) or "{}"
-    return save_data_atomic(filepath, json_str)
 end
 
 function api_get_device_notes()
@@ -602,58 +673,6 @@ function api_delete_device_note()
     luci.http.write_json(result)
 end
 
-local function aggregate_traffic_history()
-    local history = load_json_file(HISTORY_FILE_NAME) or {hourly = {}, daily = {}}
-    local current_traffic = load_json_file(DATA_FILE_NAME) or {}
-    local current_time = os.time()
-    local current_hour = os.date("%Y%m%d%H", current_time)
-    local current_day = os.date("%Y%m%d", current_time)
-    local total_rx = 0
-    local total_tx = 0
-    for mac, data in pairs(current_traffic) do
-        total_rx = total_rx + (data.rx or 0)
-        total_tx = total_tx + (data.tx or 0)
-    end
-    local last_hour = history.last_hour or ""
-    if last_hour ~= current_hour then
-        history.hourly[current_hour] = {
-            rx = total_rx,
-            tx = total_tx,
-            timestamp = current_time
-        }
-        history.last_hour = current_hour
-        local hour_keys = {}
-        for k, _ in pairs(history.hourly) do
-            table.insert(hour_keys, k)
-        end
-        table.sort(hour_keys)
-        while #hour_keys > 168 do
-            local oldest = table.remove(hour_keys, 1)
-            history.hourly[oldest] = nil
-        end
-    end
-    local last_day = history.last_day or ""
-    if last_day ~= current_day then
-        history.daily[current_day] = {
-            rx = total_rx,
-            tx = total_tx,
-            timestamp = current_time
-        }
-        history.last_day = current_day
-        local day_keys = {}
-        for k, _ in pairs(history.daily) do
-            table.insert(day_keys, k)
-        end
-        table.sort(day_keys)
-        while #day_keys > 30 do
-            local oldest = table.remove(day_keys, 1)
-            history.daily[oldest] = nil
-        end
-    end
-    save_json_file(HISTORY_FILE_NAME, history)
-    return history
-end
-
 function api_get_traffic_history()
     local result = {code = 0, history = {hourly = {}, daily = {}}}
     local ok, err = pcall(function()
@@ -687,27 +706,13 @@ function api_get_traffic_history()
 end
 
 function api_get_alerts()
-    local result = {code = 0, alerts = {}, triggered = {}}
+    local result = {code = 0, global_threshold = 0, color_levels = {warning = 50, danger = 80, critical = 100}}
     local ok, err = pcall(function()
         local alerts = load_json_file(ALERTS_FILE_NAME)
         if alerts then
-            result.alerts = alerts
-        end
-        local current_traffic = load_json_file(DATA_FILE_NAME) or {}
-        for mac, alert in pairs(result.alerts) do
-            local traffic = current_traffic[mac]
-            if traffic then
-                local total = (traffic.rx or 0) + (traffic.tx or 0)
-                local threshold = alert.threshold or 0
-                if threshold > 0 and total >= threshold then
-                    table.insert(result.triggered, {
-                        mac = mac,
-                        hostname = traffic.hostname or "Unknown",
-                        total = total,
-                        threshold = threshold,
-                        percent = threshold > 0 and math.floor(total / threshold * 100) or 0
-                    })
-                end
+            result.global_threshold = alerts.global_threshold or 0
+            if alerts.color_levels then
+                result.color_levels = alerts.color_levels
             end
         end
     end)
@@ -722,25 +727,28 @@ end
 function api_save_alert()
     local result = {code = 0, message = ""}
     local ok, err = pcall(function()
-        local mac = luci.http.formvalue("mac")
         local threshold = luci.http.formvalue("threshold")
-        if not mac or mac == "" then
-            result.code = -1
-            result.message = "MAC地址无效"
-            return
-        end
-        local mac_upper = mac:upper():gsub("-", ":")
+        local warning_level = luci.http.formvalue("warning_level")
+        local danger_level = luci.http.formvalue("danger_level")
+        local critical_level = luci.http.formvalue("critical_level")
+        
         local threshold_num = tonumber(threshold) or 0
-        if threshold_num <= 0 then
+        if threshold_num < 0 then
             result.code = -1
-            result.message = "阈值必须大于0"
+            result.message = "阈值不能为负数"
             return
         end
-        local alerts = load_json_file(ALERTS_FILE_NAME) or {}
-        alerts[mac_upper] = {
-            threshold = threshold_num,
-            created = os.time()
+        
+        local alerts = {
+            global_threshold = threshold_num,
+            color_levels = {
+                warning = tonumber(warning_level) or 50,
+                danger = tonumber(danger_level) or 80,
+                critical = tonumber(critical_level) or 100
+            },
+            updated = os.time()
         }
+        
         local save_ok = save_json_file(ALERTS_FILE_NAME, alerts)
         if not save_ok then
             result.code = -1
@@ -760,17 +768,9 @@ end
 function api_delete_alert()
     local result = {code = 0, message = ""}
     local ok, err = pcall(function()
-        local mac = luci.http.formvalue("mac")
-        if not mac or mac == "" then
-            result.code = -1
-            result.message = "MAC地址无效"
-            return
-        end
-        local mac_upper = mac:upper():gsub("-", ":")
-        local alerts = load_json_file(ALERTS_FILE_NAME) or {}
-        alerts[mac_upper] = nil
+        local alerts = {global_threshold = 0, color_levels = {warning = 50, danger = 80, critical = 100}}
         save_json_file(ALERTS_FILE_NAME, alerts)
-        result.message = "报警已删除"
+        result.message = "报警已重置"
     end)
     if not ok then
         result.code = -1
@@ -791,10 +791,13 @@ function api_get_wifi_status()
             local device = s.device or "radio0"
             local iface = s[".name"]
             local network = s.network
+            local ifname = s.ifname or ""
+            local disabled = s.disabled
 
             local status = {
                 iface = iface,
                 device = device,
+                ifname = ifname,
                 ssid = s.ssid or "-",
                 encryption = s.encryption or "none",
                 mode = s.mode or "ap",
@@ -808,27 +811,29 @@ function api_get_wifi_status()
                 connected_stations = {}
             }
 
-            local info = iwinfo.type(device)
-            if info then
-                local iface_api = iwinfo[info]
-                if iface_api then
-                    status.channel = iface_api.channel(device) or "-"
-                    status.signal = iface_api.signal(device) or "-"
-                    status.frequency = iface_api.frequency(device) or "-"
+            if ifname and ifname ~= "" then
+                local info = iwinfo.type(ifname)
+                if info then
+                    local iface_api = iwinfo[info]
+                    if iface_api then
+                        status.channel = iface_api.channel(ifname) or "-"
+                        status.signal = iface_api.signal(ifname) or "-"
+                        status.frequency = iface_api.frequency(ifname) or "-"
 
-                    local tx, rx = iface_api.bitrate(device)
-                    if tx then status.tx_bitrate = tostring(tx) .. " Mbps" end
-                    if rx then status.rx_bitrate = tostring(rx) .. " Mbps" end
+                        local tx, rx = iface_api.bitrate(ifname)
+                        if tx then status.tx_bitrate = tostring(tx) .. " Mbps" end
+                        if rx then status.rx_bitrate = tostring(rx) .. " Mbps" end
 
-                    local stations = iface_api.assoclist(device)
-                    if stations then
-                        for mac, data in pairs(stations) do
-                            table.insert(status.connected_stations, {
-                                mac = mac,
-                                signal = data.signal or "-",
-                                rx_rate = data.rx_rate or "-",
-                                tx_rate = data.tx_rate or "-"
-                            })
+                        local stations = iface_api.assoclist(ifname)
+                        if stations then
+                            for mac, data in pairs(stations) do
+                                table.insert(status.connected_stations, {
+                                    mac = mac,
+                                    signal = data.signal or "-",
+                                    rx_rate = data.rx_rate or "-",
+                                    tx_rate = data.tx_rate or "-"
+                                })
+                            end
                         end
                     end
                 end
@@ -842,7 +847,21 @@ function api_get_wifi_status()
                 end
             end
 
-            status.status = "connected"
+            local is_up = false
+            if disabled ~= "1" then
+                is_up = true
+            end
+            
+            if is_up and status.ssid and status.ssid ~= "-" and status.ssid ~= "" then
+                status.status = "connected"
+            elseif disabled == "1" then
+                status.status = "disabled"
+            else
+                status.status = "disconnected"
+            end
+            
+            status.station_count = #(status.connected_stations or {})
+            
             table.insert(result.wifi_status, status)
         end)
     end)

@@ -1027,6 +1027,37 @@
         background: rgba(255, 255, 255, 0.1);
         color: var(--accent-cyan);
     }
+
+    /* 信号强度样式 */
+    .rm-signal-excellent {
+        color: #00E676;
+        font-weight: 500;
+    }
+
+    .rm-signal-good {
+        color: #4CAF50;
+        font-weight: 500;
+    }
+
+    .rm-signal-fair {
+        color: #8BC34A;
+        font-weight: 500;
+    }
+
+    .rm-signal-normal {
+        color: #FF9800;
+        font-weight: 500;
+    }
+
+    .rm-signal-weak {
+        color: #FF5722;
+        font-weight: 500;
+    }
+
+    .rm-signal-poor {
+        color: #F44336;
+        font-weight: 500;
+    }
 </style>
 
 <div class="rm-container">
@@ -1066,29 +1097,38 @@
     <div class="rm-modal-overlay" id="alert-modal">
         <div class="rm-modal">
             <div class="rm-modal-header">
-                <div class="rm-modal-title">设置流量报警</div>
+                <div class="rm-modal-title">流量报警设置</div>
                 <button class="rm-modal-close" onclick="closeAlertModal()">&times;</button>
             </div>
             <div class="rm-modal-body">
                 <div class="rm-form-group">
-                    <label class="rm-form-label">设备MAC</label>
-                    <input type="text" class="rm-form-input" id="alert-mac" readonly>
+                    <label class="rm-form-label">全局流量阈值（GB）</label>
+                    <input type="number" class="rm-form-input" id="alert-threshold" placeholder="输入全局流量阈值，如：10" min="0" step="0.1">
                 </div>
                 <div class="rm-form-group">
-                    <label class="rm-form-label">设备名称</label>
-                    <input type="text" class="rm-form-input" id="alert-device-name" readonly>
+                    <label class="rm-form-label">颜色分级设置（百分比）</label>
+                    <div style="display:flex;gap:10px;align-items:center;margin-bottom:8px;">
+                        <span style="color:#FFC107;font-weight:500;">提醒</span>
+                        <input type="number" class="rm-form-input" id="alert-warning" value="50" min="0" max="100" style="width:80px;">
+                        <span style="color:var(--text-secondary);">%时显示黄色</span>
+                    </div>
+                    <div style="display:flex;gap:10px;align-items:center;margin-bottom:8px;">
+                        <span style="color:#FF9800;font-weight:500;">警告</span>
+                        <input type="number" class="rm-form-input" id="alert-danger" value="80" min="0" max="100" style="width:80px;">
+                        <span style="color:var(--text-secondary);">%时显示橙色</span>
+                    </div>
+                    <div style="display:flex;gap:10px;align-items:center;">
+                        <span style="color:#F44336;font-weight:500;">超限</span>
+                        <input type="number" class="rm-form-input" id="alert-critical" value="100" min="0" max="200" style="width:80px;">
+                        <span style="color:var(--text-secondary);">%时显示红色</span>
+                    </div>
                 </div>
-                <div class="rm-form-group">
-                    <label class="rm-form-label">流量阈值（GB）</label>
-                    <input type="number" class="rm-form-input" id="alert-threshold" placeholder="输入流量阈值，如：10" min="0.1" step="0.1">
-                </div>
-                <div class="rm-form-group" style="font-size:12px;color:var(--text-secondary);">
-                    当设备总流量达到此阈值时，系统会弹出报警通知
+                <div class="rm-form-group" style="font-size:12px;color:var(--text-secondary);background:rgba(0,0,0,0.2);padding:10px;border-radius:8px;">
+                    说明：所有设备流量达到不同百分比时，流量数字显示对应颜色
                 </div>
             </div>
             <div class="rm-modal-footer">
                 <button class="rm-btn rm-btn-secondary" onclick="closeAlertModal()">取消</button>
-                <button class="rm-btn rm-btn-danger" id="alert-delete-btn" onclick="deleteAlert()" style="display:none;">删除报警</button>
                 <button class="rm-btn rm-btn-primary" onclick="saveAlert()">保存</button>
             </div>
         </div>
@@ -1175,6 +1215,7 @@
                                 <th>设备信息</th>
                                 <th>MAC地址</th>
                                 <th>连接类型</th>
+                                <th>信号强度</th>
                                 <th>操作</th>
                             </tr>
                         </thead>
@@ -1262,6 +1303,7 @@
         <div class="rm-card">
             <div class="rm-card-header">
                 <div class="rm-card-title">设备流量消耗排行（在线 <span id="online-count-label">0</span> 台）</div>
+                <button class="rm-btn rm-btn-secondary" onclick="openAlertModal()" style="font-size:12px;padding:6px 12px;">🔔 报警设置</button>
             </div>
             <div class="rm-card-body">
                 <div id="traffic-loading" class="rm-loading">
@@ -1401,7 +1443,7 @@
 
         <div class="rm-card">
             <div class="rm-card-header">
-                <div class="rm-card-title">WiFi设备列表</div>
+                <div class="rm-card-title">WiFi接入点列表</div>
             </div>
             <div class="rm-card-body">
                 <div id="wifi-loading" class="rm-loading">
@@ -1418,10 +1460,11 @@
                             <tr>
                                 <th>接口</th>
                                 <th>SSID</th>
-                                <th>模式</th>
                                 <th>信道</th>
                                 <th>信号</th>
                                 <th>加密</th>
+                                <th>客户端</th>
+                                <th>状态</th>
                             </tr>
                         </thead>
                         <tbody id="wifi-tbody"></tbody>
@@ -1486,8 +1529,8 @@ function loadVersion() {
 
 // 设备注释相关变量和函数
 var deviceNotes = {};
-var deviceAlerts = {};
-var triggeredAlerts = [];
+var globalThreshold = 0;
+var colorLevels = {warning: 50, danger: 80, critical: 100};
 
 function loadDeviceNotes() {
     safeXHR(
@@ -1506,13 +1549,8 @@ function loadAlerts() {
         '<%=luci.dispatcher.build_url("admin/status/router_assistant/get_alerts")%>',
         function(res) {
             if (res.code === 0) {
-                deviceAlerts = res.alerts || {};
-                triggeredAlerts = res.triggered || [];
-                if (triggeredAlerts.length > 0) {
-                    triggeredAlerts.forEach(function(alert) {
-                        showToast('流量报警：' + alert.hostname + ' 已达到 ' + formatSize(alert.threshold) + ' (' + alert.percent + '%)', 'warning', 5000);
-                    });
-                }
+                globalThreshold = res.global_threshold || 0;
+                colorLevels = res.color_levels || {warning: 50, danger: 80, critical: 100};
             }
         },
         function(error) {}
@@ -1538,21 +1576,19 @@ function saveNote() {
     
     var params = 'mac=' + encodeURIComponent(mac) + '&note=' + encodeURIComponent(note);
     
-    XHR.post('<%=luci.dispatcher.build_url("admin/status/router_assistant/save_device_note")%>', params,
-        function(xhr) {
-            try {
-                var res = JSON.parse(xhr.responseText);
-                if (res.code === 0) {
-                    showToast('备注已保存', 'success');
-                    deviceNotes[mac] = {note: note, updated: Date.now() / 1000};
-                    closeNoteModal();
-                    loadDevices();
-                } else {
-                    showToast('保存失败：' + res.message, 'error');
-                }
-            } catch (e) {
-                showToast('操作失败', 'error');
+    safeXHRpost('<%=luci.dispatcher.build_url("admin/status/router_assistant/save_device_note")%>', params,
+        function(res) {
+            if (res.code === 0) {
+                showToast('备注已保存', 'success');
+                deviceNotes[mac] = {note: note, updated: Date.now() / 1000};
+                closeNoteModal();
+                loadDevices();
+            } else {
+                showToast('保存失败：' + res.message, 'error');
             }
+        },
+        function(error) {
+            showToast('网络错误：' + error, 'error');
         }
     );
 }
@@ -1562,32 +1598,28 @@ function deleteNote() {
     
     var params = 'mac=' + encodeURIComponent(mac);
     
-    XHR.post('<%=luci.dispatcher.build_url("admin/status/router_assistant/delete_device_note")%>', params,
-        function(xhr) {
-            try {
-                var res = JSON.parse(xhr.responseText);
-                if (res.code === 0) {
-                    showToast('备注已删除', 'success');
-                    delete deviceNotes[mac];
-                    closeNoteModal();
-                    loadDevices();
-                } else {
-                    showToast('删除失败：' + res.message, 'error');
-                }
-            } catch (e) {
-                showToast('操作失败', 'error');
+    safeXHRpost('<%=luci.dispatcher.build_url("admin/status/router_assistant/delete_device_note")%>', params,
+        function(res) {
+            if (res.code === 0) {
+                showToast('备注已删除', 'success');
+                delete deviceNotes[mac];
+                closeNoteModal();
+                loadDevices();
+            } else {
+                showToast('删除失败：' + res.message, 'error');
             }
+        },
+        function(error) {
+            showToast('网络错误：' + error, 'error');
         }
     );
 }
 
-function openAlertModal(mac, hostname) {
-    document.getElementById('alert-mac').value = mac;
-    document.getElementById('alert-device-name').value = hostname || '未知设备';
-    var alert = deviceAlerts[mac] || {};
-    var thresholdGB = alert.threshold ? (alert.threshold / (1024 * 1024 * 1024)).toFixed(1) : '';
-    document.getElementById('alert-threshold').value = thresholdGB;
-    document.getElementById('alert-delete-btn').style.display = alert.threshold ? 'inline-block' : 'none';
+function openAlertModal() {
+    document.getElementById('alert-threshold').value = globalThreshold > 0 ? (globalThreshold / (1024 * 1024 * 1024)).toFixed(1) : '';
+    document.getElementById('alert-warning').value = colorLevels.warning || 50;
+    document.getElementById('alert-danger').value = colorLevels.danger || 80;
+    document.getElementById('alert-critical').value = colorLevels.critical || 100;
     document.getElementById('alert-modal').classList.add('active');
 }
 
@@ -1596,54 +1628,30 @@ function closeAlertModal() {
 }
 
 function saveAlert() {
-    var mac = document.getElementById('alert-mac').value;
     var thresholdGB = parseFloat(document.getElementById('alert-threshold').value) || 0;
     var threshold = thresholdGB * 1024 * 1024 * 1024;
+    var warningLevel = parseInt(document.getElementById('alert-warning').value) || 50;
+    var dangerLevel = parseInt(document.getElementById('alert-danger').value) || 80;
+    var criticalLevel = parseInt(document.getElementById('alert-critical').value) || 100;
     
-    if (threshold <= 0) {
-        showToast('请输入有效的阈值', 'error');
-        return;
-    }
+    var params = 'threshold=' + encodeURIComponent(threshold) + 
+                 '&warning_level=' + encodeURIComponent(warningLevel) +
+                 '&danger_level=' + encodeURIComponent(dangerLevel) +
+                 '&critical_level=' + encodeURIComponent(criticalLevel);
     
-    var params = 'mac=' + encodeURIComponent(mac) + '&threshold=' + encodeURIComponent(threshold);
-    
-    XHR.post('<%=luci.dispatcher.build_url("admin/status/router_assistant/save_alert")%>', params,
-        function(xhr) {
-            try {
-                var res = JSON.parse(xhr.responseText);
-                if (res.code === 0) {
-                    showToast('报警设置已保存', 'success');
-                    deviceAlerts[mac] = {threshold: threshold, created: Date.now() / 1000};
-                    closeAlertModal();
-                } else {
-                    showToast('保存失败：' + res.message, 'error');
-                }
-            } catch (e) {
-                showToast('操作失败', 'error');
+    safeXHRpost('<%=luci.dispatcher.build_url("admin/status/router_assistant/save_alert")%>', params,
+        function(res) {
+            if (res.code === 0) {
+                showToast('报警设置已保存', 'success');
+                globalThreshold = threshold;
+                colorLevels = {warning: warningLevel, danger: dangerLevel, critical: criticalLevel};
+                closeAlertModal();
+            } else {
+                showToast('保存失败：' + res.message, 'error');
             }
-        }
-    );
-}
-
-function deleteAlert() {
-    var mac = document.getElementById('alert-mac').value;
-    
-    var params = 'mac=' + encodeURIComponent(mac);
-    
-    XHR.post('<%=luci.dispatcher.build_url("admin/status/router_assistant/delete_alert")%>', params,
-        function(xhr) {
-            try {
-                var res = JSON.parse(xhr.responseText);
-                if (res.code === 0) {
-                    showToast('报警已删除', 'success');
-                    delete deviceAlerts[mac];
-                    closeAlertModal();
-                } else {
-                    showToast('删除失败：' + res.message, 'error');
-                }
-            } catch (e) {
-                showToast('操作失败', 'error');
-            }
+        },
+        function(error) {
+            showToast('网络错误：' + error, 'error');
         }
     );
 }
@@ -1805,22 +1813,17 @@ function kickDevice(mac, device) {
         params += '&device=' + encodeURIComponent(device);
     }
 
-    XHR.post('<%=luci.dispatcher.build_url("admin/status/router_assistant/kick_device")%>', params,
-        function(xhr) {
-            try {
-                var res = JSON.parse(xhr.responseText);
-                if (res.code === 0) {
-                    showToast('设备已成功踢出', 'success');
-                    loadDevices();
-                } else {
-                    showToast('踢出失败：' + escapeHtml(res.message || '未知错误'), 'error');
-                }
-            } catch (e) {
-                showToast('操作失败，请稍后重试', 'error');
+    safeXHRpost('<%=luci.dispatcher.build_url("admin/status/router_assistant/kick_device")%>', params,
+        function(res) {
+            if (res.code === 0) {
+                showToast('设备已成功踢出', 'success');
+                loadDevices();
+            } else {
+                showToast('踢出失败：' + escapeHtml(res.message || '未知错误'), 'error');
             }
         },
-        function(xhr) {
-            showToast('网络错误，踢出失败', 'error');
+        function(error) {
+            showToast('网络错误：' + error, 'error');
         }
     );
 }
@@ -1881,6 +1884,16 @@ function renderDevices(devices, checkOnly) {
         } else {
             displayName = escapeHtml(dev.hostname || '未知设备');
         }
+        
+        var signalDisplay = '-';
+        if (isWifi && dev.signal && dev.signal !== 0) {
+            var signalClass = dev.signal >= -60 ? 'rm-signal-excellent' : 
+                             dev.signal >= -80 ? 'rm-signal-good' : 
+                             dev.signal >= -90 ? 'rm-signal-fair' : 
+                             dev.signal >= -100 ? 'rm-signal-normal' : 
+                             dev.signal >= -110 ? 'rm-signal-weak' : 'rm-signal-poor';
+            signalDisplay = '<span class="' + signalClass + '">' + dev.signal + ' dBm</span>';
+        }
 
         html += '<tr>' +
             '<td>' +
@@ -1891,6 +1904,7 @@ function renderDevices(devices, checkOnly) {
             '<td><span class="rm-mac">' + escapeHtml(dev.mac) + '</span></td>' +
             '<td><span class="rm-badge ' + (isWifi ? 'rm-badge-wifi' : 'rm-badge-wired') + '">' +
             (isWifi ? 'WiFi' : '有线') + '</span></td>' +
+            '<td>' + signalDisplay + '</td>' +
             '<td>' + noteBtn + ' ' + kickBtn + '</td>' +
             '</tr>';
     });
@@ -1920,20 +1934,6 @@ function renderTraffic(data) {
             onlineDuration = '<div class="rm-device-duration" style="font-size:11px;color:var(--text-secondary);">在线: ' + formatDuration(duration) + '</div>';
         }
         
-        var alertBtn = '<button class="rm-note-btn" onclick="openAlertModal(\'' + escapeHtml(dev.mac) + '\', \'' + escapeHtml(dev.hostname || '') + '\')" title="设置报警">🔔</button>';
-        var alertInfo = deviceAlerts[dev.mac];
-        var alertBadge = '';
-        if (alertInfo && alertInfo.threshold > 0) {
-            var percent = Math.floor((dev.total / alertInfo.threshold) * 100);
-            if (percent >= 100) {
-                alertBadge = ' <span class="rm-badge rm-badge-alert">超限</span>';
-            } else if (percent >= 80) {
-                alertBadge = ' <span class="rm-badge" style="background:rgba(255,145,0,0.2);color:var(--accent-orange);">' + percent + '%</span>';
-            } else {
-                alertBadge = ' <span class="rm-badge" style="background:rgba(0,212,255,0.15);color:var(--accent-cyan);">' + percent + '%</span>';
-            }
-        }
-        
         var noteInfo = deviceNotes[dev.mac];
         var displayName = dev.hostname || '未知设备';
         if (noteInfo && noteInfo.note) {
@@ -1942,16 +1942,28 @@ function renderTraffic(data) {
             displayName = escapeHtml(dev.hostname || '未知设备');
         }
         
+        var totalColorClass = '';
+        if (globalThreshold > 0 && dev.total > 0) {
+            var percent = (dev.total / globalThreshold) * 100;
+            if (percent >= colorLevels.critical) {
+                totalColorClass = 'style="color:#F44336;font-weight:600;"';
+            } else if (percent >= colorLevels.danger) {
+                totalColorClass = 'style="color:#FF9800;font-weight:600;"';
+            } else if (percent >= colorLevels.warning) {
+                totalColorClass = 'style="color:#FFC107;font-weight:600;"';
+            }
+        }
+        
         onlineHtml += '<tr>' +
             '<td>' +
-                '<div class="rm-device-name">' + displayName + alertBadge + '</div>' +
+                '<div class="rm-device-name">' + displayName + '</div>' +
                 '<div class="rm-device-ip">' + escapeHtml(dev.ip) + '</div>' +
                 onlineDuration +
             '</td>' +
             '<td><span class="rm-mac">' + escapeHtml(dev.mac) + '</span></td>' +
             '<td class="rm-traffic-rx">↓ ' + escapeHtml(dev.rx_display) + '</td>' +
             '<td class="rm-traffic-tx">↑ ' + escapeHtml(dev.tx_display) + '</td>' +
-            '<td class="rm-traffic-total">' + alertBtn + ' ' + escapeHtml(dev.total_display) + '</td>' +
+            '<td class="rm-traffic-total" ' + totalColorClass + '>' + escapeHtml(dev.total_display) + '</td>' +
             '</tr>';
     });
     document.getElementById('traffic-tbody').innerHTML = onlineHtml;
@@ -1972,16 +1984,36 @@ function renderTraffic(data) {
                 lastSeen = '<div class="rm-device-duration" style="font-size:11px;color:var(--text-secondary);">最后在线: ' + formatDuration(lastSeenDuration) + '前</div>';
             }
             
+            var totalColorClass = '';
+            if (globalThreshold > 0 && dev.total > 0) {
+                var percent = (dev.total / globalThreshold) * 100;
+                if (percent >= colorLevels.critical) {
+                    totalColorClass = 'style="color:#F44336;font-weight:600;"';
+                } else if (percent >= colorLevels.danger) {
+                    totalColorClass = 'style="color:#FF9800;font-weight:600;"';
+                } else if (percent >= colorLevels.warning) {
+                    totalColorClass = 'style="color:#FFC107;font-weight:600;"';
+                }
+            }
+            
+            var noteInfo = deviceNotes[dev.mac];
+            var displayName = dev.hostname || '未知设备';
+            if (noteInfo && noteInfo.note) {
+                displayName = escapeHtml(noteInfo.note) + ' <span style="color:var(--text-secondary);font-weight:normal;">(' + escapeHtml(dev.hostname || '未知设备') + ')</span>';
+            } else {
+                displayName = escapeHtml(dev.hostname || '未知设备');
+            }
+            
             offlineHtml += '<tr class="rm-offline">' +
                 '<td>' +
-                    '<div class="rm-device-name">' + escapeHtml(dev.hostname || '未知设备') + ' <span class="rm-badge rm-badge-offline">离线</span></div>' +
+                    '<div class="rm-device-name">' + displayName + ' <span class="rm-badge rm-badge-offline">离线</span></div>' +
                     '<div class="rm-device-ip">' + escapeHtml(dev.ip) + '</div>' +
                     lastSeen +
                 '</td>' +
                 '<td><span class="rm-mac">' + escapeHtml(dev.mac) + '</span></td>' +
                 '<td class="rm-traffic-rx">↓ ' + escapeHtml(dev.rx_display) + '</td>' +
                 '<td class="rm-traffic-tx">↑ ' + escapeHtml(dev.tx_display) + '</td>' +
-                '<td class="rm-traffic-total">' + escapeHtml(dev.total_display) + '</td>' +
+                '<td class="rm-traffic-total" ' + totalColorClass + '>' + escapeHtml(dev.total_display) + '</td>' +
                 '</tr>';
         });
         document.getElementById('offline-tbody').innerHTML = offlineHtml;
@@ -2005,29 +2037,29 @@ function renderWifi(wifiList, checkOnly) {
     }
     lastDataHash.wifi = dataKey;
 
-    if (wifiList.length > 0) {
-        document.getElementById('wifi-ssid').textContent = wifiList[0].ssid || '-';
-        document.getElementById('wifi-signal').textContent = wifiList[0].signal || '-';
-        document.getElementById('wifi-encryption').textContent = wifiList[0].encryption || '-';
-        document.getElementById('stat-channel').textContent = wifiList[0].channel || '-';
-        document.getElementById('wifi-info-grid').style.display = 'grid';
-    }
-
     var html = '';
     wifiList.forEach(function(wifi) {
+        var statusBadge = wifi.status === 'connected' 
+            ? '<span class="rm-badge" style="background:rgba(0,230,118,0.2);color:var(--accent-green);">运行中</span>'
+            : wifi.status === 'disabled'
+            ? '<span class="rm-badge" style="background:rgba(128,128,128,0.2);color:#888;">已禁用</span>'
+            : '<span class="rm-badge" style="background:rgba(255,82,82,0.2);color:var(--accent-red);">未连接</span>';
+        
         html += '<tr>' +
             '<td><strong>' + escapeHtml(wifi.iface) + '</strong></td>' +
             '<td>' + escapeHtml(wifi.ssid) + '</td>' +
-            '<td>' + escapeHtml(wifi.mode) + '</td>' +
             '<td>' + escapeHtml(wifi.channel) + '</td>' +
             '<td>' + escapeHtml(wifi.signal) + '</td>' +
             '<td><span class="rm-encryption">' + escapeHtml(wifi.encryption) + '</span></td>' +
+            '<td>' + '-' + '</td>' +
+            '<td>' + statusBadge + '</td>' +
             '</tr>';
     });
 
     document.getElementById('stat-wifi-count').textContent = wifiList.length;
     document.getElementById('wifi-tbody').innerHTML = html;
     document.getElementById('wifi-table').style.display = 'block';
+    
     return true;
 }
 
@@ -2204,6 +2236,36 @@ function safeXHR(url, callback, errorCallback) {
     };
 
     xhr.send();
+    return xhr;
+}
+
+function safeXHRpost(url, params, callback, errorCallback) {
+    var xhr = new XMLHttpRequest();
+    xhr.open('POST', url, true);
+    xhr.timeout = 5000;
+    xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+
+    xhr.onload = function() {
+        if (xhr.status >= 200 && xhr.status < 300) {
+            try {
+                callback(JSON.parse(xhr.responseText));
+            } catch (e) {
+                if (errorCallback) errorCallback('JSON解析失败');
+            }
+        } else {
+            if (errorCallback) errorCallback('请求失败: ' + xhr.status);
+        }
+    };
+
+    xhr.onerror = function() {
+        if (errorCallback) errorCallback('网络错误');
+    };
+
+    xhr.ontimeout = function() {
+        if (errorCallback) errorCallback('请求超时');
+    };
+
+    xhr.send(params);
     return xhr;
 }
 
@@ -2412,6 +2474,7 @@ function renderWifiStatus(statusList) {
             totalStations += status.connected_stations.length;
         }
     });
+    
     var wifiDevicesEl = document.getElementById('stat-wifi-devices');
     if (wifiDevicesEl) wifiDevicesEl.textContent = totalStations;
 
