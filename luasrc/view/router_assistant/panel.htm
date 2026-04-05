@@ -1,13 +1,6 @@
-<%#
-  路由管家 - 网络管理控制面板
-  功能：设备列表、流量统计、WiFi管理
-  设计风格：深色科技风
--%>
-
 <%+header%>
 
 <style>
-    /* 基础变量 */
     :root {
         --bg-primary: #0a1628;
         --bg-secondary: #0d1b2a;
@@ -39,7 +32,6 @@
         border-radius: 16px;
     }
 
-    /* 头部样式 */
     .rm-header {
         background: var(--gradient-card-1);
         border: 1px solid var(--border-color);
@@ -176,7 +168,6 @@
         border-color: rgba(255, 255, 255, 0.3);
     }
 
-    /* Toast通知样式 */
     .rm-toast-container {
         position: fixed;
         top: 20px;
@@ -232,7 +223,6 @@
         to { transform: translateX(100%); opacity: 0; }
     }
 
-    /* 离线设备样式 */
     .rm-offline {
         opacity: 0.6;
     }
@@ -250,7 +240,6 @@
         background: #888;
     }
 
-    /* 标签页样式 */
     .rm-tabs {
         display: flex;
         gap: 12px;
@@ -290,7 +279,6 @@
         box-shadow: 0 4px 15px rgba(0, 212, 255, 0.3);
     }
 
-    /* 统计卡片样式 */
     .rm-stats {
         display: grid;
         grid-template-columns: repeat(3, 1fr);
@@ -385,7 +373,6 @@
         font-size: 12px;
     }
 
-    /* 内容卡片样式 */
     .rm-card {
         background: var(--bg-card);
         border: 1px solid var(--border-color);
@@ -423,7 +410,6 @@
         padding: 0;
     }
 
-    /* 表格样式 */
     .rm-table {
         width: 100%;
         border-collapse: collapse;
@@ -456,7 +442,6 @@
         background: rgba(255, 255, 255, 0.02);
     }
 
-    /* 设备名称 */
     .rm-device-name {
         font-weight: 600;
         color: var(--text-primary);
@@ -468,7 +453,6 @@
         margin-top: 2px;
     }
 
-    /* MAC地址 */
     .rm-mac {
         font-family: 'SF Mono', Monaco, monospace;
         font-size: 13px;
@@ -478,7 +462,6 @@
         border-radius: 6px;
     }
 
-    /* 状态标签 */
     .rm-badge {
         display: inline-flex;
         align-items: center;
@@ -516,7 +499,6 @@
         box-shadow: 0 0 8px var(--accent-green);
     }
 
-    /* 流量样式 */
     .rm-traffic-rx {
         color: var(--accent-cyan);
         font-weight: 600;
@@ -532,7 +514,6 @@
         font-weight: 700;
     }
 
-    /* 踢出按钮 */
     .rm-kick-btn {
         padding: 8px 16px;
         background: transparent;
@@ -551,7 +532,6 @@
         box-shadow: 0 0 15px rgba(255, 82, 82, 0.4);
     }
 
-    /* WiFi信息网格 */
     .rm-info-grid {
         display: grid;
         grid-template-columns: repeat(3, 1fr);
@@ -597,7 +577,6 @@
         color: var(--text-secondary);
     }
 
-    /* 加密标签 */
     .rm-encryption {
         display: inline-flex;
         align-items: center;
@@ -655,7 +634,6 @@
         font-size: 18px;
     }
 
-    /* 加载和空状态 */
     .rm-loading {
         text-align: center;
         padding: 60px 20px;
@@ -855,7 +833,6 @@
         background: rgba(255, 82, 82, 0.4);
     }
 
-    /* 页脚 */
     .rm-footer {
         text-align: center;
         padding: 24px;
@@ -865,7 +842,6 @@
         margin-top: 40px;
     }
 
-    /* 响应式 */
     @media (max-width: 768px) {
         .rm-stats {
             grid-template-columns: 1fr;
@@ -899,7 +875,6 @@
         }
     }
 
-    /* 隐藏内容 */
     .rm-tab-content {
         display: none;
     }
@@ -908,7 +883,6 @@
         display: block;
     }
 
-    /* 弹窗样式 */
     .rm-modal-overlay {
         position: fixed;
         top: 0;
@@ -1045,7 +1019,6 @@
         color: #fff;
     }
 
-    /* 流量图表样式 */
     .rm-chart-container {
         padding: 24px;
     }
@@ -1170,7 +1143,6 @@
         opacity: 1;
     }
 
-    /* 报警标签样式 */
     .rm-badge-alert {
         background: rgba(255, 82, 82, 0.2);
         color: var(--accent-red);
@@ -1186,7 +1158,6 @@
         50% { opacity: 0.7; }
     }
 
-    /* 设备备注样式 */
     .rm-device-note {
         font-size: 11px;
         color: var(--accent-cyan);
@@ -1212,7 +1183,6 @@
         color: var(--accent-cyan);
     }
 
-    /* 信号强度样式 */
     .rm-signal-excellent {
         color: #00E676;
         font-weight: 500;
@@ -1245,15 +1215,13 @@
 </style>
 
 <div class="rm-container">
-    <!-- Toast容器 -->
     <div class="rm-toast-container" id="toast-container"></div>
-    
-    <!-- 备注编辑弹窗 -->
+
     <div class="rm-modal-overlay" id="note-modal">
         <div class="rm-modal">
             <div class="rm-modal-header">
                 <div class="rm-modal-title">编辑设备备注</div>
-                <button class="rm-modal-close" onclick="closeNoteModal()">&times;</button>
+                <button class="rm-modal-close" onclick="closeNoteModal()">✕</button>
             </div>
             <div class="rm-modal-body">
                 <div class="rm-form-group">
@@ -1266,7 +1234,7 @@
                 </div>
                 <div class="rm-form-group">
                     <label class="rm-form-label">备注名称</label>
-                    <input type="text" class="rm-form-input" id="note-content" placeholder="输入备注名称（如：我的手机）" maxlength="32">
+                    <input type="text" class="rm-form-input" id="note-content" placeholder="输入备注名称" maxlength="32">
                 </div>
             </div>
             <div class="rm-modal-footer">
@@ -1276,13 +1244,12 @@
             </div>
         </div>
     </div>
-    
-    <!-- 流量报警设置弹窗 -->
+
     <div class="rm-modal-overlay" id="alert-modal">
         <div class="rm-modal">
             <div class="rm-modal-header">
                 <div class="rm-modal-title">流量报警设置</div>
-                <button class="rm-modal-close" onclick="closeAlertModal()">&times;</button>
+                <button class="rm-modal-close" onclick="closeAlertModal()">✕</button>
             </div>
             <div class="rm-modal-body">
                 <div class="rm-form-group">
@@ -1317,13 +1284,12 @@
             </div>
         </div>
     </div>
-    
-    <!-- 数据管理弹窗 -->
+
     <div class="rm-modal-overlay" id="data-modal">
         <div class="rm-modal" style="max-width:500px;">
             <div class="rm-modal-header">
-                <div class="rm-modal-title">⚙️ 数据管理</div>
-                <button class="rm-modal-close" onclick="closeDataModal()">&times;</button>
+                <div class="rm-modal-title">数据管理</div>
+                <button class="rm-modal-close" onclick="closeDataModal()">✕</button>
             </div>
             <div class="rm-modal-body" id="data-modal-content">
                 <div style="text-align:center;padding:20px;">
@@ -1333,8 +1299,7 @@
             </div>
         </div>
     </div>
-    
-    <!-- 数据清理确认弹窗 -->
+
     <div class="rm-modal-overlay" id="data-confirm-modal">
         <div class="rm-modal" style="max-width:400px;">
             <div class="rm-modal-body">
@@ -1350,11 +1315,10 @@
             </div>
         </div>
     </div>
-    
-    <!-- 头部 -->
+
     <div class="rm-header">
         <div class="rm-header-left">
-            <div class="rm-header-icon">📶</div>
+            <div class="rm-header-icon">🌐</div>
             <div>
                 <h2 class="rm-header-title">路由管家</h2>
                 <div class="rm-header-subtitle">网络管理系统</div>
@@ -1367,11 +1331,10 @@
                 <span class="rm-storage-icon" id="storage-icon">💾</span>
                 <span class="rm-storage-text" id="storage-text">存储检测中...</span>
             </div>
-            <button class="rm-data-btn" onclick="showDataManage()" title="数据管理">⚙️</button>
+            <button class="rm-data-btn" onclick="showDataManage()" title="数据管理">🗂️</button>
         </div>
     </div>
 
-    <!-- 标签页 -->
     <div class="rm-tabs">
         <button class="rm-tab active" data-tab="devices">
             <span>📱</span> 设备列表
@@ -1380,11 +1343,10 @@
             <span>📊</span> 流量统计
         </button>
         <button class="rm-tab" data-tab="wifi">
-            <span>📶</span> WiFi管理
+            <span>📡</span> WiFi管理
         </button>
     </div>
 
-    <!-- 设备列表 -->
     <div id="tab-devices" class="rm-tab-content active">
         <div class="rm-stats">
             <div class="rm-stat-card cyan">
@@ -1423,7 +1385,7 @@
                     <p>正在加载设备数据...</p>
                 </div>
                 <div id="devices-empty" class="rm-empty" style="display:none;">
-                    <div class="rm-empty-icon">📡</div>
+                    <div class="rm-empty-icon">📭</div>
                     <p>未找到连接设备</p>
                 </div>
                 <div id="devices-table" style="display:none;">
@@ -1444,7 +1406,6 @@
         </div>
     </div>
 
-    <!-- 流量统计 -->
     <div id="tab-traffic" class="rm-tab-content">
         <div class="rm-stats">
             <div class="rm-stat-card cyan">
@@ -1481,7 +1442,6 @@
             </div>
         </div>
 
-        <!-- 流量趋势图表 -->
         <div class="rm-card" style="margin-bottom: 20px;">
             <div class="rm-card-header">
                 <div class="rm-card-title">流量趋势</div>
@@ -1521,7 +1481,7 @@
         <div class="rm-card">
             <div class="rm-card-header">
                 <div class="rm-card-title">设备流量消耗排行（在线 <span id="online-count-label">0</span> 台）</div>
-                <button class="rm-btn rm-btn-secondary" onclick="openAlertModal()" style="font-size:12px;padding:6px 12px;">🔔 报警设置</button>
+                <button class="rm-btn rm-btn-secondary" onclick="openAlertModal()" style="font-size:12px;padding:6px 12px;">报警设置</button>
             </div>
             <div class="rm-card-body">
                 <div id="traffic-loading" class="rm-loading">
@@ -1529,7 +1489,7 @@
                     <p>正在加载流量数据...</p>
                 </div>
                 <div id="traffic-empty" class="rm-empty" style="display:none;">
-                    <div class="rm-empty-icon">📊</div>
+                    <div class="rm-empty-icon">📈</div>
                     <p>暂无流量统计数据</p>
                 </div>
                 <div id="traffic-table" style="display:none;">
@@ -1576,7 +1536,6 @@
         </div>
     </div>
 
-    <!-- WiFi管理 -->
     <div id="tab-wifi" class="rm-tab-content">
         <div class="rm-stats">
             <div class="rm-stat-card cyan">
@@ -1611,17 +1570,17 @@
                 <div class="rm-wifi-selector" id="wifi-selector"></div>
             </div>
             <div class="rm-wifi-hint" id="wifi-hint">
-                <span class="rm-wifi-hint-icon">💡</span>
+                <span class="rm-wifi-hint-icon">👆</span>
                 <span>点击上方网络名称查看详细信息</span>
             </div>
             <div class="rm-info-grid" id="wifi-info-grid" style="display:none;">
                 <div class="rm-info-card">
-                    <div class="rm-info-icon">📡</div>
+                    <div class="rm-info-icon">📶</div>
                     <div class="rm-info-value" id="wifi-ssid">-</div>
                     <div class="rm-info-label">网络名称 (SSID)</div>
                 </div>
                 <div class="rm-info-card">
-                    <div class="rm-info-icon">📶</div>
+                    <div class="rm-info-icon">📡</div>
                     <div class="rm-info-value" id="wifi-signal">-</div>
                     <div class="rm-info-label">信号强度 (dBm)</div>
                 </div>
@@ -1631,22 +1590,22 @@
                     <div class="rm-info-label">加密方式</div>
                 </div>
                 <div class="rm-info-card">
-                    <div class="rm-info-icon">🔌</div>
+                    <div class="rm-info-icon">✅</div>
                     <div class="rm-info-value" id="wifi-status">-</div>
                     <div class="rm-info-label">连接状态</div>
                 </div>
                 <div class="rm-info-card">
-                    <div class="rm-info-icon">📤</div>
+                    <div class="rm-info-icon">⬆️</div>
                     <div class="rm-info-value" id="wifi-tx">-</div>
                     <div class="rm-info-label">发送速率</div>
                 </div>
                 <div class="rm-info-card">
-                    <div class="rm-info-icon">📋</div>
+                    <div class="rm-info-icon">🔄</div>
                     <div class="rm-info-value" id="wifi-mode">-</div>
                     <div class="rm-info-label">工作模式</div>
                 </div>
                 <div class="rm-info-card">
-                    <div class="rm-info-icon">📺</div>
+                    <div class="rm-info-icon">📻</div>
                     <div class="rm-info-value" id="wifi-freq">-</div>
                     <div class="rm-info-label">工作频率</div>
                 </div>
@@ -1663,7 +1622,7 @@
                     <p>正在加载WiFi信息...</p>
                 </div>
                 <div id="wifi-empty" class="rm-empty" style="display:none;">
-                    <div class="rm-empty-icon">📶</div>
+                    <div class="rm-empty-icon">📡</div>
                     <p>未找到WiFi设备</p>
                 </div>
                 <div id="wifi-table" style="display:none;">
@@ -1686,34 +1645,32 @@
         </div>
     </div>
 
-    <!-- 页脚 -->
     <div class="rm-footer" id="version-info">
         路由管家 v1.0.0 | 作者：MH
     </div>
 </div>
 
 <script>
-// Toast通知函数
 function showToast(message, type, duration) {
     type = type || 'info';
     duration = duration || 3000;
-    
+
     var container = document.getElementById('toast-container');
     if (!container) return;
-    
+
     var icons = {
-        success: '✓',
-        error: '✕',
-        warning: '⚠',
-        info: 'ℹ'
+        success: '✅',
+        error: '❌',
+        warning: '⚠️',
+        info: 'ℹ️'
     };
-    
+
     var toast = document.createElement('div');
     toast.className = 'rm-toast ' + type;
     toast.innerHTML = '<span style="font-size:18px">' + icons[type] + '</span><span>' + message + '</span>';
-    
+
     container.appendChild(toast);
-    
+
     setTimeout(function() {
         toast.classList.add('hide');
         setTimeout(function() {
@@ -1724,7 +1681,6 @@ function showToast(message, type, duration) {
     }, duration);
 }
 
-// 获取版本信息
 function loadVersion() {
     XHR.get('<%=luci.dispatcher.build_url("admin/status/router_assistant/get_version")%>', null,
         function(xhr) {
@@ -1739,7 +1695,6 @@ function loadVersion() {
     );
 }
 
-// 设备注释相关变量和函数
 var LUCI_TOKEN = '<%=token%>';
 var deviceNotes = {};
 var globalThreshold = 0;
@@ -1786,9 +1741,9 @@ function closeNoteModal() {
 function saveNote() {
     var mac = document.getElementById('note-mac').value;
     var note = document.getElementById('note-content').value;
-    
+
     var params = 'mac=' + encodeURIComponent(mac) + '&note=' + encodeURIComponent(note);
-    
+
     safeXHRpost('<%=luci.dispatcher.build_url("admin/status/router_assistant/save_device_note")%>', params,
         function(res) {
             if (res.code === 0) {
@@ -1808,9 +1763,9 @@ function saveNote() {
 
 function deleteNote() {
     var mac = document.getElementById('note-mac').value;
-    
+
     var params = 'mac=' + encodeURIComponent(mac);
-    
+
     safeXHRpost('<%=luci.dispatcher.build_url("admin/status/router_assistant/delete_device_note")%>', params,
         function(res) {
             if (res.code === 0) {
@@ -1846,12 +1801,12 @@ function saveAlert() {
     var warningLevel = parseInt(document.getElementById('alert-warning').value) || 50;
     var dangerLevel = parseInt(document.getElementById('alert-danger').value) || 80;
     var criticalLevel = parseInt(document.getElementById('alert-critical').value) || 100;
-    
-    var params = 'threshold=' + encodeURIComponent(threshold) + 
+
+    var params = 'threshold=' + encodeURIComponent(threshold) +
                  '&warning_level=' + encodeURIComponent(warningLevel) +
                  '&danger_level=' + encodeURIComponent(dangerLevel) +
                  '&critical_level=' + encodeURIComponent(criticalLevel);
-    
+
     safeXHRpost('<%=luci.dispatcher.build_url("admin/status/router_assistant/save_alert")%>', params,
         function(res) {
             if (res.code === 0) {
@@ -1869,14 +1824,13 @@ function saveAlert() {
     );
 }
 
-// 流量图表相关函数
 var chartData = {daily: [], hourly: []};
 
 function loadChart(period) {
     document.getElementById('chart-daily-btn').classList.remove('active');
     document.getElementById('chart-hourly-btn').classList.remove('active');
     document.getElementById('chart-' + period + '-btn').classList.add('active');
-    
+
     safeXHR(
         '<%=luci.dispatcher.build_url("admin/status/router_assistant/get_traffic_history")%>?period=' + period,
         function(res) {
@@ -1904,33 +1858,33 @@ function renderChart(period) {
         document.getElementById('chart-area-tx').setAttribute('d', '');
         return;
     }
-    
+
     var width = 800;
     var height = 200;
     var padding = {top: 20, right: 20, bottom: 30, left: 50};
     var chartWidth = width - padding.left - padding.right;
     var chartHeight = height - padding.top - padding.bottom;
-    
+
     var maxValue = 0;
     data.forEach(function(d) {
         maxValue = Math.max(maxValue, d.rx || 0, d.tx || 0);
     });
     maxValue = maxValue || 1;
-    
+
     var xScale = function(i) {
         return padding.left + (i / (data.length - 1 || 1)) * chartWidth;
     };
     var yScale = function(v) {
         return height - padding.bottom - (v / maxValue) * chartHeight;
     };
-    
+
     var gridLines = '';
     for (var i = 0; i <= 4; i++) {
         var y = padding.top + (i / 4) * chartHeight;
         gridLines += '<line class="rm-chart-grid" x1="' + padding.left + '" y1="' + y + '" x2="' + (width - padding.right) + '" y2="' + y + '"/>';
     }
     document.querySelector('.rm-chart-grid-lines').innerHTML = gridLines;
-    
+
     var yLabels = '';
     for (var i = 0; i <= 4; i++) {
         var y = padding.top + (i / 4) * chartHeight;
@@ -1938,7 +1892,7 @@ function renderChart(period) {
         yLabels += '<text class="rm-chart-label" x="' + (padding.left - 5) + '" y="' + (y + 4) + '" text-anchor="end">' + formatSize(value) + '</text>';
     }
     document.querySelector('.rm-chart-y-labels').innerHTML = yLabels;
-    
+
     var xLabels = '';
     var step = Math.max(1, Math.floor(data.length / 7));
     for (var i = 0; i < data.length; i += step) {
@@ -1954,18 +1908,18 @@ function renderChart(period) {
         xLabels += '<text class="rm-chart-label" x="' + x + '" y="' + (height - 10) + '" text-anchor="middle">' + label + '</text>';
     }
     document.querySelector('.rm-chart-x-labels').innerHTML = xLabels;
-    
+
     var rxPath = '';
     var txPath = '';
     var rxArea = '';
     var txArea = '';
     var dots = '';
-    
+
     data.forEach(function(d, i) {
         var x = xScale(i);
         var yRx = yScale(d.rx || 0);
         var yTx = yScale(d.tx || 0);
-        
+
         if (i === 0) {
             rxPath = 'M ' + x + ' ' + yRx;
             txPath = 'M ' + x + ' ' + yTx;
@@ -1977,14 +1931,14 @@ function renderChart(period) {
             rxArea += ' L ' + x + ' ' + yRx;
             txArea += ' L ' + x + ' ' + yTx;
         }
-        
+
         dots += '<circle class="rm-chart-dot rx" cx="' + x + '" cy="' + yRx + '" onmouseenter="showChartTooltip(event, ' + i + ', \'rx\', \'' + period + '\')" onmouseleave="hideChartTooltip()"/>';
         dots += '<circle class="rm-chart-dot tx" cx="' + x + '" cy="' + yTx + '" onmouseenter="showChartTooltip(event, ' + i + ', \'tx\', \'' + period + '\')" onmouseleave="hideChartTooltip()"/>';
     });
-    
+
     rxArea += ' L ' + xScale(data.length - 1) + ' ' + (height - padding.bottom) + ' Z';
     txArea += ' L ' + xScale(data.length - 1) + ' ' + (height - padding.bottom) + ' Z';
-    
+
     document.getElementById('chart-line-rx').setAttribute('d', rxPath);
     document.getElementById('chart-line-tx').setAttribute('d', txPath);
     document.getElementById('chart-area-rx').setAttribute('d', rxArea);
@@ -1995,11 +1949,11 @@ function renderChart(period) {
 function showChartTooltip(event, index, type, period) {
     var data = period === 'daily' ? chartData.daily : chartData.hourly;
     if (!data || !data[index]) return;
-    
+
     var d = data[index];
     var value = type === 'rx' ? d.rx : d.tx;
     var label = type === 'rx' ? '接收' : '发送';
-    
+
     var tooltip = document.getElementById('chart-tooltip');
     tooltip.innerHTML = label + ': ' + formatSize(value);
     tooltip.style.left = (event.pageX + 10) + 'px';
@@ -2083,12 +2037,12 @@ function renderDevices(devices, checkOnly) {
     devices.forEach(function(dev) {
         var isWifi = isWifiDevice(dev);
         var kickBtn = '<button class="rm-kick-btn" onclick="kickDevice(\'' + escapeHtml(dev.mac) + '\', \'' + escapeHtml(dev.device || '') + '\')">踢出</button>';
-        var noteBtn = '<button class="rm-note-btn" onclick="openNoteModal(\'' + escapeHtml(dev.mac) + '\', \'' + escapeHtml(dev.hostname || '') + '\')" title="编辑备注">📝</button>';
-        
+        var noteBtn = '<button class="rm-note-btn" onclick="openNoteModal(\'' + escapeHtml(dev.mac) + '\', \'' + escapeHtml(dev.hostname || '') + '\')" title="编辑备注">编辑</button>';
+
         var noteInfo = deviceNotes[dev.mac];
         var hostname = dev.hostname || 'Unknown';
         var isUnknown = (hostname === 'Unknown' || hostname === '未知设备' || !hostname);
-        
+
         var displayName;
         if (noteInfo && noteInfo.note) {
             if (isUnknown) {
@@ -2099,13 +2053,13 @@ function renderDevices(devices, checkOnly) {
         } else {
             displayName = escapeHtml(hostname);
         }
-        
+
         var signalDisplay = '-';
         if (isWifi && dev.signal && dev.signal !== 0) {
-            var signalClass = dev.signal >= -60 ? 'rm-signal-excellent' : 
-                             dev.signal >= -80 ? 'rm-signal-good' : 
-                             dev.signal >= -90 ? 'rm-signal-fair' : 
-                             dev.signal >= -100 ? 'rm-signal-normal' : 
+            var signalClass = dev.signal >= -60 ? 'rm-signal-excellent' :
+                             dev.signal >= -80 ? 'rm-signal-good' :
+                             dev.signal >= -90 ? 'rm-signal-fair' :
+                             dev.signal >= -100 ? 'rm-signal-normal' :
                              dev.signal >= -110 ? 'rm-signal-weak' : 'rm-signal-poor';
             signalDisplay = '<span class="' + signalClass + '">' + dev.signal + ' dBm</span>';
         }
@@ -2147,11 +2101,11 @@ function renderTraffic(data) {
             var duration = currentTime - dev.first_seen;
             onlineDuration = '<div class="rm-device-duration" style="font-size:11px;color:var(--text-secondary);">在线: ' + formatDuration(duration) + '</div>';
         }
-        
+
         var noteInfo = deviceNotes[dev.mac];
         var hostname = dev.hostname || 'Unknown';
         var isUnknown = (hostname === 'Unknown' || hostname === '未知设备' || !hostname);
-        
+
         var displayName;
         if (noteInfo && noteInfo.note) {
             if (isUnknown) {
@@ -2162,7 +2116,7 @@ function renderTraffic(data) {
         } else {
             displayName = escapeHtml(hostname);
         }
-        
+
         var totalColorClass = '';
         if (globalThreshold > 0 && dev.total > 0) {
             var percent = (dev.total / globalThreshold) * 100;
@@ -2174,7 +2128,7 @@ function renderTraffic(data) {
                 totalColorClass = 'style="color:#FFC107;font-weight:600;"';
             }
         }
-        
+
         onlineHtml += '<tr>' +
             '<td>' +
                 '<div class="rm-device-name">' + displayName + '</div>' +
@@ -2182,8 +2136,8 @@ function renderTraffic(data) {
                 onlineDuration +
             '</td>' +
             '<td><span class="rm-mac">' + escapeHtml(dev.mac) + '</span></td>' +
-            '<td class="rm-traffic-rx">↓ ' + escapeHtml(dev.rx_display) + '</td>' +
-            '<td class="rm-traffic-tx">↑ ' + escapeHtml(dev.tx_display) + '</td>' +
+            '<td class="rm-traffic-rx">⬇️ ' + escapeHtml(dev.rx_display) + '</td>' +
+            '<td class="rm-traffic-tx">⬆️ ' + escapeHtml(dev.tx_display) + '</td>' +
             '<td class="rm-traffic-total" ' + totalColorClass + '>' + escapeHtml(dev.total_display) + '</td>' +
             '</tr>';
     });
@@ -2196,7 +2150,7 @@ function renderTraffic(data) {
     if (offlineDevices.length > 0) {
         if (offlineCard) offlineCard.style.display = 'block';
         document.getElementById('offline-count-label').textContent = offlineDevices.length;
-        
+
         var offlineHtml = '';
         offlineDevices.forEach(function(dev) {
             var lastSeen = '';
@@ -2204,7 +2158,7 @@ function renderTraffic(data) {
                 var lastSeenDuration = currentTime - dev.last_seen;
                 lastSeen = '<div class="rm-device-duration" style="font-size:11px;color:var(--text-secondary);">最后在线: ' + formatDuration(lastSeenDuration) + '前</div>';
             }
-            
+
             var totalColorClass = '';
             if (globalThreshold > 0 && dev.total > 0) {
                 var percent = (dev.total / globalThreshold) * 100;
@@ -2216,11 +2170,11 @@ function renderTraffic(data) {
                     totalColorClass = 'style="color:#FFC107;font-weight:600;"';
                 }
             }
-            
+
             var noteInfo = deviceNotes[dev.mac];
             var hostname = dev.hostname || 'Unknown';
             var isUnknown = (hostname === 'Unknown' || hostname === '未知设备' || !hostname);
-            
+
             var displayName;
             if (noteInfo && noteInfo.note) {
                 if (isUnknown) {
@@ -2231,7 +2185,7 @@ function renderTraffic(data) {
             } else {
                 displayName = escapeHtml(hostname);
             }
-            
+
             offlineHtml += '<tr class="rm-offline">' +
                 '<td>' +
                     '<div class="rm-device-name">' + displayName + ' <span class="rm-badge rm-badge-offline">离线</span></div>' +
@@ -2239,8 +2193,8 @@ function renderTraffic(data) {
                     lastSeen +
                 '</td>' +
                 '<td><span class="rm-mac">' + escapeHtml(dev.mac) + '</span></td>' +
-                '<td class="rm-traffic-rx">↓ ' + escapeHtml(dev.rx_display) + '</td>' +
-                '<td class="rm-traffic-tx">↑ ' + escapeHtml(dev.tx_display) + '</td>' +
+                '<td class="rm-traffic-rx">⬇️ ' + escapeHtml(dev.rx_display) + '</td>' +
+                '<td class="rm-traffic-tx">⬆️ ' + escapeHtml(dev.tx_display) + '</td>' +
                 '<td class="rm-traffic-total" ' + totalColorClass + '>' + escapeHtml(dev.total_display) + '</td>' +
                 '</tr>';
         });
@@ -2267,12 +2221,12 @@ function renderWifi(wifiList, checkOnly) {
 
     var html = '';
     wifiList.forEach(function(wifi) {
-        var statusBadge = wifi.status === 'connected' 
+        var statusBadge = wifi.status === 'connected'
             ? '<span class="rm-badge" style="background:rgba(0,230,118,0.2);color:var(--accent-green);">运行中</span>'
             : wifi.status === 'disabled'
             ? '<span class="rm-badge" style="background:rgba(128,128,128,0.2);color:#888;">已禁用</span>'
             : '<span class="rm-badge" style="background:rgba(255,82,82,0.2);color:var(--accent-red);">未连接</span>';
-        
+
         html += '<tr>' +
             '<td><strong>' + escapeHtml(wifi.iface) + '</strong></td>' +
             '<td>' + escapeHtml(wifi.ssid) + '</td>' +
@@ -2287,7 +2241,7 @@ function renderWifi(wifiList, checkOnly) {
     document.getElementById('stat-wifi-count').textContent = wifiList.length;
     document.getElementById('wifi-tbody').innerHTML = html;
     document.getElementById('wifi-table').style.display = 'block';
-    
+
     return true;
 }
 
@@ -2307,17 +2261,17 @@ function formatSize(bytes) {
 
 function formatDuration(seconds) {
     if (!seconds || seconds <= 0) return '-';
-    
+
     var days = Math.floor(seconds / 86400);
     var hours = Math.floor((seconds % 86400) / 3600);
     var minutes = Math.floor((seconds % 3600) / 60);
-    
+
     var result = '';
     if (days > 0) result += days + '天';
     if (hours > 0 || days > 0) result += hours + '小时';
     if (minutes > 0 && days === 0) result += minutes + '分钟';
     if (result === '') result = '刚刚';
-    
+
     return result;
 }
 
@@ -2345,29 +2299,29 @@ function renderStorageStatus(data) {
     statusEl.style.display = 'flex';
 
     if (data.storage_changed) {
-        var changeMsg = data.previous_type === 'memory' 
-            ? '检测到TF卡，建议迁移数据' 
+        var changeMsg = data.previous_type === 'memory'
+            ? '检测到TF卡，建议迁移数据'
             : 'TF卡已移除，数据已切换到内存存储';
         showToast(changeMsg, data.previous_type === 'memory' ? 'info' : 'warning', 5000);
     }
 
     if (data.tf_card && data.tf_card.exists) {
         statusEl.className = 'rm-storage-status tf-card';
-        iconEl.textContent = '💾';
+        iconEl.textContent = 'TF';
         var availGB = (data.tf_card.available / (1024 * 1024 * 1024)).toFixed(1);
-        textEl.innerHTML = 'TF卡: ' + availGB + 'GB可用 / ' + data.tf_card.percent + '已用 <button class="rm-storage-btn" onclick="clearData()" title="清除数据">🗑️</button>';
+        textEl.innerHTML = 'TF卡: ' + availGB + 'GB可用 / ' + data.tf_card.percent + '已用 <button class="rm-storage-btn" onclick="clearData()" title="清除数据">清除</button>';
     } else {
         statusEl.className = 'rm-storage-status memory';
-        iconEl.textContent = '⚠️';
-        textEl.innerHTML = '内存存储（重启丢失） <button class="rm-storage-btn" onclick="migrateData()" title="迁移到TF卡">📤</button>';
+        iconEl.textContent = 'MEM';
+        textEl.innerHTML = '内存存储（重启丢失） <button class="rm-storage-btn" onclick="migrateData()" title="迁移到TF卡">迁移</button>';
     }
 }
 
 function migrateData() {
     if (!confirm('确定要将数据迁移到TF卡吗？')) return;
-    
+
     showToast('正在迁移数据...', 'info');
-    
+
     safeXHR(
         '<%=luci.dispatcher.build_url("admin/status/router_assistant/migrate_storage")%>',
         function(res) {
@@ -2388,9 +2342,9 @@ function migrateData() {
 
 function clearData() {
     if (!confirm('确定要清除所有流量统计数据吗？此操作不可恢复！')) return;
-    
+
     showToast('正在清除数据...', 'info');
-    
+
     safeXHRpost(
         '<%=luci.dispatcher.build_url("admin/status/router_assistant/clear_data")%>',
         '',
@@ -2408,7 +2362,6 @@ function clearData() {
     );
 }
 
-// 数据管理功能
 var pendingClearType = '';
 
 function showDataManage() {
@@ -2429,9 +2382,9 @@ function closeDataModal() {
 function loadDataStats() {
     var contentEl = document.getElementById('data-modal-content');
     if (!contentEl) return;
-    
+
     contentEl.innerHTML = '<div style="text-align:center;padding:20px;"><div class="rm-loading-spinner" style="margin:0 auto 16px;"></div><p>正在加载数据统计...</p></div>';
-    
+
     safeXHR(
         '<%=luci.dispatcher.build_url("admin/status/router_assistant/get_data_stats")%>',
         function(res) {
@@ -2450,66 +2403,67 @@ function loadDataStats() {
 function renderDataStats(data) {
     var contentEl = document.getElementById('data-modal-content');
     if (!contentEl) return;
-    
+
     var storageTypeText = data.storage_info.type === 'tf_card' ? 'TF卡存储' : '内存存储（重启丢失）';
     var totalSizeKB = (data.total_size / 1024).toFixed(2);
-    
+
     var html = '<div style="margin-bottom:16px;padding:12px;background:rgba(0,0,0,0.2);border-radius:8px;font-size:12px;">' +
         '<strong>存储位置:</strong> ' + data.storage_info.path + '<br>' +
         '<strong>存储类型:</strong> ' + storageTypeText + ' | 总大小: ' + totalSizeKB + ' KB' +
         '</div>';
-    
+
     html += '<div class="rm-data-card">';
     html += '<div class="rm-data-card-header"><span class="rm-data-card-title">数据文件列表</span><span class="rm-data-card-size">共 ' + data.data_files.length + ' 个文件</span></div>';
-    
+
     data.data_files.forEach(function(file) {
         var sizeKB = (file.size / 1024).toFixed(2);
         var statusClass = file.exists ? 'color:var(--accent-green)' : 'color:var(--text-secondary)';
-        var statusText = file.exists ? '✓ ' + sizeKB + ' KB' : '✗ 不存在';
-        
+        var statusText = file.exists ? 'OK ' + sizeKB + ' KB' : 'X 不存在';
+
         html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border-color);">';
         html += '<div><strong>' + file.desc + '</strong><br><span style="font-size:11px;color:var(--text-secondary);">' + file.name + '</span></div>';
         html += '<div style="' + statusClass + '">' + statusText + '</div>';
         html += '</div>';
     });
-    
+
     html += '</div>';
-    
+
     html += '<div class="rm-data-actions">';
-    html += '<button class="rm-data-action-btn warning" onclick="showClearConfirm(\'traffic\')">🗑️ 清除流量数据</button>';
-    html += '<button class="rm-data-action-btn info" onclick="showClearConfirm(\'notes\')">📝 清除备注数据</button>';
-    html += '<button class="rm-data-action-btn danger" onclick="showClearConfirm(\'all\')">⚠️ 清除所有数据</button>';
+    html += '<button class="rm-data-action-btn info" onclick="createBackup()">创建备份</button>';
+    html += '<button class="rm-data-action-btn warning" onclick="showClearConfirm(\'traffic\')">清除流量数据</button>';
+    html += '<button class="rm-data-action-btn warning" onclick="showClearConfirm(\'notes\')">清除备注数据</button>';
+    html += '<button class="rm-data-action-btn danger" onclick="showClearConfirm(\'all\')">清除所有数据</button>';
     html += '</div>';
-    
+
     contentEl.innerHTML = html;
 }
 
 function showClearConfirm(type) {
     pendingClearType = type;
-    
+
     var confirmModal = document.getElementById('data-confirm-modal');
     var iconEl = document.getElementById('data-confirm-icon');
     var titleEl = document.getElementById('data-confirm-title');
     var messageEl = document.getElementById('data-confirm-message');
-    
+
     var typeNames = {
         traffic: '流量统计数据',
         notes: '设备备注数据',
         alerts: '流量报警设置',
         all: '所有数据'
     };
-    
+
     var messages = {
         traffic: '将删除流量统计数据和流量历史记录，此操作不可恢复。',
         notes: '将删除所有设备备注，此操作不可恢复。',
         alerts: '将删除流量报警设置，此操作不可恢复。',
         all: '将删除所有用户数据，包括流量统计、设备备注、流量历史、报警设置。此操作不可恢复！'
     };
-    
-    if (iconEl) iconEl.textContent = type === 'all' ? '⚠️' : '🗑️';
+
+    if (iconEl) iconEl.textContent = type === 'all' ? '!' : 'X';
     if (titleEl) titleEl.textContent = '确认删除' + typeNames[type];
     if (messageEl) messageEl.innerHTML = messages[type];
-    
+
     if (confirmModal) {
         confirmModal.classList.add('active');
     }
@@ -2525,10 +2479,10 @@ function closeDataConfirmModal() {
 
 function confirmClearData() {
     if (!pendingClearType) return;
-    
+
     closeDataConfirmModal();
     showToast('正在清除数据...', 'info');
-    
+
     safeXHRpost(
         '<%=luci.dispatcher.build_url("admin/status/router_assistant/clear_all_data")%>',
         'data_type=' + pendingClearType,
@@ -2539,6 +2493,22 @@ function confirmClearData() {
                 loadStorageStatus();
             } else {
                 showToast('清除失败: ' + res.message, 'error');
+            }
+        },
+        function(error) {
+            showToast('网络错误: ' + error, 'error');
+        }
+    );
+}
+
+function createBackup() {
+    safeXHR(
+        '<%=luci.dispatcher.build_url("admin/status/router_assistant/backup_data")%>',
+        function(res) {
+            if (res.code === 0) {
+                showToast('备份已创建', 'success');
+            } else {
+                showToast('备份失败: ' + res.message, 'error');
             }
         },
         function(error) {
@@ -2572,7 +2542,6 @@ var lastDataHash = {
     wifi: ''
 };
 
-// 前端数据缓存系统
 var dataCache = {
     devices: { data: null, timestamp: 0, ttl: 3000 },
     traffic: { data: null, timestamp: 0, ttl: 5000 },
@@ -2585,20 +2554,20 @@ var dataCache = {
 function getCache(key) {
     var cache = dataCache[key];
     if (!cache) return null;
-    
+
     var now = Date.now();
     if (cache.data && (now - cache.timestamp) < cache.ttl) {
         console.log('[缓存] 命中: ' + key);
         return cache.data;
     }
-    
+
     return null;
 }
 
 function setCache(key, data) {
     var cache = dataCache[key];
     if (!cache) return;
-    
+
     cache.data = data;
     cache.timestamp = Date.now();
     console.log('[缓存] 更新: ' + key);
@@ -2663,7 +2632,7 @@ function safeXHRpost(url, params, callback, errorCallback) {
     xhr.open('POST', url, true);
     xhr.timeout = 5000;
     xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
-    
+
     if (typeof LUCI_TOKEN !== 'undefined' && LUCI_TOKEN) {
         params = 'token=' + encodeURIComponent(LUCI_TOKEN) + '&' + params;
     }
@@ -2754,7 +2723,7 @@ function loadDevices(retryCount) {
             } else {
                 if (empty) {
                     empty.style.display = 'block';
-                    empty.innerHTML = '<div class="rm-empty-icon">📡</div><p>连接失败，请检查网络</p>';
+                    empty.innerHTML = '<div class="rm-empty-icon">⚠️</div><p>连接失败，请检查网络</p>';
                 }
             }
         }
@@ -2782,7 +2751,7 @@ function loadTraffic(retryCount) {
             pendingRequests.traffic = false;
             isFirstLoad.traffic = false;
             if (loading) loading.style.display = 'none';
-            
+
             if (res.code === 0) {
                 renderTraffic(res);
                 if (table) table.style.display = 'block';
@@ -2803,7 +2772,7 @@ function loadTraffic(retryCount) {
             } else {
                 if (empty) {
                     empty.style.display = 'block';
-                    empty.innerHTML = '<div class="rm-empty-icon">📊</div><p>连接失败，请检查网络</p>';
+                    empty.innerHTML = '<div class="rm-empty-icon">⚠️</div><p>连接失败，请检查网络</p>';
                 }
             }
         }
@@ -2869,7 +2838,6 @@ function loadWifiStatus() {
 function renderWifiStatus(statusList) {
     if (!statusList || statusList.length === 0) return;
 
-    // 过滤掉SSID为"-"的无效WiFi接口
     var validWifiList = statusList.filter(function(status) {
         return status.ssid && status.ssid !== '-' && status.ssid !== '';
     });
@@ -2893,13 +2861,11 @@ function renderWifiStatus(statusList) {
                 btn.dataset.index = index;
                 btn.onclick = function() {
                     if (selectedWifiIndex === index) {
-                        // 点击已选中的按钮，取消选中状态，收起详情
                         selectedWifiIndex = -1;
                         btn.classList.remove('active');
                         if (grid) grid.style.display = 'none';
                         if (hint) hint.style.display = 'flex';
                     } else {
-                        // 点击其他按钮，选中该按钮，展开详情
                         selectedWifiIndex = index;
                         document.querySelectorAll('.rm-wifi-btn').forEach(function(b) { b.classList.remove('active'); });
                         btn.classList.add('active');
@@ -2930,7 +2896,7 @@ function renderWifiStatus(statusList) {
             totalStations += status.connected_stations.length;
         }
     });
-    
+
     var wifiDevicesEl = document.getElementById('stat-wifi-devices');
     if (wifiDevicesEl) wifiDevicesEl.textContent = totalStations;
 

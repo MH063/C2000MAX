@@ -649,9 +649,11 @@ function api_get_wifi()
             -- 获取连接的客户端数量
             local stations_output = sys.exec("iwinfo " .. ifname .. " assoclist 2>/dev/null")
             local client_count = 0
-            if stations_output and not stations_output:match("No station") then
-                for _ in stations_output:gmatch("[%x%x:%x%x:%x%x:%x%x:%x%x:%x%x]") do
-                    client_count = client_count + 1
+            if stations_output and stations_output ~= "" and not stations_output:match("No station") then
+                for line in stations_output:gmatch("[^\r\n]+") do
+                    if line:match("^(%x%x:%x%x:%x%x:%x%x:%x%x:%x%x)") then
+                        client_count = client_count + 1
+                    end
                 end
             end
 
@@ -1570,51 +1572,65 @@ function api_clear_all_data()
 
     local ok, err = pcall(function()
         local data_type = luci.http.formvalue("data_type") or "all"
-        local storage_path = get_storage_path()
-        local data_dir = storage_path:match("^(.+)/[^/]+$") or "/tmp/router_assistant"
+
+        local all_possible_dirs = {
+            "/tmp/storage/mmcblk0p1/router_assistant",
+            "/mnt/mmcblk0p1/router_assistant",
+            "/mnt/sdcard/router_assistant",
+            "/tmp/mnt/mmcblk0p1/router_assistant",
+            "/overlay/router_assistant",
+            "/tmp/router_assistant"
+        }
 
         local file_map = {
             all = {
-                "traffic_stats.json",
-                "device_notes.json",
-                "traffic_history.json",
-                "traffic_alerts.json"
+                DATA_FILE_NAME,
+                NOTES_FILE_NAME,
+                HISTORY_FILE_NAME,
+                ALERTS_FILE_NAME
             },
             traffic = {
-                "traffic_stats.json",
-                "traffic_history.json"
+                DATA_FILE_NAME,
+                HISTORY_FILE_NAME
             },
             notes = {
-                "device_notes.json"
+                NOTES_FILE_NAME
             },
             alerts = {
-                "traffic_alerts.json"
+                ALERTS_FILE_NAME
             }
         }
 
         local files_to_delete = file_map[data_type] or file_map.all
+        local deleted_count = 0
 
-        for _, filename in ipairs(files_to_delete) do
-            local file_path = data_dir .. "/" .. filename
-            local fd = io.open(file_path, "r")
-            if fd then
-                fd:close()
-                os.remove(file_path)
-                table.insert(result.deleted_files, {
-                    name = filename,
-                    success = true
-                })
-            else
-                table.insert(result.deleted_files, {
-                    name = filename,
-                    success = false,
-                    reason = "文件不存在"
-                })
+        for _, data_dir in ipairs(all_possible_dirs) do
+            for _, filename in ipairs(files_to_delete) do
+                local file_path = data_dir .. "/" .. filename
+                local fd = io.open(file_path, "r")
+                if fd then
+                    fd:close()
+                    local remove_ok = os.remove(file_path)
+                    if remove_ok then
+                        table.insert(result.deleted_files, {
+                            name = filename,
+                            path = file_path,
+                            success = true
+                        })
+                        deleted_count = deleted_count + 1
+                    end
+                end
             end
         end
 
-        result.message = "数据清理完成"
+        if deleted_count > 0 then
+            result.message = "数据清理完成，共删除 " .. deleted_count .. " 个文件"
+        else
+            result.message = "没有找到需要清理的文件"
+        end
+
         _cached_storage_path = nil
+        _storage_path_cache_time = 0
     end)
 
     if not ok then
