@@ -10,6 +10,53 @@ function index()
     entry({"admin", "status", "router_assistant", "kick_device"}, post("api_kick_device")).leaf = true
     entry({"admin", "status", "router_assistant", "enable_device"}, post("api_enable_device")).leaf = true
     entry({"admin", "status", "router_assistant", "get_blocked"}, call("api_get_blocked_devices")).leaf = true
+    entry({"admin", "status", "router_assistant", "get_storage_status"}, call("api_get_storage_status")).leaf = true
+    entry({"admin", "status", "router_assistant", "migrate_storage"}, post("api_migrate_storage")).leaf = true
+    entry({"admin", "status", "router_assistant", "clear_data"}, post("api_clear_data")).leaf = true
+end
+
+local function get_csrf_token()
+    local sys = require("luci.sys")
+    return sys.uniqueid(16)
+end
+
+local function validate_csrf()
+    local http = require("luci.http")
+    local token = http.formvalue("token") or http.getenv("HTTP_X_CSRF_TOKEN")
+    local session_token = require("luci.dispatcher").context.csrf_token
+    
+    if not token or not session_token or token ~= session_token then
+        return false
+    end
+    return true
+end
+
+function is_wifi_device(client)
+    if client.type == "wireless" then
+        return true
+    end
+
+    local ifname = client.ifname or ""
+    local wifi_ifaces = {
+        "ra0", "rai0", "ra1", "rai1",
+        "apcli0", "apcli1", "apclii0", "apclii1",
+        "wlan0", "wlan1", "wlan2", "wlan3"
+    }
+    for _, iface in ipairs(wifi_ifaces) do
+        if ifname == iface or ifname:match("^" .. iface .. "%.") then
+            return true
+        end
+    end
+
+    local rssi = client.rssi
+    if rssi and type(rssi) == "string" and rssi ~= "" and rssi ~= "0" then
+        return true
+    end
+    if rssi and type(rssi) == "number" and rssi ~= 0 then
+        return true
+    end
+
+    return false
 end
 
 function api_get_devices()
@@ -36,7 +83,7 @@ function api_get_devices()
                     end
                     local mac_upper = mac_str:upper()
 
-                    local is_wifi = (client.type == "wireless")
+                    local is_wifi = is_wifi_device(client)
 
                     local hostname = "Unknown"
                     if client.hostname and type(client.hostname) == "string" then
@@ -62,7 +109,7 @@ function api_get_devices()
                         rssi = tonumber(client.rssi) or 0
                     end
 
-                    local is_upstream = (ifname == "eth1" or ifname == "eth2" or ifname == "eth3")
+                    local is_upstream = (ifname == "eth1" or ifname == "eth3")
                     if not is_upstream then
                         table.insert(devices_list, {
                             ip = ip,
@@ -90,20 +137,125 @@ function api_get_devices()
     luci.http.write_json(response_data)
 end
 
-function api_get_traffic()
-    os.execute("echo '=== api_get_traffic start ===' > /tmp/traffic_debug.log")
+local _cached_storage_path = nil
+local _storage_path_cache_time = 0
+local _last_storage_type = nil
+local STORAGE_CACHE_TTL = 3600
+local DATA_DIR_NAME = "router_assistant"
+local DATA_FILE_NAME = "traffic_stats.json"
 
+local function get_storage_type(path)
+    if path:find("mmcblk0") or path:find("sdcard") or path:find("storage") then
+        return "tf_card"
+    end
+    return "memory"
+end
+
+local function ensure_directory(path)
+    local dir = path:match("^(.+)/[^/]+$")
+    if dir and dir ~= "" then
+        local check_fd = io.open(dir, "r")
+        if not check_fd then
+            os.execute("mkdir -p " .. dir .. " 2>/dev/null")
+        else
+            check_fd:close()
+        end
+    end
+end
+
+local function get_storage_path()
+    local current_time = os.time()
+    if _cached_storage_path and (current_time - _storage_path_cache_time) < STORAGE_CACHE_TTL then
+        return _cached_storage_path
+    end
+
+    local storage_base_paths = {
+        "/tmp/storage/mmcblk0p1",
+        "/mnt/mmcblk0p1",
+        "/mnt/sdcard",
+        "/tmp/mnt/mmcblk0p1",
+        "/overlay"
+    }
+    
+    for _, base_path in ipairs(storage_base_paths) do
+        local data_dir = base_path .. "/" .. DATA_DIR_NAME
+        ensure_directory(data_dir)
+        local test_file = data_dir .. "/.write_test"
+        local fd = io.open(test_file, "w")
+        if fd then
+            fd:close()
+            os.remove(test_file)
+            _cached_storage_path = data_dir .. "/" .. DATA_FILE_NAME
+            _storage_path_cache_time = current_time
+            return _cached_storage_path
+        end
+    end
+    
+    local fallback_dir = "/tmp/" .. DATA_DIR_NAME
+    ensure_directory(fallback_dir)
+    _cached_storage_path = fallback_dir .. "/" .. DATA_FILE_NAME
+    _storage_path_cache_time = current_time
+    return _cached_storage_path
+end
+
+local function save_data_atomic(file_path, data)
+    local temp_file = file_path .. ".tmp." .. os.time()
+    local fd = io.open(temp_file, "w")
+    if not fd then
+        return false, "Cannot create temp file"
+    end
+    
+    local ok, err = pcall(function()
+        fd:write(data)
+        fd:close()
+    end)
+    
+    if not ok then
+        os.remove(temp_file)
+        return false, err or "Write failed"
+    end
+    
+    local rename_ok = os.rename(temp_file, file_path)
+    if not rename_ok then
+        os.remove(temp_file)
+        return false, "Rename failed"
+    end
+    
+    return true
+end
+
+local function save_with_fallback(file_path, data)
+    local ok, err = save_data_atomic(file_path, data)
+    if ok then
+        _last_storage_type = get_storage_type(file_path)
+        return true, file_path
+    end
+    
+    _cached_storage_path = nil
+    _storage_path_cache_time = 0
+    
+    if file_path ~= "/tmp/router_assistant/traffic_stats.json" then
+        local fallback_path = "/tmp/router_assistant/traffic_stats.json"
+        ensure_directory(fallback_path)
+        ok, err = save_data_atomic(fallback_path, data)
+        if ok then
+            _cached_storage_path = fallback_path
+            _last_storage_type = "memory"
+            return true, fallback_path
+        end
+    end
+    
+    return false, err
+end
+
+function api_get_traffic()
     local response_data = nil
 
     local ok, err = pcall(function()
         local util = require("luci.util")
         local json = require("luci.jsonc")
 
-        local history_file = "/mnt/sdcard/traffic_stats.json"
-        if not util.exec("test -d /mnt/sdcard && echo 'exists'") then
-            history_file = "/tmp/traffic_stats.json"
-        end
-
+        local history_file = get_storage_path()
         local history = {}
         local history_fd = io.open(history_file, "r")
         if history_fd then
@@ -116,28 +268,25 @@ function api_get_traffic()
                 end
             end
         end
-
         local current_traffic = {}
-        local devices_list = {}
-        local device_count = 0
+        local online_devices = {}
+        local offline_devices = {}
+        local total_rx = 0
+        local total_tx = 0
+        local online_count = 0
+        local offline_count = 0
 
         local cmd = "ubus call infocd terminal 2>/dev/null"
         local output = util.exec(cmd)
-
         if output and output ~= "" then
             local parse_ok, data = pcall(json.parse, output)
             if parse_ok and data and data.client then
                 for mac, client in pairs(data.client) do
-                    device_count = device_count + 1
-
                     local mac_str = (mac and type(mac) == "string") and mac or (mac and tostring(mac)) or ""
                     local mac_upper = mac_str:upper()
-
                     local real_mac_raw = client.real_mac
                     local real_mac = (real_mac_raw and type(real_mac_raw) == "string" and real_mac_raw ~= "") and real_mac_raw or ""
-
                     local device_id = (real_mac ~= "" and real_mac ~= mac_str) and real_mac:upper() or mac_upper
-
                     local hostname = (client.hostname and type(client.hostname) == "string" and client.hostname ~= "") and client.hostname or "Unknown"
                     local ip = "-"
                     if client.ipaddr and type(client.ipaddr) == "string" and client.ipaddr ~= "" then
@@ -146,7 +295,6 @@ function api_get_traffic()
                         ip = client.ap_ipaddr
                     end
                     local ifname = (client.ifname and type(client.ifname) == "string") and client.ifname or ""
-
                     local tx_bytes = 0
                     local rx_bytes = 0
                     if client.txbytes then
@@ -155,54 +303,52 @@ function api_get_traffic()
                     if client.rxbytes then
                         rx_bytes = (type(client.rxbytes) == "number") and client.rxbytes or (tonumber(client.rxbytes) or 0)
                     end
-
-                    if ifname ~= "eth1" and ifname ~= "eth2" and ifname ~= "eth3" then
+                    if ifname ~= "eth1" and ifname ~= "eth3" then
                         local hist = history[device_id] or {}
                         local last_tx = (hist.tx and type(hist.tx) == "number") and hist.tx or 0
                         local last_rx = (hist.rx and type(hist.rx) == "number") and hist.rx or 0
                         local last_raw_tx = (hist.raw_tx and type(hist.raw_tx) == "number") and hist.raw_tx or 0
                         local last_raw_rx = (hist.raw_rx and type(hist.raw_rx) == "number") and hist.raw_rx or 0
-
                         local current_time = os.time()
                         local counter_reset = (tx_bytes < last_raw_tx) or (rx_bytes < last_raw_rx)
-
-                        local total_tx, total_rx
+                        local device_total_tx, device_total_rx
                         if counter_reset then
                             if last_tx > 0 or last_rx > 0 then
-                                total_tx = tx_bytes + last_tx
-                                total_rx = rx_bytes + last_rx
-                                os.execute("echo 'Counter reset for " .. device_id .. ": adding history' >> /tmp/traffic_debug.log")
+                                device_total_tx = tx_bytes + last_tx
+                                device_total_rx = rx_bytes + last_rx
                             else
-                                total_tx = tx_bytes
-                                total_rx = rx_bytes
+                                device_total_tx = tx_bytes
+                                device_total_rx = rx_bytes
                             end
                         else
-                            total_tx = last_tx + (tx_bytes - last_raw_tx)
-                            total_rx = last_rx + (rx_bytes - last_raw_rx)
+                            device_total_tx = last_tx + (tx_bytes - last_raw_tx)
+                            device_total_rx = last_rx + (rx_bytes - last_raw_rx)
                         end
+                        device_total_tx = (device_total_tx and device_total_tx == device_total_tx) and device_total_tx or 0
+                        device_total_rx = (device_total_rx and device_total_rx == device_total_rx) and device_total_rx or 0
+                        if device_total_tx < 0 then device_total_tx = last_tx end
+                        if device_total_rx < 0 then device_total_rx = last_rx end
+                        local device_total = device_total_tx + device_total_rx
+                        total_rx = total_rx + device_total_rx
+                        total_tx = total_tx + device_total_tx
+                        online_count = online_count + 1
 
-                        total_tx = (total_tx and total_tx == total_tx) and total_tx or 0
-                        total_rx = (total_rx and total_rx == total_rx) and total_rx or 0
-                        if total_tx < 0 then total_tx = last_tx end
-                        if total_rx < 0 then total_rx = last_rx end
-
-                        local total = total_tx + total_rx
-
-                        table.insert(devices_list, {
+                        table.insert(online_devices, {
                             mac = device_id,
                             hostname = hostname,
                             ip = ip,
-                            rx = total_rx,
-                            tx = total_tx,
-                            total = total,
-                            rx_display = format_bytes(total_rx),
-                            tx_display = format_bytes(total_tx),
-                            total_display = format_bytes(total)
+                            rx = device_total_rx,
+                            tx = device_total_tx,
+                            total = device_total,
+                            rx_display = format_bytes(device_total_rx),
+                            tx_display = format_bytes(device_total_tx),
+                            total_display = format_bytes(device_total),
+                            online = true,
+                            first_seen = hist.first_seen or current_time
                         })
-
                         current_traffic[device_id] = {
-                            tx = total_tx,
-                            rx = total_rx,
+                            tx = device_total_tx,
+                            rx = device_total_rx,
                             raw_tx = tx_bytes,
                             raw_rx = rx_bytes,
                             ip = ip,
@@ -216,50 +362,64 @@ function api_get_traffic()
                 end
             end
         end
-
-        os.execute("echo 'Current devices: " .. device_count .. "' >> /tmp/traffic_debug.log")
-
         local current_time = os.time()
         for dev_id, data in pairs(history) do
             if not current_traffic[dev_id] then
                 local age = current_time - ((data and data.last_seen) or 0)
                 if age < 604800 then
                     current_traffic[dev_id] = data
+                    local device_total = (data.tx or 0) + (data.rx or 0)
+                    offline_count = offline_count + 1
+                    total_rx = total_rx + (data.rx or 0)
+                    total_tx = total_tx + (data.tx or 0)
+                    table.insert(offline_devices, {
+                        mac = dev_id,
+                        hostname = data.hostname or "Unknown",
+                        ip = data.ip or "-",
+                        rx = data.rx or 0,
+                        tx = data.tx or 0,
+                        total = device_total,
+                        rx_display = format_bytes(data.rx or 0),
+                        tx_display = format_bytes(data.tx or 0),
+                        total_display = format_bytes(device_total),
+                        online = false,
+                        first_seen = data.first_seen or 0,
+                        last_seen = data.last_seen or current_time,
+                    })
                 end
             end
         end
-
         local json_str = "{}"
         local serialize_ok, serialize_err = pcall(json.stringify, current_traffic)
         if serialize_ok then
             json_str = serialize_err or "{}"
         end
-
-        local save_fd = io.open(history_file, "w")
-        if save_fd then
-            save_fd:write(json_str)
-            save_fd:close()
-            local save_count = 0
-            for _ in pairs(current_traffic) do save_count = save_count + 1 end
-            os.execute("echo 'Saved " .. tostring(save_count) .. " devices to TF card' >> /tmp/traffic_debug.log")
-        else
-            os.execute("echo 'ERROR: Failed to save to TF card' >> /tmp/traffic_debug.log")
-        end
-
-        table.sort(devices_list, function(a, b)
+        local save_ok, save_path = save_with_fallback(history_file, json_str)
+        table.sort(online_devices, function(a, b)
             local ta = (a and a.total) or 0
             local tb = (b and b.total) or 0
             return ta > tb
         end)
-
-        response_data = {code = 0, devices = devices_list}
+        table.sort(offline_devices, function(a, b)
+            local ta = (a and a.total) or 0
+            local tb = (b and b.total) or 0
+            return ta > tb
+        end)
+        response_data = {
+            code = 0,
+            online_devices = online_devices,
+            offline_devices = offline_devices,
+            stats = {
+                total_rx = total_rx,
+                total_tx = total_tx,
+                online_count = online_count,
+                offline_count = offline_count
+            }
+        }
     end)
-
     if not ok then
-        os.execute("echo 'api_get_traffic error: " .. tostring(err) .. "' >> /tmp/traffic_debug.log")
-        response_data = {code = -1, message = "Error: " .. tostring(err), devices = {}}
+        response_data = {code = -1, message = "Error: " .. tostring(err), online_devices = {}, offline_devices = {}, stats = {}}
     end
-
     luci.http.prepare_content("application/json")
     luci.http.write_json(response_data)
 end
@@ -504,7 +664,6 @@ function api_kick_device()
     end)
 
     if not ok then
-        os.execute("echo 'api_kick_device error: " .. tostring(err) .. "' >> /tmp/traffic_debug.log")
         response_data.code = -1
         response_data.message = "操作失败: " .. tostring(err)
     end
@@ -654,4 +813,190 @@ function validate_ip(ip)
     end
     local pattern = "^([01]?%d%d?|[2][0-4]%d|[25][0-5])%.([01]?%d%d?|[2][0-4]%d|[25][0-5])%.([01]?%d%d?|[2][0-4]%d|[25][0-5])%.([01]?%d%d?|[2][0-4]%d|[25][0-5])$"
     return ip:match(pattern) ~= nil
+end
+
+function api_get_storage_status()
+    local result = {
+        code = 0,
+        tf_card = {
+            exists = false,
+            mount_point = "",
+            total = 0,
+            used = 0,
+            available = 0,
+            percent = "0%"
+        },
+        current_storage = {
+            path = "",
+            type = "memory",
+            writable = false
+        }
+    }
+
+    local ok, err = pcall(function()
+        local util = require("luci.util")
+
+        local mount_output = util.exec("cat /proc/mounts 2>/dev/null | grep mmcblk0")
+        if mount_output and mount_output ~= "" then
+            result.tf_card.exists = true
+
+            for line in mount_output:gmatch("[^\r\n]+") do
+                local mount_point = line:match("^/dev/mmcblk0p1%s+(/%S+)")
+                if mount_point then
+                    if mount_point ~= "/overlay" then
+                        result.tf_card.mount_point = mount_point
+                        break
+                    elseif result.tf_card.mount_point == "" then
+                        result.tf_card.mount_point = mount_point
+                    end
+                end
+            end
+
+            if result.tf_card.mount_point ~= "" then
+                local df_output = util.exec("df -k " .. result.tf_card.mount_point .. " 2>/dev/null | tail -1")
+                if df_output and df_output ~= "" then
+                    local parts = {}
+                    for part in df_output:gmatch("%S+") do
+                        table.insert(parts, part)
+                    end
+                    if #parts >= 4 then
+                        result.tf_card.total = tonumber(parts[2]) * 1024
+                        result.tf_card.used = tonumber(parts[3]) * 1024
+                        result.tf_card.available = tonumber(parts[4]) * 1024
+                        if result.tf_card.total > 0 then
+                            local percent = (result.tf_card.used / result.tf_card.total) * 100
+                            result.tf_card.percent = string.format("%.1f%%", percent)
+                        end
+                    end
+                end
+            end
+        end
+
+        local storage_path = get_storage_path()
+        result.current_storage.path = storage_path
+        result.current_storage.type = get_storage_type(storage_path)
+        
+        if _last_storage_type and _last_storage_type ~= result.current_storage.type then
+            result.storage_changed = true
+            result.previous_type = _last_storage_type
+        end
+        _last_storage_type = result.current_storage.type
+
+        ensure_directory(storage_path)
+        local test_fd = io.open(storage_path, "a")
+        if test_fd then
+            test_fd:close()
+            result.current_storage.writable = true
+        end
+    end)
+
+    if not ok then
+        result.code = -1
+        result.message = "Error: " .. tostring(err)
+    end
+
+    luci.http.prepare_content("application/json")
+    luci.http.write_json(result)
+end
+
+function api_migrate_storage()
+    local result = {
+        code = 0,
+        message = "",
+        from_path = "",
+        to_path = ""
+    }
+
+    local ok, err = pcall(function()
+        local json = require("luci.jsonc")
+        
+        local old_paths = {
+            "/tmp/traffic_stats.json",
+            "/tmp/router_assistant/traffic_stats.json",
+            "/mnt/sdcard/traffic_stats.json",
+            "/overlay/traffic_stats.json"
+        }
+        
+        local source_file = nil
+        local source_data = nil
+        
+        for _, path in ipairs(old_paths) do
+            local fd = io.open(path, "r")
+            if fd then
+                local content = fd:read("*all")
+                fd:close()
+                if content and content ~= "" and content ~= "{}" then
+                    source_file = path
+                    source_data = content
+                    break
+                end
+            end
+        end
+        
+        if not source_data then
+            result.code = 1
+            result.message = "没有找到需要迁移的数据"
+            return
+        end
+        
+        _cached_storage_path = nil
+        local target_path = get_storage_path()
+        
+        local save_ok, save_err = save_with_fallback(target_path, source_data)
+        if not save_ok then
+            result.code = -1
+            result.message = "迁移失败: " .. tostring(save_err)
+            return
+        end
+        
+        result.from_path = source_file
+        result.to_path = target_path
+        result.message = "数据迁移成功"
+        
+        if source_file ~= target_path then
+            os.remove(source_file)
+        end
+    end)
+
+    if not ok then
+        result.code = -1
+        result.message = "Error: " .. tostring(err)
+    end
+
+    luci.http.prepare_content("application/json")
+    luci.http.write_json(result)
+end
+
+function api_clear_data()
+    local result = {
+        code = 0,
+        message = "",
+        deleted_path = ""
+    }
+
+    local ok, err = pcall(function()
+        local storage_path = get_storage_path()
+        
+        local fd = io.open(storage_path, "r")
+        if not fd then
+            result.code = 1
+            result.message = "数据文件不存在"
+            return
+        end
+        fd:close()
+        
+        os.remove(storage_path)
+        result.deleted_path = storage_path
+        result.message = "数据已清除"
+        
+        _cached_storage_path = nil
+    end)
+
+    if not ok then
+        result.code = -1
+        result.message = "Error: " .. tostring(err)
+    end
+
+    luci.http.prepare_content("application/json")
+    luci.http.write_json(result)
 end

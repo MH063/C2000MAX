@@ -30,6 +30,19 @@ chmod +x /etc/init.d/traffic-stats 2>/dev/null
 /etc/init.d/traffic-stats start 2>/dev/null
 rm -rf /tmp/luci-indexcache /tmp/luci-modulecache
 
+# 初始化数据存储目录
+STORAGE_DIR="/tmp/storage/mmcblk0p1/router_assistant"
+if [ -d "/tmp/storage/mmcblk0p1" ]; then
+    mkdir -p "$STORAGE_DIR"
+    chmod 755 "$STORAGE_DIR"
+    echo "Storage directory initialized: $STORAGE_DIR"
+else
+    STORAGE_DIR="/tmp/router_assistant"
+    mkdir -p "$STORAGE_DIR"
+    chmod 755 "$STORAGE_DIR"
+    echo "Using memory storage: $STORAGE_DIR"
+fi
+
 # 更新appcenter配置
 uci -q batch <<EOF
 delete appcenter.luci-app-router-assistant

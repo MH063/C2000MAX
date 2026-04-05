@@ -123,6 +123,133 @@
         font-size: 12px;
     }
 
+    .rm-storage-status {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-top: 8px;
+        padding: 6px 12px;
+        background: rgba(0, 0, 0, 0.2);
+        border-radius: 12px;
+        font-size: 11px;
+    }
+
+    .rm-storage-icon {
+        font-size: 14px;
+    }
+
+    .rm-storage-text {
+        color: var(--text-secondary);
+    }
+
+    .rm-storage-status.tf-card {
+        background: rgba(0, 230, 118, 0.1);
+        border: 1px solid rgba(0, 230, 118, 0.2);
+    }
+
+    .rm-storage-status.tf-card .rm-storage-text {
+        color: var(--accent-green);
+    }
+
+    .rm-storage-status.memory {
+        background: rgba(255, 145, 0, 0.1);
+        border: 1px solid rgba(255, 145, 0, 0.2);
+    }
+
+    .rm-storage-status.memory .rm-storage-text {
+        color: var(--accent-orange);
+    }
+
+    .rm-storage-btn {
+        background: rgba(255, 255, 255, 0.1);
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        border-radius: 4px;
+        padding: 2px 6px;
+        margin-left: 8px;
+        cursor: pointer;
+        font-size: 12px;
+        transition: all 0.2s ease;
+    }
+
+    .rm-storage-btn:hover {
+        background: rgba(255, 255, 255, 0.2);
+        border-color: rgba(255, 255, 255, 0.3);
+    }
+
+    /* Toast通知样式 */
+    .rm-toast-container {
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        z-index: 10000;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+    }
+
+    .rm-toast {
+        min-width: 280px;
+        max-width: 400px;
+        padding: 14px 20px;
+        border-radius: 10px;
+        color: #fff;
+        font-size: 14px;
+        font-weight: 500;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+        animation: toastIn 0.3s ease;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    .rm-toast.success {
+        background: linear-gradient(135deg, #00c853 0%, #00a845 100%);
+    }
+
+    .rm-toast.error {
+        background: linear-gradient(135deg, #ff5252 0%, #d32f2f 100%);
+    }
+
+    .rm-toast.warning {
+        background: linear-gradient(135deg, #ff9100 0%, #e65100 100%);
+    }
+
+    .rm-toast.info {
+        background: linear-gradient(135deg, #00d4ff 0%, #0099cc 100%);
+    }
+
+    .rm-toast.hide {
+        animation: toastOut 0.3s ease forwards;
+    }
+
+    @keyframes toastIn {
+        from { transform: translateX(100%); opacity: 0; }
+        to { transform: translateX(0); opacity: 1; }
+    }
+
+    @keyframes toastOut {
+        from { transform: translateX(0); opacity: 1; }
+        to { transform: translateX(100%); opacity: 0; }
+    }
+
+    /* 离线设备样式 */
+    .rm-offline {
+        opacity: 0.6;
+    }
+
+    .rm-offline .rm-device-name {
+        color: var(--text-secondary);
+    }
+
+    .rm-badge-offline {
+        background: rgba(128, 128, 128, 0.2);
+        color: #888;
+    }
+
+    .rm-badge-offline::before {
+        background: #888;
+    }
+
     /* 标签页样式 */
     .rm-tabs {
         display: flex;
@@ -599,6 +726,9 @@
 </style>
 
 <div class="rm-container">
+    <!-- Toast容器 -->
+    <div class="rm-toast-container" id="toast-container"></div>
+    
     <!-- 头部 -->
     <div class="rm-header">
         <div class="rm-header-left">
@@ -611,6 +741,10 @@
         <div class="rm-header-status">
             <div class="rm-status-badge">系统运行中</div>
             <div class="rm-status-time" id="global-status">实时刷新中，更新：--:--:--</div>
+            <div class="rm-storage-status" id="storage-status" style="display:none;">
+                <span class="rm-storage-icon" id="storage-icon">💾</span>
+                <span class="rm-storage-text" id="storage-text">存储检测中...</span>
+            </div>
         </div>
     </div>
 
@@ -710,14 +844,22 @@
                     <span class="rm-stat-label">在线设备</span>
                     <span class="rm-stat-tag orange">活跃</span>
                 </div>
-                <div class="rm-stat-value orange" id="stat-device-count">0</div>
+                <div class="rm-stat-value orange" id="stat-online-count">0</div>
                 <div class="rm-stat-desc">当前活跃的网络设备数</div>
+            </div>
+            <div class="rm-stat-card purple">
+                <div class="rm-stat-header">
+                    <span class="rm-stat-label">离线设备</span>
+                    <span class="rm-stat-tag purple">历史</span>
+                </div>
+                <div class="rm-stat-value purple" id="stat-offline-count">0</div>
+                <div class="rm-stat-desc">7天内离线的设备数</div>
             </div>
         </div>
 
         <div class="rm-card">
             <div class="rm-card-header">
-                <div class="rm-card-title">设备流量消耗排行</div>
+                <div class="rm-card-title">设备流量消耗排行（在线 <span id="online-count-label">0</span> 台）</div>
             </div>
             <div class="rm-card-body">
                 <div id="traffic-loading" class="rm-loading">
@@ -740,6 +882,32 @@
                             </tr>
                         </thead>
                         <tbody id="traffic-tbody"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <div class="rm-card" id="offline-card" style="display:none;">
+            <div class="rm-card-header">
+                <div class="rm-card-title">离线设备历史流量（<span id="offline-count-label">0</span> 台）</div>
+            </div>
+            <div class="rm-card-body">
+                <div id="offline-empty" class="rm-empty">
+                    <div class="rm-empty-icon">📋</div>
+                    <p>暂无离线设备记录</p>
+                </div>
+                <div id="offline-table">
+                    <table class="rm-table">
+                        <thead>
+                            <tr>
+                                <th>设备信息</th>
+                                <th>MAC地址</th>
+                                <th>接收 (RX)</th>
+                                <th>发送 (TX)</th>
+                                <th>总计</th>
+                            </tr>
+                        </thead>
+                        <tbody id="offline-tbody"></tbody>
                     </table>
                 </div>
             </div>
@@ -868,6 +1036,37 @@
 </div>
 
 <script>
+// Toast通知函数
+function showToast(message, type, duration) {
+    type = type || 'info';
+    duration = duration || 3000;
+    
+    var container = document.getElementById('toast-container');
+    if (!container) return;
+    
+    var icons = {
+        success: '✓',
+        error: '✕',
+        warning: '⚠',
+        info: 'ℹ'
+    };
+    
+    var toast = document.createElement('div');
+    toast.className = 'rm-toast ' + type;
+    toast.innerHTML = '<span style="font-size:18px">' + icons[type] + '</span><span>' + message + '</span>';
+    
+    container.appendChild(toast);
+    
+    setTimeout(function() {
+        toast.classList.add('hide');
+        setTimeout(function() {
+            if (toast.parentNode) {
+                toast.parentNode.removeChild(toast);
+            }
+        }, 300);
+    }, duration);
+}
+
 // 获取版本信息
 function loadVersion() {
     XHR.get('<%=luci.dispatcher.build_url("admin/status/router_assistant/get_version")%>', null,
@@ -885,7 +1084,7 @@ function loadVersion() {
 
 function kickDevice(mac, device) {
     if (!mac || mac === '') {
-        alert('MAC地址无效');
+        showToast('MAC地址无效', 'error');
         return;
     }
 
@@ -903,19 +1102,35 @@ function kickDevice(mac, device) {
             try {
                 var res = JSON.parse(xhr.responseText);
                 if (res.code === 0) {
-                    alert('设备已成功踢出');
+                    showToast('设备已成功踢出', 'success');
                     loadDevices();
                 } else {
-                    alert('踢出失败：' + escapeHtml(res.message || '未知错误'));
+                    showToast('踢出失败：' + escapeHtml(res.message || '未知错误'), 'error');
                 }
             } catch (e) {
-                alert('操作失败，请稍后重试');
+                showToast('操作失败，请稍后重试', 'error');
             }
         },
         function(xhr) {
-            alert('网络错误，踢出失败，请检查网络连接');
+            showToast('网络错误，踢出失败', 'error');
         }
     );
+}
+
+function isWifiDevice(dev) {
+    if (dev.is_wifi === true) return true;
+    var ifname = (dev.device || dev.iface || '').toLowerCase();
+    var wifiIfaces = ['ra0', 'rai0', 'ra1', 'rai1', 'apcli0', 'apcli1', 'apclii0', 'apclii1', 'wlan0', 'wlan1', 'wlan2', 'wlan3'];
+    for (var i = 0; i < wifiIfaces.length; i++) {
+        if (ifname === wifiIfaces[i] || ifname.indexOf(wifiIfaces[i]) === 0) {
+            return true;
+        }
+    }
+    var signal = dev.signal || dev.rssi;
+    if (signal !== undefined && signal !== null && signal !== '' && signal !== 0 && signal !== '0') {
+        return true;
+    }
+    return false;
 }
 
 function renderDevices(devices, checkOnly) {
@@ -923,7 +1138,7 @@ function renderDevices(devices, checkOnly) {
     var dataKey = devices.length + '|';
 
     devices.forEach(function(dev) {
-        var isWifi = dev.is_wifi === true || (dev.device && dev.device.toLowerCase().includes('wlan'));
+        var isWifi = isWifiDevice(dev);
         if (isWifi) wifi++;
         else wired++;
         dataKey += dev.mac + ',' + dev.ip + ',' + (dev.hostname || '') + ';';
@@ -942,7 +1157,7 @@ function renderDevices(devices, checkOnly) {
 
     var html = '';
     devices.forEach(function(dev) {
-        var isWifi = dev.is_wifi === true || (dev.device && dev.device.toLowerCase().includes('wlan'));
+        var isWifi = isWifiDevice(dev);
         var kickBtn = '<button class="rm-kick-btn" onclick="kickDevice(\'' + escapeHtml(dev.mac) + '\', \'' + escapeHtml(dev.device || '') + '\')">踢出</button>';
 
         html += '<tr>' +
@@ -962,33 +1177,31 @@ function renderDevices(devices, checkOnly) {
     return true;
 }
 
-function renderTraffic(devices, checkOnly) {
-    var totalRx = 0, totalTx = 0;
-    var dataKey = devices.length + '|';
+function renderTraffic(data) {
+    var onlineDevices = data.online_devices || [];
+    var offlineDevices = data.offline_devices || [];
+    var stats = data.stats || {};
 
-    devices.forEach(function(dev) {
-        totalRx += dev.rx;
-        totalTx += dev.tx;
-        dataKey += dev.mac + ',' + dev.rx + ',' + dev.tx + ';';
-    });
+    document.getElementById('stat-total-rx').innerHTML = formatSize(stats.total_rx || 0) + '<span class="rm-stat-unit"></span>';
+    document.getElementById('stat-total-tx').innerHTML = formatSize(stats.total_tx || 0) + '<span class="rm-stat-unit"></span>';
+    document.getElementById('stat-online-count').textContent = stats.online_count || 0;
+    document.getElementById('stat-offline-count').textContent = stats.offline_count || 0;
+    document.getElementById('online-count-label').textContent = stats.online_count || 0;
 
-    dataKey += '|' + totalRx + '|' + totalTx;
-
-    if (checkOnly && lastDataHash.traffic === dataKey) {
-        return false;
-    }
-    lastDataHash.traffic = dataKey;
-
-    document.getElementById('stat-total-rx').innerHTML = formatSize(totalRx) + '<span class="rm-stat-unit"></span>';
-    document.getElementById('stat-total-tx').innerHTML = formatSize(totalTx) + '<span class="rm-stat-unit"></span>';
-    document.getElementById('stat-device-count').textContent = devices.length;
-
-    var html = '';
-    devices.forEach(function(dev) {
-        html += '<tr>' +
+    var onlineHtml = '';
+    var currentTime = Math.floor(Date.now() / 1000);
+    onlineDevices.forEach(function(dev) {
+        var onlineDuration = '';
+        if (dev.first_seen && dev.first_seen > 0) {
+            var duration = currentTime - dev.first_seen;
+            onlineDuration = '<div class="rm-device-duration" style="font-size:11px;color:var(--text-secondary);">在线: ' + formatDuration(duration) + '</div>';
+        }
+        
+        onlineHtml += '<tr>' +
             '<td>' +
                 '<div class="rm-device-name">' + escapeHtml(dev.hostname || '未知设备') + '</div>' +
                 '<div class="rm-device-ip">' + escapeHtml(dev.ip) + '</div>' +
+                onlineDuration +
             '</td>' +
             '<td><span class="rm-mac">' + escapeHtml(dev.mac) + '</span></td>' +
             '<td class="rm-traffic-rx">↓ ' + escapeHtml(dev.rx_display) + '</td>' +
@@ -996,9 +1209,43 @@ function renderTraffic(devices, checkOnly) {
             '<td class="rm-traffic-total">' + escapeHtml(dev.total_display) + '</td>' +
             '</tr>';
     });
+    document.getElementById('traffic-tbody').innerHTML = onlineHtml;
 
-    document.getElementById('traffic-tbody').innerHTML = html;
-    document.getElementById('traffic-table').style.display = 'block';
+    var offlineCard = document.getElementById('offline-card');
+    var offlineEmpty = document.getElementById('offline-empty');
+    var offlineTable = document.getElementById('offline-table');
+
+    if (offlineDevices.length > 0) {
+        if (offlineCard) offlineCard.style.display = 'block';
+        document.getElementById('offline-count-label').textContent = offlineDevices.length;
+        
+        var offlineHtml = '';
+        offlineDevices.forEach(function(dev) {
+            var lastSeen = '';
+            if (dev.last_seen && dev.last_seen > 0) {
+                var lastSeenDuration = currentTime - dev.last_seen;
+                lastSeen = '<div class="rm-device-duration" style="font-size:11px;color:var(--text-secondary);">最后在线: ' + formatDuration(lastSeenDuration) + '前</div>';
+            }
+            
+            offlineHtml += '<tr class="rm-offline">' +
+                '<td>' +
+                    '<div class="rm-device-name">' + escapeHtml(dev.hostname || '未知设备') + ' <span class="rm-badge rm-badge-offline">离线</span></div>' +
+                    '<div class="rm-device-ip">' + escapeHtml(dev.ip) + '</div>' +
+                    lastSeen +
+                '</td>' +
+                '<td><span class="rm-mac">' + escapeHtml(dev.mac) + '</span></td>' +
+                '<td class="rm-traffic-rx">↓ ' + escapeHtml(dev.rx_display) + '</td>' +
+                '<td class="rm-traffic-tx">↑ ' + escapeHtml(dev.tx_display) + '</td>' +
+                '<td class="rm-traffic-total">' + escapeHtml(dev.total_display) + '</td>' +
+                '</tr>';
+        });
+        document.getElementById('offline-tbody').innerHTML = offlineHtml;
+        if (offlineEmpty) offlineEmpty.style.display = 'none';
+        if (offlineTable) offlineTable.style.display = 'table';
+    } else {
+        if (offlineCard) offlineCard.style.display = 'none';
+    }
+
     return true;
 }
 
@@ -1051,6 +1298,108 @@ function formatSize(bytes) {
     if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
     if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
     return (bytes / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
+}
+
+function formatDuration(seconds) {
+    if (!seconds || seconds <= 0) return '-';
+    
+    var days = Math.floor(seconds / 86400);
+    var hours = Math.floor((seconds % 86400) / 3600);
+    var minutes = Math.floor((seconds % 3600) / 60);
+    
+    var result = '';
+    if (days > 0) result += days + '天';
+    if (hours > 0 || days > 0) result += hours + '小时';
+    if (minutes > 0 && days === 0) result += minutes + '分钟';
+    if (result === '') result = '刚刚';
+    
+    return result;
+}
+
+function loadStorageStatus() {
+    safeXHR(
+        '<%=luci.dispatcher.build_url("admin/status/router_assistant/get_storage_status")%>',
+        function(res) {
+            if (res.code === 0) {
+                renderStorageStatus(res);
+            }
+        },
+        function(error) {
+            console.log('Storage status load error:', error);
+        }
+    );
+}
+
+function renderStorageStatus(data) {
+    var statusEl = document.getElementById('storage-status');
+    var iconEl = document.getElementById('storage-icon');
+    var textEl = document.getElementById('storage-text');
+
+    if (!statusEl || !iconEl || !textEl) return;
+
+    statusEl.style.display = 'flex';
+
+    if (data.storage_changed) {
+        var changeMsg = data.previous_type === 'memory' 
+            ? '检测到TF卡，建议迁移数据' 
+            : 'TF卡已移除，数据已切换到内存存储';
+        showToast(changeMsg, data.previous_type === 'memory' ? 'info' : 'warning', 5000);
+    }
+
+    if (data.tf_card && data.tf_card.exists) {
+        statusEl.className = 'rm-storage-status tf-card';
+        iconEl.textContent = '💾';
+        var availGB = (data.tf_card.available / (1024 * 1024 * 1024)).toFixed(1);
+        textEl.innerHTML = 'TF卡: ' + availGB + 'GB可用 / ' + data.tf_card.percent + '已用 <button class="rm-storage-btn" onclick="clearData()" title="清除数据">🗑️</button>';
+    } else {
+        statusEl.className = 'rm-storage-status memory';
+        iconEl.textContent = '⚠️';
+        textEl.innerHTML = '内存存储（重启丢失） <button class="rm-storage-btn" onclick="migrateData()" title="迁移到TF卡">📤</button>';
+    }
+}
+
+function migrateData() {
+    if (!confirm('确定要将数据迁移到TF卡吗？')) return;
+    
+    showToast('正在迁移数据...', 'info');
+    
+    safeXHR(
+        '<%=luci.dispatcher.build_url("admin/status/router_assistant/migrate_storage")%>',
+        function(res) {
+            if (res.code === 0) {
+                showToast('迁移成功: ' + res.message, 'success');
+                loadStorageStatus();
+            } else if (res.code === 1) {
+                showToast(res.message, 'warning');
+            } else {
+                showToast('迁移失败: ' + res.message, 'error');
+            }
+        },
+        function(error) {
+            showToast('网络错误: ' + error, 'error');
+        }
+    );
+}
+
+function clearData() {
+    if (!confirm('确定要清除所有流量统计数据吗？此操作不可恢复！')) return;
+    
+    showToast('正在清除数据...', 'info');
+    
+    safeXHR(
+        '<%=luci.dispatcher.build_url("admin/status/router_assistant/clear_data")%>',
+        function(res) {
+            if (res.code === 0) {
+                showToast('数据已清除', 'success');
+                loadStorageStatus();
+            } else {
+                showToast('清除失败: ' + res.message, 'error');
+            }
+        },
+        function(error) {
+            showToast('网络错误: ' + error, 'error');
+        }
+    );
 }
 
 var devicesTimer = null;
@@ -1203,8 +1552,9 @@ function loadTraffic(retryCount) {
             pendingRequests.traffic = false;
             isFirstLoad.traffic = false;
             if (loading) loading.style.display = 'none';
-            if (res.code === 0 && res.devices && res.devices.length > 0) {
-                renderTraffic(res.devices, true);
+            
+            if (res.code === 0) {
+                renderTraffic(res);
                 if (table) table.style.display = 'block';
                 updateGlobalStatus(true);
             } else {
@@ -1382,6 +1732,7 @@ document.querySelectorAll('.rm-tab').forEach(function(tab) {
 
 document.addEventListener('DOMContentLoaded', function() {
     loadVersion();
+    loadStorageStatus();
     startRefresh();
 });
 </script>
