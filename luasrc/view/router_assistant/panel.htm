@@ -688,6 +688,173 @@
         opacity: 0.5;
     }
 
+    .rm-data-btn {
+        background: rgba(255, 255, 255, 0.1);
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        border-radius: 8px;
+        padding: 6px 12px;
+        cursor: pointer;
+        font-size: 16px;
+        transition: all 0.3s ease;
+        margin-top: 8px;
+    }
+
+    .rm-data-btn:hover {
+        background: rgba(255, 255, 255, 0.2);
+        border-color: rgba(255, 255, 255, 0.3);
+    }
+
+    .rm-data-card {
+        background: rgba(0, 0, 0, 0.2);
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        padding: 16px;
+        margin-bottom: 16px;
+    }
+
+    .rm-data-card-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 12px;
+    }
+
+    .rm-data-card-title {
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--text-primary);
+    }
+
+    .rm-data-card-size {
+        font-size: 12px;
+        color: var(--text-secondary);
+    }
+
+    .rm-data-card-info {
+        font-size: 12px;
+        color: var(--text-secondary);
+        margin-bottom: 8px;
+    }
+
+    .rm-data-card-path {
+        font-size: 11px;
+        color: var(--accent-cyan);
+        background: rgba(0, 212, 255, 0.1);
+        padding: 4px 8px;
+        border-radius: 4px;
+        word-break: break-all;
+    }
+
+    .rm-data-actions {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-top: 20px;
+        padding-top: 16px;
+        border-top: 1px solid var(--border-color);
+    }
+
+    .rm-data-action-btn {
+        flex: 1;
+        min-width: 120px;
+        padding: 10px 16px;
+        border-radius: 8px;
+        font-size: 13px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        border: none;
+    }
+
+    .rm-data-action-btn.danger {
+        background: rgba(255, 82, 82, 0.2);
+        color: var(--accent-red);
+        border: 1px solid rgba(255, 82, 82, 0.3);
+    }
+
+    .rm-data-action-btn.danger:hover {
+        background: rgba(255, 82, 82, 0.3);
+    }
+
+    .rm-data-action-btn.warning {
+        background: rgba(255, 145, 0, 0.2);
+        color: var(--accent-orange);
+        border: 1px solid rgba(255, 145, 0, 0.3);
+    }
+
+    .rm-data-action-btn.warning:hover {
+        background: rgba(255, 145, 0, 0.3);
+    }
+
+    .rm-data-action-btn.info {
+        background: rgba(0, 212, 255, 0.2);
+        color: var(--accent-cyan);
+        border: 1px solid rgba(0, 212, 255, 0.3);
+    }
+
+    .rm-data-action-btn.info:hover {
+        background: rgba(0, 212, 255, 0.3);
+    }
+
+    .rm-data-confirm-dialog {
+        text-align: center;
+        padding: 20px;
+    }
+
+    .rm-data-confirm-icon {
+        font-size: 48px;
+        margin-bottom: 16px;
+    }
+
+    .rm-data-confirm-title {
+        font-size: 18px;
+        font-weight: 600;
+        color: var(--text-primary);
+        margin-bottom: 12px;
+    }
+
+    .rm-data-confirm-message {
+        font-size: 14px;
+        color: var(--text-secondary);
+        margin-bottom: 20px;
+        line-height: 1.6;
+    }
+
+    .rm-data-confirm-buttons {
+        display: flex;
+        gap: 12px;
+        justify-content: center;
+    }
+
+    .rm-data-confirm-btn {
+        padding: 10px 24px;
+        border-radius: 8px;
+        font-size: 14px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.3s ease;
+    }
+
+    .rm-data-confirm-btn.cancel {
+        background: rgba(128, 128, 128, 0.2);
+        color: var(--text-secondary);
+        border: 1px solid rgba(128, 128, 128, 0.3);
+    }
+
+    .rm-data-confirm-btn.cancel:hover {
+        background: rgba(128, 128, 128, 0.3);
+    }
+
+    .rm-data-confirm-btn.confirm {
+        background: rgba(255, 82, 82, 0.2);
+        color: var(--accent-red);
+        border: 1px solid rgba(255, 82, 82, 0.3);
+    }
+
+    .rm-data-confirm-btn.confirm:hover {
+        background: rgba(255, 82, 82, 0.4);
+    }
+
     /* 页脚 */
     .rm-footer {
         text-align: center;
@@ -1151,6 +1318,39 @@
         </div>
     </div>
     
+    <!-- 数据管理弹窗 -->
+    <div class="rm-modal-overlay" id="data-modal">
+        <div class="rm-modal" style="max-width:500px;">
+            <div class="rm-modal-header">
+                <div class="rm-modal-title">⚙️ 数据管理</div>
+                <button class="rm-modal-close" onclick="closeDataModal()">&times;</button>
+            </div>
+            <div class="rm-modal-body" id="data-modal-content">
+                <div style="text-align:center;padding:20px;">
+                    <div class="rm-loading-spinner" style="margin:0 auto 16px;"></div>
+                    <p>正在加载数据统计...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 数据清理确认弹窗 -->
+    <div class="rm-modal-overlay" id="data-confirm-modal">
+        <div class="rm-modal" style="max-width:400px;">
+            <div class="rm-modal-body">
+                <div class="rm-data-confirm-dialog">
+                    <div class="rm-data-confirm-icon" id="data-confirm-icon">⚠️</div>
+                    <div class="rm-data-confirm-title" id="data-confirm-title">确认删除</div>
+                    <div class="rm-data-confirm-message" id="data-confirm-message">确定要删除选中的数据吗？此操作不可恢复。</div>
+                    <div class="rm-data-confirm-buttons">
+                        <button class="rm-data-confirm-btn cancel" onclick="closeDataConfirmModal()">取消</button>
+                        <button class="rm-data-confirm-btn confirm" id="data-confirm-btn" onclick="confirmClearData()">确认删除</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
     <!-- 头部 -->
     <div class="rm-header">
         <div class="rm-header-left">
@@ -1167,6 +1367,7 @@
                 <span class="rm-storage-icon" id="storage-icon">💾</span>
                 <span class="rm-storage-text" id="storage-text">存储检测中...</span>
             </div>
+            <button class="rm-data-btn" onclick="showDataManage()" title="数据管理">⚙️</button>
         </div>
     </div>
 
@@ -2056,7 +2257,7 @@ function renderTraffic(data) {
 function renderWifi(wifiList, checkOnly) {
     var dataKey = wifiList.length + '|';
     wifiList.forEach(function(wifi) {
-        dataKey += wifi.iface + ',' + wifi.ssid + ',' + wifi.channel + ',' + wifi.signal + ';';
+        dataKey += wifi.iface + ',' + wifi.ssid + ',' + wifi.channel + ',' + wifi.signal + ',' + (wifi.clients || 0) + ';';
     });
 
     if (checkOnly && lastDataHash.wifi === dataKey) {
@@ -2078,7 +2279,7 @@ function renderWifi(wifiList, checkOnly) {
             '<td>' + escapeHtml(wifi.channel) + '</td>' +
             '<td>' + escapeHtml(wifi.signal) + '</td>' +
             '<td><span class="rm-encryption">' + escapeHtml(wifi.encryption) + '</span></td>' +
-            '<td>' + '-' + '</td>' +
+            '<td>' + (wifi.clients || 0) + '</td>' +
             '<td>' + statusBadge + '</td>' +
             '</tr>';
     });
@@ -2190,11 +2391,151 @@ function clearData() {
     
     showToast('正在清除数据...', 'info');
     
-    safeXHR(
+    safeXHRpost(
         '<%=luci.dispatcher.build_url("admin/status/router_assistant/clear_data")%>',
+        '',
         function(res) {
             if (res.code === 0) {
                 showToast('数据已清除', 'success');
+                loadStorageStatus();
+            } else {
+                showToast('清除失败: ' + res.message, 'error');
+            }
+        },
+        function(error) {
+            showToast('网络错误: ' + error, 'error');
+        }
+    );
+}
+
+// 数据管理功能
+var pendingClearType = '';
+
+function showDataManage() {
+    var modal = document.getElementById('data-modal');
+    if (modal) {
+        modal.classList.add('active');
+        loadDataStats();
+    }
+}
+
+function closeDataModal() {
+    var modal = document.getElementById('data-modal');
+    if (modal) {
+        modal.classList.remove('active');
+    }
+}
+
+function loadDataStats() {
+    var contentEl = document.getElementById('data-modal-content');
+    if (!contentEl) return;
+    
+    contentEl.innerHTML = '<div style="text-align:center;padding:20px;"><div class="rm-loading-spinner" style="margin:0 auto 16px;"></div><p>正在加载数据统计...</p></div>';
+    
+    safeXHR(
+        '<%=luci.dispatcher.build_url("admin/status/router_assistant/get_data_stats")%>',
+        function(res) {
+            if (res.code === 0) {
+                renderDataStats(res);
+            } else {
+                contentEl.innerHTML = '<div style="text-align:center;padding:20px;color:var(--accent-red);">加载失败: ' + (res.message || '未知错误') + '</div>';
+            }
+        },
+        function(error) {
+            contentEl.innerHTML = '<div style="text-align:center;padding:20px;color:var(--accent-red);">网络错误: ' + error + '</div>';
+        }
+    );
+}
+
+function renderDataStats(data) {
+    var contentEl = document.getElementById('data-modal-content');
+    if (!contentEl) return;
+    
+    var storageTypeText = data.storage_info.type === 'tf_card' ? 'TF卡存储' : '内存存储（重启丢失）';
+    var totalSizeKB = (data.total_size / 1024).toFixed(2);
+    
+    var html = '<div style="margin-bottom:16px;padding:12px;background:rgba(0,0,0,0.2);border-radius:8px;font-size:12px;">' +
+        '<strong>存储位置:</strong> ' + data.storage_info.path + '<br>' +
+        '<strong>存储类型:</strong> ' + storageTypeText + ' | 总大小: ' + totalSizeKB + ' KB' +
+        '</div>';
+    
+    html += '<div class="rm-data-card">';
+    html += '<div class="rm-data-card-header"><span class="rm-data-card-title">数据文件列表</span><span class="rm-data-card-size">共 ' + data.data_files.length + ' 个文件</span></div>';
+    
+    data.data_files.forEach(function(file) {
+        var sizeKB = (file.size / 1024).toFixed(2);
+        var statusClass = file.exists ? 'color:var(--accent-green)' : 'color:var(--text-secondary)';
+        var statusText = file.exists ? '✓ ' + sizeKB + ' KB' : '✗ 不存在';
+        
+        html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border-color);">';
+        html += '<div><strong>' + file.desc + '</strong><br><span style="font-size:11px;color:var(--text-secondary);">' + file.name + '</span></div>';
+        html += '<div style="' + statusClass + '">' + statusText + '</div>';
+        html += '</div>';
+    });
+    
+    html += '</div>';
+    
+    html += '<div class="rm-data-actions">';
+    html += '<button class="rm-data-action-btn warning" onclick="showClearConfirm(\'traffic\')">🗑️ 清除流量数据</button>';
+    html += '<button class="rm-data-action-btn info" onclick="showClearConfirm(\'notes\')">📝 清除备注数据</button>';
+    html += '<button class="rm-data-action-btn danger" onclick="showClearConfirm(\'all\')">⚠️ 清除所有数据</button>';
+    html += '</div>';
+    
+    contentEl.innerHTML = html;
+}
+
+function showClearConfirm(type) {
+    pendingClearType = type;
+    
+    var confirmModal = document.getElementById('data-confirm-modal');
+    var iconEl = document.getElementById('data-confirm-icon');
+    var titleEl = document.getElementById('data-confirm-title');
+    var messageEl = document.getElementById('data-confirm-message');
+    
+    var typeNames = {
+        traffic: '流量统计数据',
+        notes: '设备备注数据',
+        alerts: '流量报警设置',
+        all: '所有数据'
+    };
+    
+    var messages = {
+        traffic: '将删除流量统计数据和流量历史记录，此操作不可恢复。',
+        notes: '将删除所有设备备注，此操作不可恢复。',
+        alerts: '将删除流量报警设置，此操作不可恢复。',
+        all: '将删除所有用户数据，包括流量统计、设备备注、流量历史、报警设置。此操作不可恢复！'
+    };
+    
+    if (iconEl) iconEl.textContent = type === 'all' ? '⚠️' : '🗑️';
+    if (titleEl) titleEl.textContent = '确认删除' + typeNames[type];
+    if (messageEl) messageEl.innerHTML = messages[type];
+    
+    if (confirmModal) {
+        confirmModal.classList.add('active');
+    }
+}
+
+function closeDataConfirmModal() {
+    var confirmModal = document.getElementById('data-confirm-modal');
+    if (confirmModal) {
+        confirmModal.classList.remove('active');
+    }
+    pendingClearType = '';
+}
+
+function confirmClearData() {
+    if (!pendingClearType) return;
+    
+    closeDataConfirmModal();
+    showToast('正在清除数据...', 'info');
+    
+    safeXHRpost(
+        '<%=luci.dispatcher.build_url("admin/status/router_assistant/clear_all_data")%>',
+        'data_type=' + pendingClearType,
+        function(res) {
+            if (res.code === 0) {
+                showToast('数据已清除', 'success');
+                loadDataStats();
                 loadStorageStatus();
             } else {
                 showToast('清除失败: ' + res.message, 'error');
@@ -2230,6 +2571,54 @@ var lastDataHash = {
     traffic: '',
     wifi: ''
 };
+
+// 前端数据缓存系统
+var dataCache = {
+    devices: { data: null, timestamp: 0, ttl: 3000 },
+    traffic: { data: null, timestamp: 0, ttl: 5000 },
+    wifi: { data: null, timestamp: 0, ttl: 5000 },
+    wifiStatus: { data: null, timestamp: 0, ttl: 5000 },
+    deviceNotes: { data: null, timestamp: 0, ttl: 30000 },
+    storageStatus: { data: null, timestamp: 0, ttl: 60000 }
+};
+
+function getCache(key) {
+    var cache = dataCache[key];
+    if (!cache) return null;
+    
+    var now = Date.now();
+    if (cache.data && (now - cache.timestamp) < cache.ttl) {
+        console.log('[缓存] 命中: ' + key);
+        return cache.data;
+    }
+    
+    return null;
+}
+
+function setCache(key, data) {
+    var cache = dataCache[key];
+    if (!cache) return;
+    
+    cache.data = data;
+    cache.timestamp = Date.now();
+    console.log('[缓存] 更新: ' + key);
+}
+
+function clearCache(key) {
+    if (key) {
+        var cache = dataCache[key];
+        if (cache) {
+            cache.data = null;
+            cache.timestamp = 0;
+        }
+    } else {
+        for (var k in dataCache) {
+            dataCache[k].data = null;
+            dataCache[k].timestamp = 0;
+        }
+    }
+    console.log('[缓存] 清除: ' + (key || '全部'));
+}
 
 var pendingRequests = {
     devices: false,

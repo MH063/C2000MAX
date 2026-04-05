@@ -1,5 +1,23 @@
 module("luci.controller.router_assistant", package.seeall)
 
+-- 统一错误响应格式
+local function error_response(code, message, details)
+    return {
+        code = code,
+        message = message,
+        details = details or "",
+        timestamp = os.time()
+    }
+end
+
+-- 统一成功响应格式
+local function success_response(data)
+    data = data or {}
+    data.code = 0
+    data.timestamp = os.time()
+    return data
+end
+
 function index()
     entry({"admin", "status", "router_assistant"}, template("router_assistant/panel"), "路由助手", 50).dependent = true
     entry({"admin", "status", "router_assistant", "get_devices"}, call("api_get_devices")).leaf = true
@@ -13,6 +31,8 @@ function index()
     entry({"admin", "status", "router_assistant", "get_storage_status"}, call("api_get_storage_status")).leaf = true
     entry({"admin", "status", "router_assistant", "migrate_storage"}, post("api_migrate_storage")).leaf = true
     entry({"admin", "status", "router_assistant", "clear_data"}, post("api_clear_data")).leaf = true
+    entry({"admin", "status", "router_assistant", "get_data_stats"}, call("api_get_data_stats")).leaf = true
+    entry({"admin", "status", "router_assistant", "clear_all_data"}, post("api_clear_all_data")).leaf = true
     entry({"admin", "status", "router_assistant", "get_device_notes"}, call("api_get_device_notes")).leaf = true
     entry({"admin", "status", "router_assistant", "save_device_note"}, post("api_save_device_note")).leaf = true
     entry({"admin", "status", "router_assistant", "delete_device_note"}, post("api_delete_device_note")).leaf = true
@@ -77,67 +97,80 @@ function api_get_devices()
 
         local devices_list = {}
 
-        if output and output ~= "" then
-            local json = require("luci.jsonc")
-            local parse_ok, data = pcall(json.parse, output)
-            if parse_ok and data and data.client then
-                for mac, client in pairs(data.client) do
-                    local mac_str = ""
-                    if mac and type(mac) == "string" then
-                        mac_str = mac
-                    elseif mac then
-                        mac_str = tostring(mac)
-                    end
-                    local mac_upper = mac_str:upper()
+        if not output or output == "" then
+            response_data = error_response(-1, "无法获取设备数据", "ubus命令执行失败或返回空数据")
+            return
+        end
 
-                    local is_wifi = is_wifi_device(client)
+        local json = require("luci.jsonc")
+        local parse_ok, data = pcall(json.parse, output)
+        if not parse_ok then
+            response_data = error_response(-2, "JSON解析失败", "设备数据格式错误: " .. tostring(data))
+            return
+        end
 
-                    local hostname = "Unknown"
-                    if client.hostname and type(client.hostname) == "string" then
-                        hostname = client.hostname
-                    end
+        if not data then
+            response_data = error_response(-3, "数据为空", "解析后的数据为nil")
+            return
+        end
 
-                    local ip = "-"
-                    if client.ipaddr and type(client.ipaddr) == "string" then
-                        ip = client.ipaddr
-                    elseif client.ap_ipaddr and type(client.ap_ipaddr) == "string" then
-                        ip = client.ap_ipaddr
-                    end
+        if data.client then
+            for mac, client in pairs(data.client) do
+                local mac_str = ""
+                if mac and type(mac) == "string" then
+                    mac_str = mac
+                elseif mac then
+                    mac_str = tostring(mac)
+                end
+                local mac_upper = mac_str:upper()
 
-                    local ifname = ""
-                    if client.ifname and type(client.ifname) == "string" then
-                        ifname = client.ifname
-                    end
+                local is_wifi = is_wifi_device(client)
 
-                    local rssi = 0
-                    if client.rssi and type(client.rssi) == "number" then
-                        rssi = client.rssi
-                    elseif client.rssi then
-                        rssi = tonumber(client.rssi) or 0
-                    end
+                local hostname = "Unknown"
+                if client.hostname and type(client.hostname) == "string" then
+                    hostname = client.hostname
+                end
 
-                    local is_upstream = (ifname == "eth1" or ifname == "eth3")
-                    if not is_upstream then
-                        table.insert(devices_list, {
-                            ip = ip,
-                            mac = mac_upper,
-                            hostname = hostname,
-                            device = ifname,
-                            is_wifi = is_wifi,
-                            signal = rssi,
-                            iface = ifname
-                        })
-                    end
+                local ip = "-"
+                if client.ipaddr and type(client.ipaddr) == "string" then
+                    ip = client.ipaddr
+                elseif client.ap_ipaddr and type(client.ap_ipaddr) == "string" then
+                    ip = client.ap_ipaddr
+                end
+
+                local ifname = ""
+                if client.ifname and type(client.ifname) == "string" then
+                    ifname = client.ifname
+                end
+
+                local rssi = 0
+                if client.rssi and type(client.rssi) == "number" then
+                    rssi = client.rssi
+                elseif client.rssi then
+                    rssi = tonumber(client.rssi) or 0
+                end
+
+                local is_upstream = (ifname == "eth1" or ifname == "eth3")
+                if not is_upstream then
+                    table.insert(devices_list, {
+                        ip = ip,
+                        mac = mac_upper,
+                        hostname = hostname,
+                        device = ifname,
+                        is_wifi = is_wifi,
+                        signal = rssi,
+                        iface = ifname
+                    })
                 end
             end
         end
 
-        response_data = {code = 0, devices = devices_list}
+        response_data = success_response({devices = devices_list})
     end)
 
     if not ok then
         os.execute("echo 'api_get_devices error: " .. tostring(err) .. "' >> /tmp/traffic_debug.log")
-        response_data = {code = -1, message = "Internal error: " .. tostring(err), devices = {}}
+        response_data = error_response(-1, "获取设备列表失败", tostring(err))
     end
 
     luci.http.prepare_content("application/json")
@@ -528,68 +561,126 @@ end
 
 function api_get_wifi()
     local result = {code = 0, wifi = {}}
+    local sys = require("luci.sys")
+
+    -- 加密方式友好名称转换
+    local function getEncryptionName(enc)
+        if not enc or enc == "" or enc == "none" or enc == "open" then
+            return "无加密"
+        elseif enc == "psk" then
+            return "WPA-PSK"
+        elseif enc == "psk2" then
+            return "WPA2-PSK"
+        elseif enc == "psk-mixed" then
+            return "WPA/WPA2混合"
+        elseif enc == "sae" then
+            return "WPA3-SAE"
+        elseif enc == "sae-mixed" then
+            return "WPA2/WPA3混合"
+        elseif enc == "wep" then
+            return "WEP"
+        elseif enc == "wpa" then
+            return "WPA-Enterprise"
+        elseif enc == "wpa2" then
+            return "WPA2-Enterprise"
+        else
+            return enc
+        end
+    end
 
     local ok, err = pcall(function()
-        local iwinfo = require("iwinfo")
         local uci = require("luci.model.uci").cursor()
 
-        local devices = iwinfo.devices() or {}
+        -- 获取所有WiFi接口
+        local wifi_ifaces = {}
+        uci:foreach("wireless", "wifi-iface", function(s)
+            local ifname = s.ifname
+            if ifname and ifname ~= "" then
+                table.insert(wifi_ifaces, {
+                    ifname = ifname,
+                    ssid = s.ssid,
+                    encryption = s.encryption,
+                    disabled = s.disabled
+                })
+            end
+        end)
 
-        for _, dev in ipairs(devices) do
-            local info = iwinfo.type(dev)
-            if info then
-                local iface = iwinfo[info]
-                if iface then
-                    local ssid = iface.ssid(dev) or "-"
-                    if ssid ~= "" and ssid ~= "-" then
-                        local disabled = nil
-                        uci:foreach("wireless", "wifi-iface", function(s)
-                            if s.ifname == dev then
-                                disabled = s.disabled
-                            end
-                        end)
-                        
-                        local status = "connected"
-                        if disabled == "1" then
-                            status = "disabled"
-                        elseif ssid == "-" or ssid == "" then
-                            status = "disconnected"
-                        end
-                        
-                        table.insert(result.wifi, {
-                            iface = dev,
-                            ssid = ssid,
-                            mode = iface.mode(dev) or "-",
-                            channel = iface.channel(dev) or "-",
-                            signal = iface.signal(dev) or "-",
-                            encryption = get_encryption(iface, dev),
-                            status = status
-                        })
-                    end
+        for _, wifi_info in ipairs(wifi_ifaces) do
+            local ifname = wifi_info.ifname
+
+            -- 使用iw dev获取真实SSID
+            local iw_dev_output = sys.exec("iw dev " .. ifname .. " info 2>/dev/null")
+            local real_ssid = iw_dev_output:match("ssid%s+([^\n]+)")
+            if real_ssid then
+                real_ssid = real_ssid:gsub("^%s+", ""):gsub("%s+$", "")
+            end
+
+            -- 使用iwinfo获取详细信息
+            local iwinfo_output = sys.exec("iwinfo " .. ifname .. " info 2>/dev/null")
+
+            -- 解析信道: "Channel: 12 (2.467 GHz)"
+            local channel = "-"
+            local channel_line = iwinfo_output:match("Channel:%s*([^\n]+)")
+            if channel_line then
+                local ch = channel_line:match("(%d+)%s*%(")
+                if ch then channel = ch end
+            end
+
+            -- 解析信号: "Signal: -54 dBm"
+            local signal = "-"
+            local signal_val = iwinfo_output:match("Signal:%s*([%-%d]+)%s*dBm")
+            if signal_val then
+                signal = signal_val .. " dBm"
+            end
+
+            -- 解析工作模式: "Mode: Master"
+            local mode = "AP"
+            local mode_val = iwinfo_output:match("Mode:%s*(%w+)")
+            if mode_val then
+                if mode_val == "Master" then
+                    mode = "AP"
+                elseif mode_val == "Client" then
+                    mode = "客户端"
+                else
+                    mode = mode_val
                 end
+            end
+
+            -- 获取连接的客户端数量
+            local stations_output = sys.exec("iwinfo " .. ifname .. " assoclist 2>/dev/null")
+            local client_count = 0
+            if stations_output and not stations_output:match("No station") then
+                for _ in stations_output:gmatch("[%x%x:%x%x:%x%x:%x%x:%x%x:%x%x]") do
+                    client_count = client_count + 1
+                end
+            end
+
+            -- 判断状态
+            local status = "connected"
+            if wifi_info.disabled == "1" then
+                status = "disabled"
+            elseif not real_ssid or real_ssid == "" then
+                status = "disconnected"
+            end
+
+            local ssid = real_ssid or wifi_info.ssid or "-"
+            if ssid ~= "" and ssid ~= "-" then
+                table.insert(result.wifi, {
+                    iface = ifname,
+                    ssid = ssid,
+                    mode = mode,
+                    channel = channel,
+                    signal = signal,
+                    encryption = getEncryptionName(wifi_info.encryption),
+                    clients = client_count,
+                    status = status
+                })
             end
         end
     end)
 
     if not ok then
         os.execute("echo 'api_get_wifi error: " .. tostring(err) .. "' >> /tmp/traffic_debug.log")
-    end
-
-    if #result.wifi == 0 then
-        local uci = require("luci.model.uci").cursor()
-        uci:foreach("wireless", "wifi-iface", function(s)
-            local disabled = s.disabled
-            local status = disabled == "1" and "disabled" or "disconnected"
-            table.insert(result.wifi, {
-                iface = s.ifname or s[".name"] or "-",
-                ssid = s.ssid or "-",
-                mode = s.mode or "ap",
-                channel = "-",
-                signal = "-",
-                encryption = s.encryption or "none",
-                status = status
-            })
-        end)
     end
 
     luci.http.prepare_content("application/json")
@@ -1399,6 +1490,130 @@ function api_clear_data()
         result.deleted_path = storage_path
         result.message = "数据已清除"
         
+        _cached_storage_path = nil
+    end)
+
+    if not ok then
+        result.code = -1
+        result.message = "Error: " .. tostring(err)
+    end
+
+    luci.http.prepare_content("application/json")
+    luci.http.write_json(result)
+end
+
+function api_get_data_stats()
+    local result = {
+        code = 0,
+        data_files = {},
+        total_size = 0,
+        storage_info = {}
+    }
+
+    local ok, err = pcall(function()
+        local storage_path = get_storage_path()
+        local data_dir = storage_path:match("^(.+)/[^/]+$") or "/tmp/router_assistant"
+        
+        result.storage_info = {
+            path = data_dir,
+            type = get_storage_type(storage_path)
+        }
+
+        local file_list = {
+            {name = "traffic_stats.json", desc = "流量统计数据"},
+            {name = "device_notes.json", desc = "设备备注"},
+            {name = "traffic_history.json", desc = "流量历史记录"},
+            {name = "traffic_alerts.json", desc = "流量报警设置"}
+        }
+
+        for _, file_info in ipairs(file_list) do
+            local file_path = data_dir .. "/" .. file_info.name
+            local fd = io.open(file_path, "r")
+            if fd then
+                local size = fd:seek("end")
+                fd:close()
+                table.insert(result.data_files, {
+                    name = file_info.name,
+                    desc = file_info.desc,
+                    path = file_path,
+                    size = size or 0,
+                    exists = true
+                })
+                result.total_size = result.total_size + (size or 0)
+            else
+                table.insert(result.data_files, {
+                    name = file_info.name,
+                    desc = file_info.desc,
+                    path = file_path,
+                    size = 0,
+                    exists = false
+                })
+            end
+        end
+    end)
+
+    if not ok then
+        result.code = -1
+        result.message = "Error: " .. tostring(err)
+    end
+
+    luci.http.prepare_content("application/json")
+    luci.http.write_json(result)
+end
+
+function api_clear_all_data()
+    local result = {
+        code = 0,
+        message = "",
+        deleted_files = {}
+    }
+
+    local ok, err = pcall(function()
+        local data_type = luci.http.formvalue("data_type") or "all"
+        local storage_path = get_storage_path()
+        local data_dir = storage_path:match("^(.+)/[^/]+$") or "/tmp/router_assistant"
+
+        local file_map = {
+            all = {
+                "traffic_stats.json",
+                "device_notes.json",
+                "traffic_history.json",
+                "traffic_alerts.json"
+            },
+            traffic = {
+                "traffic_stats.json",
+                "traffic_history.json"
+            },
+            notes = {
+                "device_notes.json"
+            },
+            alerts = {
+                "traffic_alerts.json"
+            }
+        }
+
+        local files_to_delete = file_map[data_type] or file_map.all
+
+        for _, filename in ipairs(files_to_delete) do
+            local file_path = data_dir .. "/" .. filename
+            local fd = io.open(file_path, "r")
+            if fd then
+                fd:close()
+                os.remove(file_path)
+                table.insert(result.deleted_files, {
+                    name = filename,
+                    success = true
+                })
+            else
+                table.insert(result.deleted_files, {
+                    name = filename,
+                    success = false,
+                    reason = "文件不存在"
+                })
+            end
+        end
+
+        result.message = "数据清理完成"
         _cached_storage_path = nil
     end)
 
