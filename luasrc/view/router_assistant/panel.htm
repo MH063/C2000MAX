@@ -920,13 +920,29 @@ function kickDevice(mac, device) {
 
 function renderDevices(devices, checkOnly) {
     var wired = 0, wifi = 0;
-    var html = '';
+    var dataKey = devices.length + '|';
 
     devices.forEach(function(dev) {
         var isWifi = dev.is_wifi === true || (dev.device && dev.device.toLowerCase().includes('wlan'));
         if (isWifi) wifi++;
         else wired++;
+        dataKey += dev.mac + ',' + dev.ip + ',' + (dev.hostname || '') + ';';
+    });
 
+    dataKey += '|' + wired + '|' + wifi;
+
+    if (checkOnly && lastDataHash.devices === dataKey) {
+        return false;
+    }
+    lastDataHash.devices = dataKey;
+
+    document.getElementById('stat-total').textContent = devices.length;
+    document.getElementById('stat-wired').textContent = wired;
+    document.getElementById('stat-wifi').textContent = wifi;
+
+    var html = '';
+    devices.forEach(function(dev) {
+        var isWifi = dev.is_wifi === true || (dev.device && dev.device.toLowerCase().includes('wlan'));
         var kickBtn = '<button class="rm-kick-btn" onclick="kickDevice(\'' + escapeHtml(dev.mac) + '\', \'' + escapeHtml(dev.device || '') + '\')">踢出</button>';
 
         html += '<tr>' +
@@ -941,17 +957,6 @@ function renderDevices(devices, checkOnly) {
             '</tr>';
     });
 
-    document.getElementById('stat-total').textContent = devices.length;
-    document.getElementById('stat-wired').textContent = wired;
-    document.getElementById('stat-wifi').textContent = wifi;
-
-    if (checkOnly) {
-        var currentHtml = document.getElementById('devices-tbody').innerHTML;
-        if (currentHtml === html) {
-            return false;
-        }
-    }
-
     document.getElementById('devices-tbody').innerHTML = html;
     document.getElementById('devices-table').style.display = 'block';
     return true;
@@ -959,12 +964,27 @@ function renderDevices(devices, checkOnly) {
 
 function renderTraffic(devices, checkOnly) {
     var totalRx = 0, totalTx = 0;
-    var html = '';
+    var dataKey = devices.length + '|';
 
     devices.forEach(function(dev) {
         totalRx += dev.rx;
         totalTx += dev.tx;
+        dataKey += dev.mac + ',' + dev.rx + ',' + dev.tx + ';';
+    });
 
+    dataKey += '|' + totalRx + '|' + totalTx;
+
+    if (checkOnly && lastDataHash.traffic === dataKey) {
+        return false;
+    }
+    lastDataHash.traffic = dataKey;
+
+    document.getElementById('stat-total-rx').innerHTML = formatSize(totalRx) + '<span class="rm-stat-unit"></span>';
+    document.getElementById('stat-total-tx').innerHTML = formatSize(totalTx) + '<span class="rm-stat-unit"></span>';
+    document.getElementById('stat-device-count').textContent = devices.length;
+
+    var html = '';
+    devices.forEach(function(dev) {
         html += '<tr>' +
             '<td>' +
                 '<div class="rm-device-name">' + escapeHtml(dev.hostname || '未知设备') + '</div>' +
@@ -977,24 +997,21 @@ function renderTraffic(devices, checkOnly) {
             '</tr>';
     });
 
-    document.getElementById('stat-total-rx').innerHTML = formatSize(totalRx) + '<span class="rm-stat-unit"></span>';
-    document.getElementById('stat-total-tx').innerHTML = formatSize(totalTx) + '<span class="rm-stat-unit"></span>';
-    document.getElementById('stat-device-count').textContent = devices.length;
-
-    if (checkOnly) {
-        var currentHtml = document.getElementById('traffic-tbody').innerHTML;
-        if (currentHtml === html) {
-            return false;
-        }
-    }
-
     document.getElementById('traffic-tbody').innerHTML = html;
     document.getElementById('traffic-table').style.display = 'block';
     return true;
 }
 
 function renderWifi(wifiList, checkOnly) {
-    var html = '';
+    var dataKey = wifiList.length + '|';
+    wifiList.forEach(function(wifi) {
+        dataKey += wifi.iface + ',' + wifi.ssid + ',' + wifi.channel + ',' + wifi.signal + ';';
+    });
+
+    if (checkOnly && lastDataHash.wifi === dataKey) {
+        return false;
+    }
+    lastDataHash.wifi = dataKey;
 
     if (wifiList.length > 0) {
         document.getElementById('wifi-ssid').textContent = wifiList[0].ssid || '-';
@@ -1004,6 +1021,7 @@ function renderWifi(wifiList, checkOnly) {
         document.getElementById('wifi-info-grid').style.display = 'grid';
     }
 
+    var html = '';
     wifiList.forEach(function(wifi) {
         html += '<tr>' +
             '<td><strong>' + escapeHtml(wifi.iface) + '</strong></td>' +
@@ -1016,14 +1034,6 @@ function renderWifi(wifiList, checkOnly) {
     });
 
     document.getElementById('stat-wifi-count').textContent = wifiList.length;
-
-    if (checkOnly) {
-        var currentHtml = document.getElementById('wifi-tbody').innerHTML;
-        if (currentHtml === html) {
-            return false;
-        }
-    }
-
     document.getElementById('wifi-tbody').innerHTML = html;
     document.getElementById('wifi-table').style.display = 'block';
     return true;
@@ -1046,19 +1056,26 @@ function formatSize(bytes) {
 var devicesTimer = null;
 var trafficTimer = null;
 var wifiTimer = null;
+var timeTimer = null;
+var connectionStatus = true;
 var currentTab = 'devices';
 
 var refreshConfig = {
-    interval: 1000,
+    interval: 5000,
     maxRetries: 3,
-    retryDelay: 2000,
-    staleThreshold: 5000
+    retryDelay: 2000
 };
 
-var requestCache = {
-    devices: { data: null, timestamp: 0 },
-    traffic: { data: null, timestamp: 0 },
-    wifi: { data: null, timestamp: 0 }
+var isFirstLoad = {
+    devices: true,
+    traffic: true,
+    wifi: true
+};
+
+var lastDataHash = {
+    devices: '',
+    traffic: '',
+    wifi: ''
 };
 
 var pendingRequests = {
@@ -1096,18 +1113,24 @@ function safeXHR(url, callback, errorCallback) {
     return xhr;
 }
 
-function updateGlobalStatus(success) {
+function updateTimeDisplay() {
     var now = new Date();
     var timeStr = now.toTimeString().split(' ')[0];
     var statusEl = document.getElementById('global-status');
     if (statusEl) {
-        if (success === false) {
-            statusEl.textContent = '连接异常，正在重试...';
-            statusEl.style.color = 'var(--accent-red)';
-        } else {
+        if (connectionStatus) {
             statusEl.textContent = '实时刷新中，更新：' + timeStr;
             statusEl.style.color = 'var(--text-secondary)';
         }
+    }
+}
+
+function updateGlobalStatus(success) {
+    connectionStatus = success !== false;
+    var statusEl = document.getElementById('global-status');
+    if (statusEl && success === false) {
+        statusEl.textContent = '连接异常，正在重试...';
+        statusEl.style.color = 'var(--accent-red)';
     }
 }
 
@@ -1120,19 +1143,20 @@ function loadDevices(retryCount) {
     var empty = document.getElementById('devices-empty');
     var table = document.getElementById('devices-table');
 
-    if (retryCount === 0 && loading) {
-        loading.style.display = 'block';
+    if (isFirstLoad.devices) {
+        if (loading) loading.style.display = 'block';
+        if (table) table.style.display = 'none';
     }
     if (empty) empty.style.display = 'none';
-    if (table && retryCount === 0) table.style.display = 'none';
 
     safeXHR(
         '<%=luci.dispatcher.build_url("admin/status/router_assistant/get_devices")%>',
         function(res) {
             pendingRequests.devices = false;
+            isFirstLoad.devices = false;
             if (loading) loading.style.display = 'none';
             if (res.code === 0 && res.devices && res.devices.length > 0) {
-                var changed = renderDevices(res.devices, true);
+                renderDevices(res.devices, true);
                 if (table) table.style.display = 'block';
                 updateGlobalStatus(true);
             } else {
@@ -1141,6 +1165,7 @@ function loadDevices(retryCount) {
         },
         function(error) {
             pendingRequests.devices = false;
+            isFirstLoad.devices = false;
             if (loading) loading.style.display = 'none';
             updateGlobalStatus(false);
             if (retryCount < refreshConfig.maxRetries) {
@@ -1166,19 +1191,20 @@ function loadTraffic(retryCount) {
     var empty = document.getElementById('traffic-empty');
     var table = document.getElementById('traffic-table');
 
-    if (retryCount === 0 && loading) {
-        loading.style.display = 'block';
+    if (isFirstLoad.traffic) {
+        if (loading) loading.style.display = 'block';
+        if (table) table.style.display = 'none';
     }
     if (empty) empty.style.display = 'none';
-    if (table && retryCount === 0) table.style.display = 'none';
 
     safeXHR(
         '<%=luci.dispatcher.build_url("admin/status/router_assistant/get_traffic")%>',
         function(res) {
             pendingRequests.traffic = false;
+            isFirstLoad.traffic = false;
             if (loading) loading.style.display = 'none';
             if (res.code === 0 && res.devices && res.devices.length > 0) {
-                var changed = renderTraffic(res.devices, true);
+                renderTraffic(res.devices, true);
                 if (table) table.style.display = 'block';
                 updateGlobalStatus(true);
             } else {
@@ -1187,6 +1213,7 @@ function loadTraffic(retryCount) {
         },
         function(error) {
             pendingRequests.traffic = false;
+            isFirstLoad.traffic = false;
             if (loading) loading.style.display = 'none';
             updateGlobalStatus(false);
             if (retryCount < refreshConfig.maxRetries) {
@@ -1212,19 +1239,20 @@ function loadWifi(retryCount) {
     var empty = document.getElementById('wifi-empty');
     var table = document.getElementById('wifi-table');
 
-    if (retryCount === 0 && loading) {
-        loading.style.display = 'block';
+    if (isFirstLoad.wifi) {
+        if (loading) loading.style.display = 'block';
+        if (table) table.style.display = 'none';
     }
     if (empty) empty.style.display = 'none';
-    if (table && retryCount === 0) table.style.display = 'none';
 
     safeXHR(
         '<%=luci.dispatcher.build_url("admin/status/router_assistant/get_wifi")%>',
         function(res) {
             pendingRequests.wifi = false;
+            isFirstLoad.wifi = false;
             if (loading) loading.style.display = 'none';
             if (res.code === 0) {
-                var changed = renderWifi(res.wifi, true);
+                renderWifi(res.wifi, true);
                 if (table) table.style.display = 'block';
                 loadWifiStatus();
                 updateGlobalStatus(true);
@@ -1234,6 +1262,7 @@ function loadWifi(retryCount) {
         },
         function(error) {
             pendingRequests.wifi = false;
+            isFirstLoad.wifi = false;
             if (loading) loading.style.display = 'none';
             updateGlobalStatus(false);
             if (retryCount < refreshConfig.maxRetries) {
@@ -1319,10 +1348,13 @@ function stopAllTimers() {
     if (devicesTimer) { clearInterval(devicesTimer); devicesTimer = null; }
     if (trafficTimer) { clearInterval(trafficTimer); trafficTimer = null; }
     if (wifiTimer) { clearInterval(wifiTimer); wifiTimer = null; }
+    if (timeTimer) { clearInterval(timeTimer); timeTimer = null; }
 }
 
-function startAllRefresh() {
+function startRefresh() {
     stopAllTimers();
+    updateTimeDisplay();
+    timeTimer = setInterval(updateTimeDisplay, 1000);
     loadDevices();
     loadTraffic();
     loadWifi();
@@ -1350,7 +1382,7 @@ document.querySelectorAll('.rm-tab').forEach(function(tab) {
 
 document.addEventListener('DOMContentLoaded', function() {
     loadVersion();
-    startAllRefresh();
+    startRefresh();
 });
 </script>
 
