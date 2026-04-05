@@ -638,6 +638,23 @@
         font-weight: 600;
     }
 
+    .rm-wifi-hint {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        padding: 30px 20px;
+        color: var(--text-secondary);
+        font-size: 14px;
+        background: rgba(0, 0, 0, 0.2);
+        border-radius: 12px;
+        margin-top: 12px;
+    }
+
+    .rm-wifi-hint-icon {
+        font-size: 18px;
+    }
+
     /* 加载和空状态 */
     .rm-loading {
         text-align: center;
@@ -1392,6 +1409,10 @@
                 <div class="rm-card-title">WiFi状态概览</div>
                 <div class="rm-wifi-selector" id="wifi-selector"></div>
             </div>
+            <div class="rm-wifi-hint" id="wifi-hint">
+                <span class="rm-wifi-hint-icon">💡</span>
+                <span>点击上方网络名称查看详细信息</span>
+            </div>
             <div class="rm-info-grid" id="wifi-info-grid" style="display:none;">
                 <div class="rm-info-card">
                     <div class="rm-info-icon">📡</div>
@@ -1414,19 +1435,9 @@
                     <div class="rm-info-label">连接状态</div>
                 </div>
                 <div class="rm-info-card">
-                    <div class="rm-info-icon">🌐</div>
-                    <div class="rm-info-value" id="wifi-ip">-</div>
-                    <div class="rm-info-label">接口IP</div>
-                </div>
-                <div class="rm-info-card">
                     <div class="rm-info-icon">📤</div>
                     <div class="rm-info-value" id="wifi-tx">-</div>
                     <div class="rm-info-label">发送速率</div>
-                </div>
-                <div class="rm-info-card">
-                    <div class="rm-info-icon">📥</div>
-                    <div class="rm-info-value" id="wifi-rx">-</div>
-                    <div class="rm-info-label">接收速率</div>
                 </div>
                 <div class="rm-info-card">
                     <div class="rm-info-icon">📋</div>
@@ -1874,16 +1885,18 @@ function renderDevices(devices, checkOnly) {
         var noteBtn = '<button class="rm-note-btn" onclick="openNoteModal(\'' + escapeHtml(dev.mac) + '\', \'' + escapeHtml(dev.hostname || '') + '\')" title="编辑备注">📝</button>';
         
         var noteInfo = deviceNotes[dev.mac];
-        var noteDisplay = '';
-        if (noteInfo && noteInfo.note) {
-            noteDisplay = '<div class="rm-device-note">📌 ' + escapeHtml(noteInfo.note) + '</div>';
-        }
+        var hostname = dev.hostname || 'Unknown';
+        var isUnknown = (hostname === 'Unknown' || hostname === '未知设备' || !hostname);
         
-        var displayName = dev.hostname || '未知设备';
+        var displayName;
         if (noteInfo && noteInfo.note) {
-            displayName = escapeHtml(noteInfo.note) + ' <span style="color:var(--text-secondary);font-weight:normal;">(' + escapeHtml(dev.hostname || '未知设备') + ')</span>';
+            if (isUnknown) {
+                displayName = escapeHtml(noteInfo.note);
+            } else {
+                displayName = escapeHtml(noteInfo.note) + ' <span style="color:var(--text-secondary);font-weight:normal;">(' + escapeHtml(hostname) + ')</span>';
+            }
         } else {
-            displayName = escapeHtml(dev.hostname || '未知设备');
+            displayName = escapeHtml(hostname);
         }
         
         var signalDisplay = '-';
@@ -1900,7 +1913,6 @@ function renderDevices(devices, checkOnly) {
             '<td>' +
                 '<div class="rm-device-name">' + displayName + '</div>' +
                 '<div class="rm-device-ip">' + escapeHtml(dev.ip) + '</div>' +
-                noteDisplay +
             '</td>' +
             '<td><span class="rm-mac">' + escapeHtml(dev.mac) + '</span></td>' +
             '<td><span class="rm-badge ' + (isWifi ? 'rm-badge-wifi' : 'rm-badge-wired') + '">' +
@@ -1936,11 +1948,18 @@ function renderTraffic(data) {
         }
         
         var noteInfo = deviceNotes[dev.mac];
-        var displayName = dev.hostname || '未知设备';
+        var hostname = dev.hostname || 'Unknown';
+        var isUnknown = (hostname === 'Unknown' || hostname === '未知设备' || !hostname);
+        
+        var displayName;
         if (noteInfo && noteInfo.note) {
-            displayName = escapeHtml(noteInfo.note) + ' <span style="color:var(--text-secondary);font-weight:normal;">(' + escapeHtml(dev.hostname || '未知设备') + ')</span>';
+            if (isUnknown) {
+                displayName = escapeHtml(noteInfo.note);
+            } else {
+                displayName = escapeHtml(noteInfo.note) + ' <span style="color:var(--text-secondary);font-weight:normal;">(' + escapeHtml(hostname) + ')</span>';
+            }
         } else {
-            displayName = escapeHtml(dev.hostname || '未知设备');
+            displayName = escapeHtml(hostname);
         }
         
         var totalColorClass = '';
@@ -1998,11 +2017,18 @@ function renderTraffic(data) {
             }
             
             var noteInfo = deviceNotes[dev.mac];
-            var displayName = dev.hostname || '未知设备';
+            var hostname = dev.hostname || 'Unknown';
+            var isUnknown = (hostname === 'Unknown' || hostname === '未知设备' || !hostname);
+            
+            var displayName;
             if (noteInfo && noteInfo.note) {
-                displayName = escapeHtml(noteInfo.note) + ' <span style="color:var(--text-secondary);font-weight:normal;">(' + escapeHtml(dev.hostname || '未知设备') + ')</span>';
+                if (isUnknown) {
+                    displayName = escapeHtml(noteInfo.note);
+                } else {
+                    displayName = escapeHtml(noteInfo.note) + ' <span style="color:var(--text-secondary);font-weight:normal;">(' + escapeHtml(hostname) + ')</span>';
+                }
             } else {
-                displayName = escapeHtml(dev.hostname || '未知设备');
+                displayName = escapeHtml(hostname);
             }
             
             offlineHtml += '<tr class="rm-offline">' +
@@ -2210,6 +2236,9 @@ var pendingRequests = {
     traffic: false,
     wifi: false
 };
+
+var wifiStatusData = [];
+var selectedWifiIndex = -1;
 
 function safeXHR(url, callback, errorCallback) {
     var xhr = new XMLHttpRequest();
@@ -2451,30 +2480,63 @@ function loadWifiStatus() {
 function renderWifiStatus(statusList) {
     if (!statusList || statusList.length === 0) return;
 
+    // 过滤掉SSID为"-"的无效WiFi接口
+    var validWifiList = statusList.filter(function(status) {
+        return status.ssid && status.ssid !== '-' && status.ssid !== '';
+    });
+
+    wifiStatusData = validWifiList;
+    console.log('[WiFi状态] 数据更新:', validWifiList.length, '个有效网络 (原始:', statusList.length, '), 选中索引:', selectedWifiIndex);
+
     var grid = document.getElementById('wifi-info-grid');
+    var hint = document.getElementById('wifi-hint');
     var selector = document.getElementById('wifi-selector');
-    if (grid) grid.style.display = 'grid';
 
     if (selector) {
         selector.innerHTML = '';
-        statusList.forEach(function(status, index) {
-            var btn = document.createElement('button');
-            btn.className = 'rm-wifi-btn' + (index === 0 ? ' active' : '');
-            btn.textContent = status.ssid && status.ssid !== 'N/A' ? status.ssid : status.iface;
-            btn.dataset.index = index;
-            btn.onclick = function() {
-                document.querySelectorAll('.rm-wifi-btn').forEach(function(b) { b.classList.remove('active'); });
-                btn.classList.add('active');
-                renderWifiStatusByIndex(statusList, index);
-            };
-            selector.appendChild(btn);
-        });
+        if (validWifiList.length === 0) {
+            selector.innerHTML = '<span style="color:var(--text-secondary);font-size:12px;">暂无启用的WiFi网络</span>';
+        } else {
+            validWifiList.forEach(function(status, index) {
+                var btn = document.createElement('button');
+                btn.className = 'rm-wifi-btn' + (selectedWifiIndex === index ? ' active' : '');
+                btn.textContent = status.ssid;
+                btn.dataset.index = index;
+                btn.onclick = function() {
+                    if (selectedWifiIndex === index) {
+                        // 点击已选中的按钮，取消选中状态，收起详情
+                        selectedWifiIndex = -1;
+                        btn.classList.remove('active');
+                        if (grid) grid.style.display = 'none';
+                        if (hint) hint.style.display = 'flex';
+                    } else {
+                        // 点击其他按钮，选中该按钮，展开详情
+                        selectedWifiIndex = index;
+                        document.querySelectorAll('.rm-wifi-btn').forEach(function(b) { b.classList.remove('active'); });
+                        btn.classList.add('active');
+                        if (hint) hint.style.display = 'none';
+                        if (grid) grid.style.display = 'grid';
+                        renderWifiStatusByIndex(wifiStatusData, index);
+                    }
+                };
+                selector.appendChild(btn);
+            });
+        }
     }
 
-    renderWifiStatusByIndex(statusList, 0);
+    if (validWifiList.length > 0 && selectedWifiIndex >= 0 && selectedWifiIndex < validWifiList.length) {
+        console.log('[WiFi状态] 更新选中网络信息, 索引:', selectedWifiIndex);
+        if (hint) hint.style.display = 'none';
+        if (grid) grid.style.display = 'grid';
+        renderWifiStatusByIndex(validWifiList, selectedWifiIndex);
+    } else {
+        selectedWifiIndex = -1;
+        if (grid) grid.style.display = 'none';
+        if (hint) hint.style.display = 'flex';
+    }
 
     var totalStations = 0;
-    statusList.forEach(function(status) {
+    validWifiList.forEach(function(status) {
         if (status.connected_stations) {
             totalStations += status.connected_stations.length;
         }
@@ -2483,23 +2545,25 @@ function renderWifiStatus(statusList) {
     var wifiDevicesEl = document.getElementById('stat-wifi-devices');
     if (wifiDevicesEl) wifiDevicesEl.textContent = totalStations;
 
-    var totalWifi = statusList.length;
+    var totalWifi = validWifiList.length;
     var wifiCountEl = document.getElementById('stat-wifi-count');
     if (wifiCountEl) wifiCountEl.textContent = totalWifi;
 }
 
 function renderWifiStatusByIndex(statusList, index) {
-    if (!statusList || !statusList[index]) return;
+    if (!statusList || !statusList[index]) {
+        console.log('[WiFi状态] renderWifiStatusByIndex 无效数据');
+        return;
+    }
     var status = statusList[index];
+    console.log('[WiFi状态] 更新网络详情:', status.ssid, '信号:', status.signal, '状态:', status.status);
 
     document.getElementById('wifi-ssid').textContent = status.ssid || '-';
     document.getElementById('wifi-signal').textContent = status.signal || '-';
     document.getElementById('wifi-encryption').textContent = status.encryption || '-';
     document.getElementById('wifi-status').textContent = status.status === 'connected' ? '已连接' : '未连接';
     document.getElementById('wifi-status').style.color = status.status === 'connected' ? 'var(--accent-green)' : 'var(--accent-red)';
-    document.getElementById('wifi-ip').textContent = status.ip || '-';
     document.getElementById('wifi-tx').textContent = status.tx_bitrate || '-';
-    document.getElementById('wifi-rx').textContent = status.rx_bitrate || '-';
     document.getElementById('wifi-mode').textContent = status.mode || '-';
     document.getElementById('wifi-freq').textContent = status.frequency || '-';
 

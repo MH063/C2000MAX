@@ -622,15 +622,16 @@ function api_save_device_note()
             result.message = "MAC地址无效"
             return
         end
-        if not validate_mac(mac) then
+        local mac_clean = mac:upper():gsub("[^A-F0-9]", "")
+        if #mac_clean ~= 12 then
             result.code = -1
             result.message = "MAC地址格式无效"
             return
         end
-        local mac_upper = mac:upper():gsub("-", ":")
+        local mac_formatted = mac_clean:sub(1,2) .. ":" .. mac_clean:sub(3,4) .. ":" .. mac_clean:sub(5,6) .. ":" .. mac_clean:sub(7,8) .. ":" .. mac_clean:sub(9,10) .. ":" .. mac_clean:sub(11,12)
         local safe_note = sanitize_input(note or "")
         local notes = load_json_file(NOTES_FILE_NAME) or {}
-        notes[mac_upper] = {
+        notes[mac_formatted] = {
             note = safe_note,
             updated = os.time()
         }
@@ -659,9 +660,15 @@ function api_delete_device_note()
             result.message = "MAC地址无效"
             return
         end
-        local mac_upper = mac:upper():gsub("-", ":")
+        local mac_clean = mac:upper():gsub("[^A-F0-9]", "")
+        if #mac_clean ~= 12 then
+            result.code = -1
+            result.message = "MAC地址格式无效"
+            return
+        end
+        local mac_formatted = mac_clean:sub(1,2) .. ":" .. mac_clean:sub(3,4) .. ":" .. mac_clean:sub(5,6) .. ":" .. mac_clean:sub(7,8) .. ":" .. mac_clean:sub(9,10) .. ":" .. mac_clean:sub(11,12)
         local notes = load_json_file(NOTES_FILE_NAME) or {}
-        notes[mac_upper] = nil
+        notes[mac_formatted] = nil
         save_json_file(NOTES_FILE_NAME, notes)
         result.message = "备注已删除"
     end)
@@ -782,15 +789,13 @@ end
 
 function api_get_wifi_status()
     local result = {code = 0, wifi_status = {}}
+    local sys = require("luci.sys")
+    local uci = require("luci.model.uci").cursor()
 
     local ok, err = pcall(function()
-        local uci = require("luci.model.uci").cursor()
-        local iwinfo = require("iwinfo")
-
         uci:foreach("wireless", "wifi-iface", function(s)
             local device = s.device or "radio0"
             local iface = s[".name"]
-            local network = s.network
             local ifname = s.ifname or ""
             local disabled = s.disabled
 
@@ -798,52 +803,130 @@ function api_get_wifi_status()
                 iface = iface,
                 device = device,
                 ifname = ifname,
-                ssid = s.ssid or "-",
-                encryption = s.encryption or "none",
+                ssid = "-",
+                encryption = "-",
                 mode = s.mode or "ap",
                 channel = "-",
                 signal = "-",
                 status = "unknown",
-                ip = "-",
                 tx_bitrate = "-",
-                rx_bitrate = "-",
                 frequency = "-",
                 connected_stations = {}
             }
 
-            if ifname and ifname ~= "" then
-                local info = iwinfo.type(ifname)
-                if info then
-                    local iface_api = iwinfo[info]
-                    if iface_api then
-                        status.channel = iface_api.channel(ifname) or "-"
-                        status.signal = iface_api.signal(ifname) or "-"
-                        status.frequency = iface_api.frequency(ifname) or "-"
-
-                        local tx, rx = iface_api.bitrate(ifname)
-                        if tx then status.tx_bitrate = tostring(tx) .. " Mbps" end
-                        if rx then status.rx_bitrate = tostring(rx) .. " Mbps" end
-
-                        local stations = iface_api.assoclist(ifname)
-                        if stations then
-                            for mac, data in pairs(stations) do
-                                table.insert(status.connected_stations, {
-                                    mac = mac,
-                                    signal = data.signal or "-",
-                                    rx_rate = data.rx_rate or "-",
-                                    tx_rate = data.tx_rate or "-"
-                                })
-                            end
-                        end
-                    end
+            -- 加密方式友好名称转换
+            local function getEncryptionName(enc)
+                if not enc or enc == "" or enc == "none" or enc == "open" then
+                    return nil
+                elseif enc == "psk" then
+                    return "WPA-PSK"
+                elseif enc == "psk2" then
+                    return "WPA2-PSK"
+                elseif enc == "psk-mixed" then
+                    return "WPA/WPA2混合"
+                elseif enc == "sae" then
+                    return "WPA3-SAE"
+                elseif enc == "sae-mixed" then
+                    return "WPA2/WPA3混合"
+                elseif enc == "wep" then
+                    return "WEP"
+                elseif enc == "wpa" then
+                    return "WPA-Enterprise"
+                elseif enc == "wpa2" then
+                    return "WPA2-Enterprise"
+                elseif enc:match("PSK") or enc:match("WPA") or enc:match("WEP") then
+                    return enc
+                else
+                    return nil
                 end
             end
 
-            if network then
-                local net = require("luci.model.network").get_network(network)
-                if net then
-                    local addr = net:ipaddr()
-                    if addr then status.ip = addr end
+            if ifname and ifname ~= "" then
+                -- 优先使用iw dev获取真实SSID（iwinfo可能显示错误的SSID）
+                local iw_dev_output = sys.exec("iw dev " .. ifname .. " info 2>/dev/null")
+                local real_ssid = iw_dev_output:match("ssid%s+([^\n]+)")
+                if real_ssid then
+                    real_ssid = real_ssid:gsub("^%s+", ""):gsub("%s+$", "")
+                end
+                
+                if real_ssid and real_ssid ~= "" then
+                    status.ssid = real_ssid
+                else
+                    -- 回退到UCI配置
+                    status.ssid = s.ssid or "-"
+                end
+                
+                -- 使用iwinfo命令获取其他详细信息
+                local iwinfo_output = sys.exec("iwinfo " .. ifname .. " info 2>/dev/null")
+                
+                -- 解析实际运行的加密方式: Encryption: xxx
+                local actual_enc = iwinfo_output:match("Encryption:%s*([^\n]+)")
+                if actual_enc then
+                    actual_enc = actual_enc:gsub("^%s+", ""):gsub("%s+$", "")
+                end
+                local enc_name = getEncryptionName(actual_enc)
+                if enc_name then
+                    status.encryption = enc_name
+                else
+                    -- iwinfo获取不到有效加密信息，从UCI配置获取
+                    enc_name = getEncryptionName(s.encryption)
+                    if enc_name then
+                        status.encryption = enc_name
+                    else
+                        status.encryption = "无加密"
+                    end
+                end
+                
+                -- 解析信道和频率: "Channel: 12 (2.467 GHz)" 或 "Channel: 64 (5.320 GHz)"
+                local channel_line = iwinfo_output:match("Channel:%s*([^\n]+)")
+                if channel_line then
+                    local ch, freq = channel_line:match("(%d+)%s*%(([%d%.]+)%s*GHz%)")
+                    if ch then status.channel = ch end
+                    if freq then
+                        status.frequency = freq .. " GHz"
+                    end
+                end
+
+                -- 解析信号强度: "Signal: -54 dBm" 或 "Signal: unknown"
+                local signal_val = iwinfo_output:match("Signal:%s*([%-%d]+)%s*dBm")
+                if signal_val then
+                    status.signal = signal_val .. " dBm"
+                else
+                    -- AP模式下可能显示unknown，尝试从iw dev获取
+                    local iw_output = sys.exec("iw dev " .. ifname .. " link 2>/dev/null")
+                    local iw_signal = iw_output:match("signal:%s*([%-%d]+)%s*dBm")
+                    if iw_signal then
+                        status.signal = iw_signal .. " dBm"
+                    end
+                end
+
+                -- 解析速率: "Bit Rate: 1278.7 MBit/s"
+                local bitrate_val = iwinfo_output:match("Bit Rate:%s*([%d%.]+)%s*MBit/s")
+                if bitrate_val then
+                    status.tx_bitrate = bitrate_val .. " Mbps"
+                end
+
+                -- 解析工作模式: "Mode: Master"
+                local mode_val = iwinfo_output:match("Mode:%s*(%w+)")
+                if mode_val then
+                    if mode_val == "Master" then
+                        status.mode = "AP (接入点)"
+                    elseif mode_val == "Client" then
+                        status.mode = "客户端"
+                    else
+                        status.mode = mode_val
+                    end
+                end
+
+                -- 获取连接的客户端
+                local stations_output = sys.exec("iwinfo " .. ifname .. " assoclist 2>/dev/null")
+                if stations_output and stations_output ~= "" and not stations_output:match("No station") then
+                    for mac, signal in stations_output:gmatch("([%x%x:%x%x:%x%x:%x%x:%x%x:%x%x]).-\n%s*Signal:%s*([%-%d]+)%s*dBm") do
+                        table.insert(status.connected_stations, {
+                            mac = mac,
+                            signal = signal .. " dBm"
+                        })
+                    end
                 end
             end
 
@@ -1127,8 +1210,11 @@ function validate_mac(mac)
     if not mac or type(mac) ~= "string" then
         return false
     end
-    local pattern = "^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$"
-    return mac:match(pattern) ~= nil
+    mac = mac:upper():gsub("[^A-F0-9]", "")
+    if #mac ~= 12 then
+        return false
+    end
+    return mac:match("^[A-F0-9]+$") ~= nil
 end
 
 function validate_ip(ip)
