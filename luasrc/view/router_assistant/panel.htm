@@ -1528,6 +1528,7 @@ function loadVersion() {
 }
 
 // 设备注释相关变量和函数
+var LUCI_TOKEN = '<%=token%>';
 var deviceNotes = {};
 var globalThreshold = 0;
 var colorLevels = {warning: 50, danger: 80, critical: 100};
@@ -2244,6 +2245,10 @@ function safeXHRpost(url, params, callback, errorCallback) {
     xhr.open('POST', url, true);
     xhr.timeout = 5000;
     xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+    
+    if (typeof LUCI_TOKEN !== 'undefined' && LUCI_TOKEN) {
+        params = 'token=' + encodeURIComponent(LUCI_TOKEN) + '&' + params;
+    }
 
     xhr.onload = function() {
         if (xhr.status >= 200 && xhr.status < 300) {
