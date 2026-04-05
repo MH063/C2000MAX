@@ -13,6 +13,13 @@ function index()
     entry({"admin", "status", "router_assistant", "get_storage_status"}, call("api_get_storage_status")).leaf = true
     entry({"admin", "status", "router_assistant", "migrate_storage"}, post("api_migrate_storage")).leaf = true
     entry({"admin", "status", "router_assistant", "clear_data"}, post("api_clear_data")).leaf = true
+    entry({"admin", "status", "router_assistant", "get_device_notes"}, call("api_get_device_notes")).leaf = true
+    entry({"admin", "status", "router_assistant", "save_device_note"}, post("api_save_device_note")).leaf = true
+    entry({"admin", "status", "router_assistant", "delete_device_note"}, post("api_delete_device_note")).leaf = true
+    entry({"admin", "status", "router_assistant", "get_traffic_history"}, call("api_get_traffic_history")).leaf = true
+    entry({"admin", "status", "router_assistant", "get_alerts"}, call("api_get_alerts")).leaf = true
+    entry({"admin", "status", "router_assistant", "save_alert"}, post("api_save_alert")).leaf = true
+    entry({"admin", "status", "router_assistant", "delete_alert"}, post("api_delete_alert")).leaf = true
 end
 
 local function get_csrf_token()
@@ -143,6 +150,9 @@ local _last_storage_type = nil
 local STORAGE_CACHE_TTL = 3600
 local DATA_DIR_NAME = "router_assistant"
 local DATA_FILE_NAME = "traffic_stats.json"
+local NOTES_FILE_NAME = "device_notes.json"
+local HISTORY_FILE_NAME = "traffic_history.json"
+local ALERTS_FILE_NAME = "traffic_alerts.json"
 
 local function get_storage_type(path)
     if path:find("mmcblk0") or path:find("sdcard") or path:find("storage") then
@@ -395,6 +405,7 @@ function api_get_traffic()
             json_str = serialize_err or "{}"
         end
         local save_ok, save_path = save_with_fallback(history_file, json_str)
+        aggregate_traffic_history()
         table.sort(online_devices, function(a, b)
             local ta = (a and a.total) or 0
             local tb = (b and b.total) or 0
@@ -471,6 +482,300 @@ function api_get_wifi()
         end)
     end
 
+    luci.http.prepare_content("application/json")
+    luci.http.write_json(result)
+end
+
+local function get_data_dir()
+    local storage_path = get_storage_path()
+    return storage_path:match("^(.+)/[^/]+$") or "/tmp/router_assistant"
+end
+
+local function sanitize_input(str)
+    if not str or type(str) ~= "string" then return "" end
+    str = str:gsub("<", "&lt;")
+    str = str:gsub(">", "&gt;")
+    str = str:gsub('"', "&quot;")
+    str = str:gsub("'", "&#39;")
+    str = str:gsub("&", "&amp;")
+    str = str:sub(1, 64)
+    return str
+end
+
+local function load_json_file(filename)
+    local dir = get_data_dir()
+    local filepath = dir .. "/" .. filename
+    local fd = io.open(filepath, "r")
+    if not fd then return nil end
+    local content = fd:read("*all")
+    fd:close()
+    if not content or content == "" then return nil end
+    local json = require("luci.jsonc")
+    local ok, data = pcall(json.parse, content)
+    if ok and data then return data end
+    return nil
+end
+
+local function save_json_file(filename, data)
+    local dir = get_data_dir()
+    ensure_directory(dir)
+    local filepath = dir .. "/" .. filename
+    local json = require("luci.jsonc")
+    local json_str = json.stringify(data) or "{}"
+    return save_data_atomic(filepath, json_str)
+end
+
+function api_get_device_notes()
+    local result = {code = 0, notes = {}}
+    local ok, err = pcall(function()
+        local notes = load_json_file(NOTES_FILE_NAME)
+        if notes then
+            result.notes = notes
+        end
+    end)
+    if not ok then
+        result.code = -1
+        result.message = "Error: " .. tostring(err)
+    end
+    luci.http.prepare_content("application/json")
+    luci.http.write_json(result)
+end
+
+function api_save_device_note()
+    local result = {code = 0, message = ""}
+    local ok, err = pcall(function()
+        local mac = luci.http.formvalue("mac")
+        local note = luci.http.formvalue("note")
+        if not mac or mac == "" then
+            result.code = -1
+            result.message = "MAC地址无效"
+            return
+        end
+        if not validate_mac(mac) then
+            result.code = -1
+            result.message = "MAC地址格式无效"
+            return
+        end
+        local mac_upper = mac:upper():gsub("-", ":")
+        local safe_note = sanitize_input(note or "")
+        local notes = load_json_file(NOTES_FILE_NAME) or {}
+        notes[mac_upper] = {
+            note = safe_note,
+            updated = os.time()
+        }
+        local save_ok = save_json_file(NOTES_FILE_NAME, notes)
+        if not save_ok then
+            result.code = -1
+            result.message = "保存失败"
+            return
+        end
+        result.message = "备注已保存"
+    end)
+    if not ok then
+        result.code = -1
+        result.message = "Error: " .. tostring(err)
+    end
+    luci.http.prepare_content("application/json")
+    luci.http.write_json(result)
+end
+
+function api_delete_device_note()
+    local result = {code = 0, message = ""}
+    local ok, err = pcall(function()
+        local mac = luci.http.formvalue("mac")
+        if not mac or mac == "" then
+            result.code = -1
+            result.message = "MAC地址无效"
+            return
+        end
+        local mac_upper = mac:upper():gsub("-", ":")
+        local notes = load_json_file(NOTES_FILE_NAME) or {}
+        notes[mac_upper] = nil
+        save_json_file(NOTES_FILE_NAME, notes)
+        result.message = "备注已删除"
+    end)
+    if not ok then
+        result.code = -1
+        result.message = "Error: " .. tostring(err)
+    end
+    luci.http.prepare_content("application/json")
+    luci.http.write_json(result)
+end
+
+local function aggregate_traffic_history()
+    local history = load_json_file(HISTORY_FILE_NAME) or {hourly = {}, daily = {}}
+    local current_traffic = load_json_file(DATA_FILE_NAME) or {}
+    local current_time = os.time()
+    local current_hour = os.date("%Y%m%d%H", current_time)
+    local current_day = os.date("%Y%m%d", current_time)
+    local total_rx = 0
+    local total_tx = 0
+    for mac, data in pairs(current_traffic) do
+        total_rx = total_rx + (data.rx or 0)
+        total_tx = total_tx + (data.tx or 0)
+    end
+    local last_hour = history.last_hour or ""
+    if last_hour ~= current_hour then
+        history.hourly[current_hour] = {
+            rx = total_rx,
+            tx = total_tx,
+            timestamp = current_time
+        }
+        history.last_hour = current_hour
+        local hour_keys = {}
+        for k, _ in pairs(history.hourly) do
+            table.insert(hour_keys, k)
+        end
+        table.sort(hour_keys)
+        while #hour_keys > 168 do
+            local oldest = table.remove(hour_keys, 1)
+            history.hourly[oldest] = nil
+        end
+    end
+    local last_day = history.last_day or ""
+    if last_day ~= current_day then
+        history.daily[current_day] = {
+            rx = total_rx,
+            tx = total_tx,
+            timestamp = current_time
+        }
+        history.last_day = current_day
+        local day_keys = {}
+        for k, _ in pairs(history.daily) do
+            table.insert(day_keys, k)
+        end
+        table.sort(day_keys)
+        while #day_keys > 30 do
+            local oldest = table.remove(day_keys, 1)
+            history.daily[oldest] = nil
+        end
+    end
+    save_json_file(HISTORY_FILE_NAME, history)
+    return history
+end
+
+function api_get_traffic_history()
+    local result = {code = 0, history = {hourly = {}, daily = {}}}
+    local ok, err = pcall(function()
+        local history = load_json_file(HISTORY_FILE_NAME)
+        if history then
+            result.history = history
+        end
+        local period = luci.http.formvalue("period") or "daily"
+        if period == "hourly" then
+            local hourly_list = {}
+            for k, v in pairs(result.history.hourly or {}) do
+                table.insert(hourly_list, {time = k, rx = v.rx or 0, tx = v.tx or 0, timestamp = v.timestamp or 0})
+            end
+            table.sort(hourly_list, function(a, b) return a.time < b.time end)
+            result.hourly_list = hourly_list
+        else
+            local daily_list = {}
+            for k, v in pairs(result.history.daily or {}) do
+                table.insert(daily_list, {date = k, rx = v.rx or 0, tx = v.tx or 0, timestamp = v.timestamp or 0})
+            end
+            table.sort(daily_list, function(a, b) return a.date < b.date end)
+            result.daily_list = daily_list
+        end
+    end)
+    if not ok then
+        result.code = -1
+        result.message = "Error: " .. tostring(err)
+    end
+    luci.http.prepare_content("application/json")
+    luci.http.write_json(result)
+end
+
+function api_get_alerts()
+    local result = {code = 0, alerts = {}, triggered = {}}
+    local ok, err = pcall(function()
+        local alerts = load_json_file(ALERTS_FILE_NAME)
+        if alerts then
+            result.alerts = alerts
+        end
+        local current_traffic = load_json_file(DATA_FILE_NAME) or {}
+        for mac, alert in pairs(result.alerts) do
+            local traffic = current_traffic[mac]
+            if traffic then
+                local total = (traffic.rx or 0) + (traffic.tx or 0)
+                local threshold = alert.threshold or 0
+                if threshold > 0 and total >= threshold then
+                    table.insert(result.triggered, {
+                        mac = mac,
+                        hostname = traffic.hostname or "Unknown",
+                        total = total,
+                        threshold = threshold,
+                        percent = threshold > 0 and math.floor(total / threshold * 100) or 0
+                    })
+                end
+            end
+        end
+    end)
+    if not ok then
+        result.code = -1
+        result.message = "Error: " .. tostring(err)
+    end
+    luci.http.prepare_content("application/json")
+    luci.http.write_json(result)
+end
+
+function api_save_alert()
+    local result = {code = 0, message = ""}
+    local ok, err = pcall(function()
+        local mac = luci.http.formvalue("mac")
+        local threshold = luci.http.formvalue("threshold")
+        if not mac or mac == "" then
+            result.code = -1
+            result.message = "MAC地址无效"
+            return
+        end
+        local mac_upper = mac:upper():gsub("-", ":")
+        local threshold_num = tonumber(threshold) or 0
+        if threshold_num <= 0 then
+            result.code = -1
+            result.message = "阈值必须大于0"
+            return
+        end
+        local alerts = load_json_file(ALERTS_FILE_NAME) or {}
+        alerts[mac_upper] = {
+            threshold = threshold_num,
+            created = os.time()
+        }
+        local save_ok = save_json_file(ALERTS_FILE_NAME, alerts)
+        if not save_ok then
+            result.code = -1
+            result.message = "保存失败"
+            return
+        end
+        result.message = "报警设置已保存"
+    end)
+    if not ok then
+        result.code = -1
+        result.message = "Error: " .. tostring(err)
+    end
+    luci.http.prepare_content("application/json")
+    luci.http.write_json(result)
+end
+
+function api_delete_alert()
+    local result = {code = 0, message = ""}
+    local ok, err = pcall(function()
+        local mac = luci.http.formvalue("mac")
+        if not mac or mac == "" then
+            result.code = -1
+            result.message = "MAC地址无效"
+            return
+        end
+        local mac_upper = mac:upper():gsub("-", ":")
+        local alerts = load_json_file(ALERTS_FILE_NAME) or {}
+        alerts[mac_upper] = nil
+        save_json_file(ALERTS_FILE_NAME, alerts)
+        result.message = "报警已删除"
+    end)
+    if not ok then
+        result.code = -1
+        result.message = "Error: " .. tostring(err)
+    end
     luci.http.prepare_content("application/json")
     luci.http.write_json(result)
 end

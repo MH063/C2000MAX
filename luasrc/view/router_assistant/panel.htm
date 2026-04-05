@@ -723,11 +723,376 @@
     .rm-tab-content.active {
         display: block;
     }
+
+    /* 弹窗样式 */
+    .rm-modal-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.7);
+        z-index: 9999;
+        display: none;
+        justify-content: center;
+        align-items: center;
+    }
+
+    .rm-modal-overlay.active {
+        display: flex;
+    }
+
+    .rm-modal {
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-color);
+        border-radius: 16px;
+        padding: 24px;
+        min-width: 360px;
+        max-width: 500px;
+        box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+    }
+
+    .rm-modal-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+    }
+
+    .rm-modal-title {
+        font-size: 18px;
+        font-weight: 600;
+        color: var(--text-primary);
+    }
+
+    .rm-modal-close {
+        background: none;
+        border: none;
+        color: var(--text-secondary);
+        font-size: 24px;
+        cursor: pointer;
+        padding: 0;
+        line-height: 1;
+    }
+
+    .rm-modal-close:hover {
+        color: var(--text-primary);
+    }
+
+    .rm-modal-body {
+        margin-bottom: 20px;
+    }
+
+    .rm-form-group {
+        margin-bottom: 16px;
+    }
+
+    .rm-form-label {
+        display: block;
+        color: var(--text-secondary);
+        font-size: 13px;
+        margin-bottom: 6px;
+    }
+
+    .rm-form-input {
+        width: 100%;
+        padding: 10px 14px;
+        background: rgba(0, 0, 0, 0.3);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        color: var(--text-primary);
+        font-size: 14px;
+        box-sizing: border-box;
+    }
+
+    .rm-form-input:focus {
+        outline: none;
+        border-color: var(--accent-cyan);
+    }
+
+    .rm-form-input::placeholder {
+        color: var(--text-secondary);
+    }
+
+    .rm-modal-footer {
+        display: flex;
+        gap: 12px;
+        justify-content: flex-end;
+    }
+
+    .rm-btn {
+        padding: 10px 20px;
+        border-radius: 8px;
+        font-size: 14px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.2s ease;
+    }
+
+    .rm-btn-primary {
+        background: var(--gradient-cyan);
+        border: none;
+        color: #000;
+    }
+
+    .rm-btn-primary:hover {
+        box-shadow: 0 4px 15px rgba(0, 212, 255, 0.4);
+    }
+
+    .rm-btn-secondary {
+        background: transparent;
+        border: 1px solid var(--border-color);
+        color: var(--text-secondary);
+    }
+
+    .rm-btn-secondary:hover {
+        background: rgba(255, 255, 255, 0.05);
+        color: var(--text-primary);
+    }
+
+    .rm-btn-danger {
+        background: transparent;
+        border: 1px solid var(--accent-red);
+        color: var(--accent-red);
+    }
+
+    .rm-btn-danger:hover {
+        background: var(--accent-red);
+        color: #fff;
+    }
+
+    /* 流量图表样式 */
+    .rm-chart-container {
+        padding: 24px;
+    }
+
+    .rm-chart-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+    }
+
+    .rm-chart-title {
+        font-size: 14px;
+        color: var(--text-secondary);
+    }
+
+    .rm-chart-legend {
+        display: flex;
+        gap: 16px;
+    }
+
+    .rm-chart-legend-item {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12px;
+        color: var(--text-secondary);
+    }
+
+    .rm-chart-legend-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+    }
+
+    .rm-chart-legend-dot.rx {
+        background: var(--accent-cyan);
+    }
+
+    .rm-chart-legend-dot.tx {
+        background: var(--accent-green);
+    }
+
+    .rm-chart-svg {
+        width: 100%;
+        height: 200px;
+    }
+
+    .rm-chart-axis {
+        stroke: var(--border-color);
+        stroke-width: 1;
+    }
+
+    .rm-chart-grid {
+        stroke: var(--border-color);
+        stroke-width: 0.5;
+        stroke-dasharray: 4;
+    }
+
+    .rm-chart-line {
+        fill: none;
+        stroke-width: 2;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+    }
+
+    .rm-chart-line.rx {
+        stroke: var(--accent-cyan);
+    }
+
+    .rm-chart-line.tx {
+        stroke: var(--accent-green);
+    }
+
+    .rm-chart-area {
+        opacity: 0.1;
+    }
+
+    .rm-chart-area.rx {
+        fill: var(--accent-cyan);
+    }
+
+    .rm-chart-area.tx {
+        fill: var(--accent-green);
+    }
+
+    .rm-chart-label {
+        fill: var(--text-secondary);
+        font-size: 10px;
+    }
+
+    .rm-chart-dot {
+        r: 4;
+        fill: var(--bg-secondary);
+        stroke-width: 2;
+        cursor: pointer;
+    }
+
+    .rm-chart-dot.rx {
+        stroke: var(--accent-cyan);
+    }
+
+    .rm-chart-dot.tx {
+        stroke: var(--accent-green);
+    }
+
+    .rm-chart-tooltip {
+        position: absolute;
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        padding: 8px 12px;
+        font-size: 12px;
+        color: var(--text-primary);
+        pointer-events: none;
+        opacity: 0;
+        transition: opacity 0.2s;
+        z-index: 100;
+    }
+
+    .rm-chart-tooltip.active {
+        opacity: 1;
+    }
+
+    /* 报警标签样式 */
+    .rm-badge-alert {
+        background: rgba(255, 82, 82, 0.2);
+        color: var(--accent-red);
+        animation: alertPulse 2s infinite;
+    }
+
+    .rm-badge-alert::before {
+        background: var(--accent-red);
+    }
+
+    @keyframes alertPulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.7; }
+    }
+
+    /* 设备备注样式 */
+    .rm-device-note {
+        font-size: 11px;
+        color: var(--accent-cyan);
+        margin-top: 2px;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+    }
+
+    .rm-note-btn {
+        background: none;
+        border: none;
+        color: var(--text-secondary);
+        cursor: pointer;
+        padding: 2px 6px;
+        font-size: 12px;
+        border-radius: 4px;
+        transition: all 0.2s;
+    }
+
+    .rm-note-btn:hover {
+        background: rgba(255, 255, 255, 0.1);
+        color: var(--accent-cyan);
+    }
 </style>
 
 <div class="rm-container">
     <!-- Toast容器 -->
     <div class="rm-toast-container" id="toast-container"></div>
+    
+    <!-- 备注编辑弹窗 -->
+    <div class="rm-modal-overlay" id="note-modal">
+        <div class="rm-modal">
+            <div class="rm-modal-header">
+                <div class="rm-modal-title">编辑设备备注</div>
+                <button class="rm-modal-close" onclick="closeNoteModal()">&times;</button>
+            </div>
+            <div class="rm-modal-body">
+                <div class="rm-form-group">
+                    <label class="rm-form-label">设备MAC</label>
+                    <input type="text" class="rm-form-input" id="note-mac" readonly>
+                </div>
+                <div class="rm-form-group">
+                    <label class="rm-form-label">设备名称</label>
+                    <input type="text" class="rm-form-input" id="note-device-name" readonly>
+                </div>
+                <div class="rm-form-group">
+                    <label class="rm-form-label">备注名称</label>
+                    <input type="text" class="rm-form-input" id="note-content" placeholder="输入备注名称（如：我的手机）" maxlength="32">
+                </div>
+            </div>
+            <div class="rm-modal-footer">
+                <button class="rm-btn rm-btn-secondary" onclick="closeNoteModal()">取消</button>
+                <button class="rm-btn rm-btn-danger" id="note-delete-btn" onclick="deleteNote()" style="display:none;">删除备注</button>
+                <button class="rm-btn rm-btn-primary" onclick="saveNote()">保存</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 流量报警设置弹窗 -->
+    <div class="rm-modal-overlay" id="alert-modal">
+        <div class="rm-modal">
+            <div class="rm-modal-header">
+                <div class="rm-modal-title">设置流量报警</div>
+                <button class="rm-modal-close" onclick="closeAlertModal()">&times;</button>
+            </div>
+            <div class="rm-modal-body">
+                <div class="rm-form-group">
+                    <label class="rm-form-label">设备MAC</label>
+                    <input type="text" class="rm-form-input" id="alert-mac" readonly>
+                </div>
+                <div class="rm-form-group">
+                    <label class="rm-form-label">设备名称</label>
+                    <input type="text" class="rm-form-input" id="alert-device-name" readonly>
+                </div>
+                <div class="rm-form-group">
+                    <label class="rm-form-label">流量阈值（GB）</label>
+                    <input type="number" class="rm-form-input" id="alert-threshold" placeholder="输入流量阈值，如：10" min="0.1" step="0.1">
+                </div>
+                <div class="rm-form-group" style="font-size:12px;color:var(--text-secondary);">
+                    当设备总流量达到此阈值时，系统会弹出报警通知
+                </div>
+            </div>
+            <div class="rm-modal-footer">
+                <button class="rm-btn rm-btn-secondary" onclick="closeAlertModal()">取消</button>
+                <button class="rm-btn rm-btn-danger" id="alert-delete-btn" onclick="deleteAlert()" style="display:none;">删除报警</button>
+                <button class="rm-btn rm-btn-primary" onclick="saveAlert()">保存</button>
+            </div>
+        </div>
+    </div>
     
     <!-- 头部 -->
     <div class="rm-header">
@@ -854,6 +1219,43 @@
                 </div>
                 <div class="rm-stat-value purple" id="stat-offline-count">0</div>
                 <div class="rm-stat-desc">7天内离线的设备数</div>
+            </div>
+        </div>
+
+        <!-- 流量趋势图表 -->
+        <div class="rm-card" style="margin-bottom: 20px;">
+            <div class="rm-card-header">
+                <div class="rm-card-title">流量趋势</div>
+                <div class="rm-wifi-selector">
+                    <button class="rm-wifi-btn active" onclick="loadChart('daily')" id="chart-daily-btn">日统计</button>
+                    <button class="rm-wifi-btn" onclick="loadChart('hourly')" id="chart-hourly-btn">时统计</button>
+                </div>
+            </div>
+            <div class="rm-chart-container">
+                <div class="rm-chart-header">
+                    <div class="rm-chart-title" id="chart-title">近7天流量趋势</div>
+                    <div class="rm-chart-legend">
+                        <div class="rm-chart-legend-item">
+                            <div class="rm-chart-legend-dot rx"></div>
+                            <span>接收 (RX)</span>
+                        </div>
+                        <div class="rm-chart-legend-item">
+                            <div class="rm-chart-legend-dot tx"></div>
+                            <span>发送 (TX)</span>
+                        </div>
+                    </div>
+                </div>
+                <svg class="rm-chart-svg" id="traffic-chart" viewBox="0 0 800 200">
+                    <g class="rm-chart-grid-lines"></g>
+                    <g class="rm-chart-x-labels"></g>
+                    <g class="rm-chart-y-labels"></g>
+                    <path class="rm-chart-area rx" id="chart-area-rx"></path>
+                    <path class="rm-chart-area tx" id="chart-area-tx"></path>
+                    <path class="rm-chart-line rx" id="chart-line-rx"></path>
+                    <path class="rm-chart-line tx" id="chart-line-tx"></path>
+                    <g class="rm-chart-dots" id="chart-dots"></g>
+                </svg>
+                <div class="rm-chart-tooltip" id="chart-tooltip"></div>
             </div>
         </div>
 
@@ -1082,6 +1484,312 @@ function loadVersion() {
     );
 }
 
+// 设备注释相关变量和函数
+var deviceNotes = {};
+var deviceAlerts = {};
+var triggeredAlerts = [];
+
+function loadDeviceNotes() {
+    safeXHR(
+        '<%=luci.dispatcher.build_url("admin/status/router_assistant/get_device_notes")%>',
+        function(res) {
+            if (res.code === 0) {
+                deviceNotes = res.notes || {};
+            }
+        },
+        function(error) {}
+    );
+}
+
+function loadAlerts() {
+    safeXHR(
+        '<%=luci.dispatcher.build_url("admin/status/router_assistant/get_alerts")%>',
+        function(res) {
+            if (res.code === 0) {
+                deviceAlerts = res.alerts || {};
+                triggeredAlerts = res.triggered || [];
+                if (triggeredAlerts.length > 0) {
+                    triggeredAlerts.forEach(function(alert) {
+                        showToast('流量报警：' + alert.hostname + ' 已达到 ' + formatSize(alert.threshold) + ' (' + alert.percent + '%)', 'warning', 5000);
+                    });
+                }
+            }
+        },
+        function(error) {}
+    );
+}
+
+function openNoteModal(mac, hostname) {
+    document.getElementById('note-mac').value = mac;
+    document.getElementById('note-device-name').value = hostname || '未知设备';
+    var note = deviceNotes[mac] || {};
+    document.getElementById('note-content').value = note.note || '';
+    document.getElementById('note-delete-btn').style.display = note.note ? 'inline-block' : 'none';
+    document.getElementById('note-modal').classList.add('active');
+}
+
+function closeNoteModal() {
+    document.getElementById('note-modal').classList.remove('active');
+}
+
+function saveNote() {
+    var mac = document.getElementById('note-mac').value;
+    var note = document.getElementById('note-content').value;
+    
+    var params = 'mac=' + encodeURIComponent(mac) + '&note=' + encodeURIComponent(note);
+    
+    XHR.post('<%=luci.dispatcher.build_url("admin/status/router_assistant/save_device_note")%>', params,
+        function(xhr) {
+            try {
+                var res = JSON.parse(xhr.responseText);
+                if (res.code === 0) {
+                    showToast('备注已保存', 'success');
+                    deviceNotes[mac] = {note: note, updated: Date.now() / 1000};
+                    closeNoteModal();
+                    loadDevices();
+                } else {
+                    showToast('保存失败：' + res.message, 'error');
+                }
+            } catch (e) {
+                showToast('操作失败', 'error');
+            }
+        }
+    );
+}
+
+function deleteNote() {
+    var mac = document.getElementById('note-mac').value;
+    
+    var params = 'mac=' + encodeURIComponent(mac);
+    
+    XHR.post('<%=luci.dispatcher.build_url("admin/status/router_assistant/delete_device_note")%>', params,
+        function(xhr) {
+            try {
+                var res = JSON.parse(xhr.responseText);
+                if (res.code === 0) {
+                    showToast('备注已删除', 'success');
+                    delete deviceNotes[mac];
+                    closeNoteModal();
+                    loadDevices();
+                } else {
+                    showToast('删除失败：' + res.message, 'error');
+                }
+            } catch (e) {
+                showToast('操作失败', 'error');
+            }
+        }
+    );
+}
+
+function openAlertModal(mac, hostname) {
+    document.getElementById('alert-mac').value = mac;
+    document.getElementById('alert-device-name').value = hostname || '未知设备';
+    var alert = deviceAlerts[mac] || {};
+    var thresholdGB = alert.threshold ? (alert.threshold / (1024 * 1024 * 1024)).toFixed(1) : '';
+    document.getElementById('alert-threshold').value = thresholdGB;
+    document.getElementById('alert-delete-btn').style.display = alert.threshold ? 'inline-block' : 'none';
+    document.getElementById('alert-modal').classList.add('active');
+}
+
+function closeAlertModal() {
+    document.getElementById('alert-modal').classList.remove('active');
+}
+
+function saveAlert() {
+    var mac = document.getElementById('alert-mac').value;
+    var thresholdGB = parseFloat(document.getElementById('alert-threshold').value) || 0;
+    var threshold = thresholdGB * 1024 * 1024 * 1024;
+    
+    if (threshold <= 0) {
+        showToast('请输入有效的阈值', 'error');
+        return;
+    }
+    
+    var params = 'mac=' + encodeURIComponent(mac) + '&threshold=' + encodeURIComponent(threshold);
+    
+    XHR.post('<%=luci.dispatcher.build_url("admin/status/router_assistant/save_alert")%>', params,
+        function(xhr) {
+            try {
+                var res = JSON.parse(xhr.responseText);
+                if (res.code === 0) {
+                    showToast('报警设置已保存', 'success');
+                    deviceAlerts[mac] = {threshold: threshold, created: Date.now() / 1000};
+                    closeAlertModal();
+                } else {
+                    showToast('保存失败：' + res.message, 'error');
+                }
+            } catch (e) {
+                showToast('操作失败', 'error');
+            }
+        }
+    );
+}
+
+function deleteAlert() {
+    var mac = document.getElementById('alert-mac').value;
+    
+    var params = 'mac=' + encodeURIComponent(mac);
+    
+    XHR.post('<%=luci.dispatcher.build_url("admin/status/router_assistant/delete_alert")%>', params,
+        function(xhr) {
+            try {
+                var res = JSON.parse(xhr.responseText);
+                if (res.code === 0) {
+                    showToast('报警已删除', 'success');
+                    delete deviceAlerts[mac];
+                    closeAlertModal();
+                } else {
+                    showToast('删除失败：' + res.message, 'error');
+                }
+            } catch (e) {
+                showToast('操作失败', 'error');
+            }
+        }
+    );
+}
+
+// 流量图表相关函数
+var chartData = {daily: [], hourly: []};
+
+function loadChart(period) {
+    document.getElementById('chart-daily-btn').classList.remove('active');
+    document.getElementById('chart-hourly-btn').classList.remove('active');
+    document.getElementById('chart-' + period + '-btn').classList.add('active');
+    
+    safeXHR(
+        '<%=luci.dispatcher.build_url("admin/status/router_assistant/get_traffic_history")%>?period=' + period,
+        function(res) {
+            if (res.code === 0) {
+                if (period === 'daily') {
+                    chartData.daily = res.daily_list || [];
+                    document.getElementById('chart-title').textContent = '近30天流量趋势';
+                } else {
+                    chartData.hourly = res.hourly_list || [];
+                    document.getElementById('chart-title').textContent = '近7天流量趋势';
+                }
+                renderChart(period);
+            }
+        },
+        function(error) {}
+    );
+}
+
+function renderChart(period) {
+    var data = period === 'daily' ? chartData.daily : chartData.hourly;
+    if (!data || data.length === 0) {
+        document.getElementById('chart-line-rx').setAttribute('d', '');
+        document.getElementById('chart-line-tx').setAttribute('d', '');
+        document.getElementById('chart-area-rx').setAttribute('d', '');
+        document.getElementById('chart-area-tx').setAttribute('d', '');
+        return;
+    }
+    
+    var width = 800;
+    var height = 200;
+    var padding = {top: 20, right: 20, bottom: 30, left: 50};
+    var chartWidth = width - padding.left - padding.right;
+    var chartHeight = height - padding.top - padding.bottom;
+    
+    var maxValue = 0;
+    data.forEach(function(d) {
+        maxValue = Math.max(maxValue, d.rx || 0, d.tx || 0);
+    });
+    maxValue = maxValue || 1;
+    
+    var xScale = function(i) {
+        return padding.left + (i / (data.length - 1 || 1)) * chartWidth;
+    };
+    var yScale = function(v) {
+        return height - padding.bottom - (v / maxValue) * chartHeight;
+    };
+    
+    var gridLines = '';
+    for (var i = 0; i <= 4; i++) {
+        var y = padding.top + (i / 4) * chartHeight;
+        gridLines += '<line class="rm-chart-grid" x1="' + padding.left + '" y1="' + y + '" x2="' + (width - padding.right) + '" y2="' + y + '"/>';
+    }
+    document.querySelector('.rm-chart-grid-lines').innerHTML = gridLines;
+    
+    var yLabels = '';
+    for (var i = 0; i <= 4; i++) {
+        var y = padding.top + (i / 4) * chartHeight;
+        var value = maxValue * (1 - i / 4);
+        yLabels += '<text class="rm-chart-label" x="' + (padding.left - 5) + '" y="' + (y + 4) + '" text-anchor="end">' + formatSize(value) + '</text>';
+    }
+    document.querySelector('.rm-chart-y-labels').innerHTML = yLabels;
+    
+    var xLabels = '';
+    var step = Math.max(1, Math.floor(data.length / 7));
+    for (var i = 0; i < data.length; i += step) {
+        var x = xScale(i);
+        var label = '';
+        if (period === 'daily') {
+            var dateStr = data[i].date || '';
+            label = dateStr.substring(4, 6) + '/' + dateStr.substring(6, 8);
+        } else {
+            var timeStr = data[i].time || '';
+            label = timeStr.substring(4, 6) + '/' + timeStr.substring(6, 8) + ' ' + timeStr.substring(8, 10) + 'h';
+        }
+        xLabels += '<text class="rm-chart-label" x="' + x + '" y="' + (height - 10) + '" text-anchor="middle">' + label + '</text>';
+    }
+    document.querySelector('.rm-chart-x-labels').innerHTML = xLabels;
+    
+    var rxPath = '';
+    var txPath = '';
+    var rxArea = '';
+    var txArea = '';
+    var dots = '';
+    
+    data.forEach(function(d, i) {
+        var x = xScale(i);
+        var yRx = yScale(d.rx || 0);
+        var yTx = yScale(d.tx || 0);
+        
+        if (i === 0) {
+            rxPath = 'M ' + x + ' ' + yRx;
+            txPath = 'M ' + x + ' ' + yTx;
+            rxArea = 'M ' + x + ' ' + (height - padding.bottom) + ' L ' + x + ' ' + yRx;
+            txArea = 'M ' + x + ' ' + (height - padding.bottom) + ' L ' + x + ' ' + yTx;
+        } else {
+            rxPath += ' L ' + x + ' ' + yRx;
+            txPath += ' L ' + x + ' ' + yTx;
+            rxArea += ' L ' + x + ' ' + yRx;
+            txArea += ' L ' + x + ' ' + yTx;
+        }
+        
+        dots += '<circle class="rm-chart-dot rx" cx="' + x + '" cy="' + yRx + '" onmouseenter="showChartTooltip(event, ' + i + ', \'rx\', \'' + period + '\')" onmouseleave="hideChartTooltip()"/>';
+        dots += '<circle class="rm-chart-dot tx" cx="' + x + '" cy="' + yTx + '" onmouseenter="showChartTooltip(event, ' + i + ', \'tx\', \'' + period + '\')" onmouseleave="hideChartTooltip()"/>';
+    });
+    
+    rxArea += ' L ' + xScale(data.length - 1) + ' ' + (height - padding.bottom) + ' Z';
+    txArea += ' L ' + xScale(data.length - 1) + ' ' + (height - padding.bottom) + ' Z';
+    
+    document.getElementById('chart-line-rx').setAttribute('d', rxPath);
+    document.getElementById('chart-line-tx').setAttribute('d', txPath);
+    document.getElementById('chart-area-rx').setAttribute('d', rxArea);
+    document.getElementById('chart-area-tx').setAttribute('d', txArea);
+    document.getElementById('chart-dots').innerHTML = dots;
+}
+
+function showChartTooltip(event, index, type, period) {
+    var data = period === 'daily' ? chartData.daily : chartData.hourly;
+    if (!data || !data[index]) return;
+    
+    var d = data[index];
+    var value = type === 'rx' ? d.rx : d.tx;
+    var label = type === 'rx' ? '接收' : '发送';
+    
+    var tooltip = document.getElementById('chart-tooltip');
+    tooltip.innerHTML = label + ': ' + formatSize(value);
+    tooltip.style.left = (event.pageX + 10) + 'px';
+    tooltip.style.top = (event.pageY - 30) + 'px';
+    tooltip.classList.add('active');
+}
+
+function hideChartTooltip() {
+    document.getElementById('chart-tooltip').classList.remove('active');
+}
+
 function kickDevice(mac, device) {
     if (!mac || mac === '') {
         showToast('MAC地址无效', 'error');
@@ -1159,16 +1867,31 @@ function renderDevices(devices, checkOnly) {
     devices.forEach(function(dev) {
         var isWifi = isWifiDevice(dev);
         var kickBtn = '<button class="rm-kick-btn" onclick="kickDevice(\'' + escapeHtml(dev.mac) + '\', \'' + escapeHtml(dev.device || '') + '\')">踢出</button>';
+        var noteBtn = '<button class="rm-note-btn" onclick="openNoteModal(\'' + escapeHtml(dev.mac) + '\', \'' + escapeHtml(dev.hostname || '') + '\')" title="编辑备注">📝</button>';
+        
+        var noteInfo = deviceNotes[dev.mac];
+        var noteDisplay = '';
+        if (noteInfo && noteInfo.note) {
+            noteDisplay = '<div class="rm-device-note">📌 ' + escapeHtml(noteInfo.note) + '</div>';
+        }
+        
+        var displayName = dev.hostname || '未知设备';
+        if (noteInfo && noteInfo.note) {
+            displayName = escapeHtml(noteInfo.note) + ' <span style="color:var(--text-secondary);font-weight:normal;">(' + escapeHtml(dev.hostname || '未知设备') + ')</span>';
+        } else {
+            displayName = escapeHtml(dev.hostname || '未知设备');
+        }
 
         html += '<tr>' +
             '<td>' +
-                '<div class="rm-device-name">' + escapeHtml(dev.hostname || '未知设备') + '</div>' +
+                '<div class="rm-device-name">' + displayName + '</div>' +
                 '<div class="rm-device-ip">' + escapeHtml(dev.ip) + '</div>' +
+                noteDisplay +
             '</td>' +
             '<td><span class="rm-mac">' + escapeHtml(dev.mac) + '</span></td>' +
             '<td><span class="rm-badge ' + (isWifi ? 'rm-badge-wifi' : 'rm-badge-wired') + '">' +
             (isWifi ? 'WiFi' : '有线') + '</span></td>' +
-            '<td>' + kickBtn + '</td>' +
+            '<td>' + noteBtn + ' ' + kickBtn + '</td>' +
             '</tr>';
     });
 
@@ -1197,16 +1920,38 @@ function renderTraffic(data) {
             onlineDuration = '<div class="rm-device-duration" style="font-size:11px;color:var(--text-secondary);">在线: ' + formatDuration(duration) + '</div>';
         }
         
+        var alertBtn = '<button class="rm-note-btn" onclick="openAlertModal(\'' + escapeHtml(dev.mac) + '\', \'' + escapeHtml(dev.hostname || '') + '\')" title="设置报警">🔔</button>';
+        var alertInfo = deviceAlerts[dev.mac];
+        var alertBadge = '';
+        if (alertInfo && alertInfo.threshold > 0) {
+            var percent = Math.floor((dev.total / alertInfo.threshold) * 100);
+            if (percent >= 100) {
+                alertBadge = ' <span class="rm-badge rm-badge-alert">超限</span>';
+            } else if (percent >= 80) {
+                alertBadge = ' <span class="rm-badge" style="background:rgba(255,145,0,0.2);color:var(--accent-orange);">' + percent + '%</span>';
+            } else {
+                alertBadge = ' <span class="rm-badge" style="background:rgba(0,212,255,0.15);color:var(--accent-cyan);">' + percent + '%</span>';
+            }
+        }
+        
+        var noteInfo = deviceNotes[dev.mac];
+        var displayName = dev.hostname || '未知设备';
+        if (noteInfo && noteInfo.note) {
+            displayName = escapeHtml(noteInfo.note) + ' <span style="color:var(--text-secondary);font-weight:normal;">(' + escapeHtml(dev.hostname || '未知设备') + ')</span>';
+        } else {
+            displayName = escapeHtml(dev.hostname || '未知设备');
+        }
+        
         onlineHtml += '<tr>' +
             '<td>' +
-                '<div class="rm-device-name">' + escapeHtml(dev.hostname || '未知设备') + '</div>' +
+                '<div class="rm-device-name">' + displayName + alertBadge + '</div>' +
                 '<div class="rm-device-ip">' + escapeHtml(dev.ip) + '</div>' +
                 onlineDuration +
             '</td>' +
             '<td><span class="rm-mac">' + escapeHtml(dev.mac) + '</span></td>' +
             '<td class="rm-traffic-rx">↓ ' + escapeHtml(dev.rx_display) + '</td>' +
             '<td class="rm-traffic-tx">↑ ' + escapeHtml(dev.tx_display) + '</td>' +
-            '<td class="rm-traffic-total">' + escapeHtml(dev.total_display) + '</td>' +
+            '<td class="rm-traffic-total">' + alertBtn + ' ' + escapeHtml(dev.total_display) + '</td>' +
             '</tr>';
     });
     document.getElementById('traffic-tbody').innerHTML = onlineHtml;
@@ -1241,7 +1986,7 @@ function renderTraffic(data) {
         });
         document.getElementById('offline-tbody').innerHTML = offlineHtml;
         if (offlineEmpty) offlineEmpty.style.display = 'none';
-        if (offlineTable) offlineTable.style.display = 'table';
+        if (offlineTable) offlineTable.style.display = 'block';
     } else {
         if (offlineCard) offlineCard.style.display = 'none';
     }
@@ -1733,6 +2478,9 @@ document.querySelectorAll('.rm-tab').forEach(function(tab) {
 document.addEventListener('DOMContentLoaded', function() {
     loadVersion();
     loadStorageStatus();
+    loadDeviceNotes();
+    loadAlerts();
+    loadChart('daily');
     startRefresh();
 });
 </script>
