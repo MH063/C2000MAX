@@ -42,22 +42,6 @@ function index()
     entry({"admin", "status", "router_assistant", "delete_alert"}, post("api_delete_alert")).leaf = true
 end
 
-local function get_csrf_token()
-    local sys = require("luci.sys")
-    return sys.uniqueid(16)
-end
-
-local function validate_csrf()
-    local http = require("luci.http")
-    local token = http.formvalue("token") or http.getenv("HTTP_X_CSRF_TOKEN")
-    local session_token = require("luci.dispatcher").context.csrf_token
-    
-    if not token or not session_token or token ~= session_token then
-        return false
-    end
-    return true
-end
-
 local function is_wifi_device(client)
     if client.type == "wireless" then
         return true
