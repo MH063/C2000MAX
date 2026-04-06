@@ -8,6 +8,7 @@ Desktop.ini
 *.temp
 *.log
 1.txt
+homebox-linux-arm64-musl.tar.gz
 
 # IDE 和编辑器
 .idea/
