@@ -30,17 +30,37 @@ chmod +x /etc/init.d/traffic-stats 2>/dev/null
 /etc/init.d/traffic-stats start 2>/dev/null
 rm -rf /tmp/luci-indexcache /tmp/luci-modulecache
 
-# 初始化数据存储目录
-STORAGE_DIR="/tmp/storage/mmcblk0p1/router_assistant"
-if [ -d "/tmp/storage/mmcblk0p1" ]; then
+# ========== 设置 Homebox 测速工具 ==========
+echo "正在配置 Homebox 测速工具..."
+
+# 设置 Homebox 可执行权限
+if [ -f "/usr/bin/homebox" ]; then
+    chmod +x /usr/bin/homebox
+    echo "Homebox 测速工具已就绪"
+else
+    echo "警告: Homebox 未找到，测速功能将不可用"
+fi
+
+# ========== 初始化数据存储目录 ==========
+TF_MOUNT=""
+for mp in /tmp/storage/mmcblk0p1 /mnt/mmcblk0p1 /mnt/sdcard /tmp/mnt/mmcblk0p1; do
+    if [ -d "$mp" ] && [ -w "$mp" ]; then
+        TF_MOUNT="$mp"
+        break
+    fi
+done
+
+STORAGE_DIR=""
+if [ -n "$TF_MOUNT" ]; then
+    STORAGE_DIR="$TF_MOUNT/router_assistant/data"
     mkdir -p "$STORAGE_DIR"
     chmod 755 "$STORAGE_DIR"
-    echo "Storage directory initialized: $STORAGE_DIR"
+    echo "数据存储目录: $STORAGE_DIR (TF卡)"
 else
     STORAGE_DIR="/tmp/router_assistant"
     mkdir -p "$STORAGE_DIR"
     chmod 755 "$STORAGE_DIR"
-    echo "Using memory storage: $STORAGE_DIR"
+    echo "数据存储目录: $STORAGE_DIR (内存，重启丢失)"
 fi
 
 # 更新appcenter配置
@@ -90,6 +110,15 @@ cp "$SCRIPT_DIR/luasrc/controller/router_assistant.lua" "$PKG_DIR/data/usr/lib/l
 
 mkdir -p "$PKG_DIR/data/usr/lib/lua/luci/view/router_assistant"
 cp "$SCRIPT_DIR/luasrc/view/router_assistant/panel.htm" "$PKG_DIR/data/usr/lib/lua/luci/view/router_assistant/"
+
+mkdir -p "$PKG_DIR/data/usr/bin"
+if [ -f "$SCRIPT_DIR/usr/bin/homebox" ]; then
+    cp "$SCRIPT_DIR/usr/bin/homebox" "$PKG_DIR/data/usr/bin/homebox"
+    chmod 755 "$PKG_DIR/data/usr/bin/homebox"
+    echo "Homebox binary included"
+else
+    echo "Warning: Homebox binary not found at $SCRIPT_DIR/usr/bin/homebox"
+fi
 
 echo "Data files copied"
 find "$PKG_DIR/data" -type f | wc -l

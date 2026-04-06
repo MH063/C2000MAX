@@ -24,8 +24,8 @@ clear_blocklist_rules() {
         if [ -n "${mac}" ]; then
             local lower_mac=$(echo "${mac}" | tr '[:upper:]' '[:lower:]')
             echo "traffic-stats: Removing iptables rule for MAC: ${mac}"
-            iptables -D INPUT -m mac --mac-source ${lower_mac} -j DROP 2>/dev/null
-            iptables -D FORWARD -m mac --mac-source ${lower_mac} -j DROP 2>/dev/null
+            iptables -D INPUT -m mac --mac-source "${lower_mac}" -j DROP 2>/dev/null
+            iptables -D FORWARD -m mac --mac-source "${lower_mac}" -j DROP 2>/dev/null
         fi
     done
 
@@ -39,7 +39,7 @@ clear_blocklist_rules() {
             if [ -n "${mac}" ]; then
                 local lower_mac=$(echo "${mac}" | tr '[:upper:]' '[:lower:]')
                 echo "traffic-stats: Removing access_ctl block for MAC: ${mac}"
-                access_ctl.sh -m ${lower_mac} -a 1 2>/dev/null
+                access_ctl.sh -m "${lower_mac}" -a 1 2>/dev/null
             fi
         done
 
@@ -81,8 +81,8 @@ restore_blocklist() {
     for mac in ${mac_list}; do
         if [ -n "${mac}" ]; then
             local lower_mac=$(echo "${mac}" | tr '[:upper:]' '[:lower:]')
-            iptables -I INPUT -m mac --mac-source ${lower_mac} -j DROP 2>/dev/null
-            iptables -I FORWARD -m mac --mac-source ${lower_mac} -j DROP 2>/dev/null
+            iptables -I INPUT -m mac --mac-source "${lower_mac}" -j DROP 2>/dev/null
+            iptables -I FORWARD -m mac --mac-source "${lower_mac}" -j DROP 2>/dev/null
             count=$((count + 1))
             echo "traffic-stats: Restored block rule for MAC: ${mac}"
         fi

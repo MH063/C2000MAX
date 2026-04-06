@@ -40,6 +40,8 @@ function index()
     entry({"admin", "status", "router_assistant", "get_alerts"}, call("api_get_alerts")).leaf = true
     entry({"admin", "status", "router_assistant", "save_alert"}, post("api_save_alert")).leaf = true
     entry({"admin", "status", "router_assistant", "delete_alert"}, post("api_delete_alert")).leaf = true
+    entry({"admin", "status", "router_assistant", "speed_test"}, post("api_speed_test")).leaf = true
+    entry({"admin", "status", "router_assistant", "speed_test_status"}, call("api_speed_test_status")).leaf = true
 end
 
 local function is_wifi_device(client)
@@ -101,16 +103,22 @@ local function load_dhcp_leases()
     local fd = io.open("/tmp/dhcp.leases", "r")
     if fd then
         for line in fd:lines() do
-            local parts = {}
-            for part in line:gmatch("%S+") do
-                table.insert(parts, part)
-            end
-            if #parts >= 4 then
-                local mac = parts[2]:upper()
-                local ip = parts[3]
-                local name = parts[4]
-                if name and name ~= "" and name ~= "*" then
-                    leases[mac] = {ip = ip, name = name}
+            if line and #line < 256 then
+                local parts = {}
+                for part in line:gmatch("%S+") do
+                    if #part <= 64 then
+                        table.insert(parts, part)
+                    end
+                end
+                if #parts >= 4 then
+                    local mac = parts[2]:upper()
+                    local ip = parts[3]
+                    local name = parts[4]
+                    if validate_mac(mac) and validate_ip(ip) then
+                        if name and name ~= "" and name ~= "*" and #name <= 64 then
+                            leases[mac] = {ip = ip, name = name}
+                        end
+                    end
                 end
             end
         end
@@ -159,7 +167,7 @@ local function is_device_blocked(mac)
         end
 
         -- 方法3：匹配独立的MAC地址格式 XX:XX:XX:XX:XX:XX（在规则行中）
-        for mac in output:gmatch("(%da-fA-F[%da-fA-F]:%da-fA-F[%da-fA-F]:%da-fA-F[%da-fA-F]:%da-fA-F[%da-fA-F]:%da-fA-F[%da-fA-F])") do
+        for mac in output:gmatch("([%da-fA-F][%da-fA-F]:[%da-fA-F][%da-fA-F]:[%da-fA-F][%da-fA-F]:[%da-fA-F][%da-fA-F]:[%da-fA-F][%da-fA-F])") do
             macs[mac:upper()] = true
         end
 
@@ -311,13 +319,18 @@ end
 local function ensure_directory(path)
     local dir = path:match("^(.+)/[^/]+$")
     if dir and dir ~= "" then
-        local check_fd = io.open(dir, "r")
+        local safe_dir = safe_path(dir)
+        if not safe_dir then
+            return false
+        end
+        local check_fd = io.open(safe_dir, "r")
         if not check_fd then
-            os.execute("mkdir -p " .. dir .. " 2>/dev/null")
+            os.execute("mkdir -p '" .. safe_dir:gsub("'", "'\\''") .. "' 2>/dev/null")
         else
             check_fd:close()
         end
     end
+    return true
 end
 
 local function get_storage_path()
@@ -512,17 +525,25 @@ end
 
 local function apply_iptables_block(mac)
     if not mac or mac == "" then return false end
-    local mac_lower = mac:lower()
-    os.execute("iptables -I INPUT -m mac --mac-source " .. mac_lower .. " -j DROP 2>/dev/null")
-    os.execute("iptables -I FORWARD -m mac --mac-source " .. mac_lower .. " -j DROP 2>/dev/null")
+    if not validate_mac(mac) then return false end
+    local mac_lower = mac:lower():gsub("[:%-]", "")
+    local formatted_mac = mac_lower:sub(1,2) .. ":" .. mac_lower:sub(3,4) .. ":" .. 
+                          mac_lower:sub(5,6) .. ":" .. mac_lower:sub(7,8) .. ":" ..
+                          mac_lower:sub(9,10) .. ":" .. mac_lower:sub(11,12)
+    os.execute("iptables -I INPUT -m mac --mac-source " .. formatted_mac .. " -j DROP 2>/dev/null")
+    os.execute("iptables -I FORWARD -m mac --mac-source " .. formatted_mac .. " -j DROP 2>/dev/null")
     return true
 end
 
 local function remove_iptables_block(mac)
     if not mac or mac == "" then return false end
-    local mac_lower = mac:lower()
-    os.execute("iptables -D INPUT -m mac --mac-source " .. mac_lower .. " -j DROP 2>/dev/null")
-    os.execute("iptables -D FORWARD -m mac --mac-source " .. mac_lower .. " -j DROP 2>/dev/null")
+    if not validate_mac(mac) then return false end
+    local mac_lower = mac:lower():gsub("[:%-]", "")
+    local formatted_mac = mac_lower:sub(1,2) .. ":" .. mac_lower:sub(3,4) .. ":" .. 
+                          mac_lower:sub(5,6) .. ":" .. mac_lower:sub(7,8) .. ":" ..
+                          mac_lower:sub(9,10) .. ":" .. mac_lower:sub(11,12)
+    os.execute("iptables -D INPUT -m mac --mac-source " .. formatted_mac .. " -j DROP 2>/dev/null")
+    os.execute("iptables -D FORWARD -m mac --mac-source " .. formatted_mac .. " -j DROP 2>/dev/null")
     return true
 end
 
@@ -1315,11 +1336,16 @@ function api_kick_device()
         end
         os.execute("conntrack -D -m " .. mac_lower .. " 2>/dev/null")
 
-        os.execute("iptables -I INPUT -m mac --mac-source " .. mac_lower .. " -j DROP 2>/dev/null")
-        os.execute("iptables -I FORWARD -m mac --mac-source " .. mac_lower .. " -j DROP 2>/dev/null")
+        local formatted_mac = mac_lower:gsub("[:%-]", "")
+        formatted_mac = formatted_mac:sub(1,2) .. ":" .. formatted_mac:sub(3,4) .. ":" .. 
+                        formatted_mac:sub(5,6) .. ":" .. formatted_mac:sub(7,8) .. ":" ..
+                        formatted_mac:sub(9,10) .. ":" .. formatted_mac:sub(11,12)
+
+        os.execute("iptables -I INPUT -m mac --mac-source " .. formatted_mac .. " -j DROP 2>/dev/null")
+        os.execute("iptables -I FORWARD -m mac --mac-source " .. formatted_mac .. " -j DROP 2>/dev/null")
 
         -- 保存到持久化配置文件
-        add_to_blocklist(mac_colon, device or "未知设备", device_ip)
+        add_to_blocklist(mac_colon, hostname or "未知设备", device_ip)
 
         -- 清除黑名单缓存，使更改立即生效
         _blocked_macs_cache = nil
@@ -1376,9 +1402,13 @@ function api_enable_device()
         end
         local mac_lower = mac_colon:lower()
 
-        -- 删除iptables DROP规则（恢复网络访问）
-        os.execute("iptables -D INPUT -m mac --mac-source " .. mac_lower .. " -j DROP 2>/dev/null")
-        os.execute("iptables -D FORWARD -m mac --mac-source " .. mac_lower .. " -j DROP 2>/dev/null")
+        local formatted_mac = mac_lower:gsub("[:%-]", "")
+        formatted_mac = formatted_mac:sub(1,2) .. ":" .. formatted_mac:sub(3,4) .. ":" .. 
+                        formatted_mac:sub(5,6) .. ":" .. formatted_mac:sub(7,8) .. ":" ..
+                        formatted_mac:sub(9,10) .. ":" .. formatted_mac:sub(11,12)
+
+        os.execute("iptables -D INPUT -m mac --mac-source " .. formatted_mac .. " -j DROP 2>/dev/null")
+        os.execute("iptables -D FORWARD -m mac --mac-source " .. formatted_mac .. " -j DROP 2>/dev/null")
 
         -- 从持久化配置文件中删除
         remove_from_blocklist(mac_colon)
@@ -1456,7 +1486,7 @@ function api_get_blocked_devices()
             end
 
             -- 方法3：匹配独立的MAC地址格式 XX:XX:XX:XX:XX:XX（在规则行中）
-            for mac in output:gmatch("(%da-fA-F[%da-fA-F]:%da-fA-F[%da-fA-F]:%da-fA-F[%da-fA-F]:%da-fA-F[%da-fA-F]:%da-fA-F[%da-fA-F])") do
+            for mac in output:gmatch("([%da-fA-F][%da-fA-F]:[%da-fA-F][%da-fA-F]:[%da-fA-F][%da-fA-F]:[%da-fA-F][%da-fA-F]:[%da-fA-F][%da-fA-F])") do
                 macs[mac:upper()] = true
             end
 
@@ -1555,15 +1585,56 @@ function validate_mac(mac)
     if #mac ~= 12 then
         return false
     end
-    return mac:match("^[A-F0-9]+$") ~= nil
+    if not mac:match("^[A-F0-9]+$") then
+        return false
+    end
+    if mac == "000000000000" or mac == "FFFFFFFFFFFF" then
+        return false
+    end
+    return true
 end
 
 function validate_ip(ip)
     if not ip or type(ip) ~= "string" then
         return false
     end
-    local pattern = "^([01]?%d%d?|[2][0-4]%d|[25][0-5])%.([01]?%d%d?|[2][0-4]%d|[25][0-5])%.([01]?%d%d?|[2][0-4]%d|[25][0-5])%.([01]?%d%d?|[2][0-4]%d|[25][0-5])$"
-    return ip:match(pattern) ~= nil
+    if #ip > 15 or #ip < 7 then
+        return false
+    end
+    if ip:match("[^%d%.]") then
+        return false
+    end
+    local parts = {}
+    for part in ip:gmatch("[^%.]+") do
+        if #part > 1 and part:sub(1,1) == "0" then
+            return false
+        end
+        local num = tonumber(part)
+        if not num or num < 0 or num > 255 then
+            return false
+        end
+        table.insert(parts, num)
+    end
+    if #parts ~= 4 then
+        return false
+    end
+    return true
+end
+
+function safe_path(path)
+    if not path or type(path) ~= "string" then
+        return nil
+    end
+    if path:match("%.%.") then
+        return nil
+    end
+    if path:match("[`;|$%[%]%*%?<>]") then
+        return nil
+    end
+    if not path:match("^/[%w%d_/%-%.]+$") then
+        return nil
+    end
+    return path
 end
 
 function api_get_storage_status()
@@ -1729,7 +1800,38 @@ function api_clear_data()
     local ok, err = pcall(function()
         local storage_path = get_storage_path()
         
-        local fd = io.open(storage_path, "r")
+        -- 验证路径安全
+        local safe_storage = safe_path(storage_path)
+        if not safe_storage then
+            result.code = -1
+            result.message = "路径验证失败"
+            return
+        end
+        
+        -- 验证文件是否为预期的数据文件
+        local allowed_files = {
+            "traffic_stats.json",
+            "device_notes.json",
+            "traffic_history.json",
+            "traffic_alerts.json",
+            "mac_blocklist.json"
+        }
+        local filename = storage_path:match("([^/]+)$")
+        local is_allowed = false
+        for _, allowed in ipairs(allowed_files) do
+            if filename == allowed then
+                is_allowed = true
+                break
+            end
+        end
+        
+        if not is_allowed then
+            result.code = -2
+            result.message = "不允许删除此文件"
+            return
+        end
+        
+        local fd = io.open(safe_storage, "r")
         if not fd then
             result.code = 1
             result.message = "数据文件不存在"
@@ -1737,8 +1839,8 @@ function api_clear_data()
         end
         fd:close()
         
-        os.remove(storage_path)
-        result.deleted_path = storage_path
+        os.remove(safe_storage)
+        result.deleted_path = safe_storage
         result.message = "数据已清除"
         
         _cached_storage_path = nil
@@ -1858,17 +1960,22 @@ function api_clear_all_data()
         for _, data_dir in ipairs(all_possible_dirs) do
             for _, filename in ipairs(files_to_delete) do
                 local file_path = data_dir .. "/" .. filename
-                local fd = io.open(file_path, "r")
-                if fd then
-                    fd:close()
-                    local remove_ok = os.remove(file_path)
-                    if remove_ok then
-                        table.insert(result.deleted_files, {
-                            name = filename,
-                            path = file_path,
-                            success = true
-                        })
-                        deleted_count = deleted_count + 1
+                
+                -- 验证路径安全
+                local safe_file = safe_path(file_path)
+                if safe_file then
+                    local fd = io.open(safe_file, "r")
+                    if fd then
+                        fd:close()
+                        local remove_ok = os.remove(safe_file)
+                        if remove_ok then
+                            table.insert(result.deleted_files, {
+                                name = filename,
+                                path = safe_file,
+                                success = true
+                            })
+                            deleted_count = deleted_count + 1
+                        end
                     end
                 end
             end
@@ -1886,6 +1993,211 @@ function api_clear_all_data()
 
     if not ok then
         result = error_response(-1, "清理数据失败", tostring(err))
+    else
+        result = success_response(result)
+    end
+
+    luci.http.prepare_content("application/json")
+    luci.http.write_json(result)
+end
+
+-- ========== 网络测速功能（Homebox） ==========
+
+local HOMEBOX_BIN = "/usr/bin/homebox"
+local HOMEBOX_PORT = 3300
+local HOMEBOX_PID_FILE = "/var/run/homebox.pid"
+
+-- 检查 Homebox 是否运行
+local function is_homebox_running()
+    -- 方法1：检查 PID 文件
+    local pid_fd = io.open(HOMEBOX_PID_FILE, "r")
+    if pid_fd then
+        local pid = pid_fd:read("*l")
+        pid_fd:close()
+        if pid and pid ~= "" then
+            -- 检查进程是否存在
+            local check_fd = io.popen("ps | grep -v grep | grep -q 'homebox.*serve' && echo 'running'")
+            if check_fd then
+                local result = check_fd:read("*l")
+                check_fd:close()
+                if result and result:match("running") then
+                    return true
+                end
+            end
+        end
+    end
+    
+    -- 方法2：检查端口是否被监听
+    local port_fd = io.popen("netstat -tln 2>/dev/null | grep ':" .. HOMEBOX_PORT .. "' | wc -l")
+    if port_fd then
+        local count = port_fd:read("*l")
+        port_fd:close()
+        if count and tonumber(count) > 0 then
+            return true
+        end
+    end
+    
+    return false
+end
+
+-- 获取路由器 IP 地址
+local function get_router_ip()
+    local fd = io.popen("ip route show default 2>/dev/null | awk '/src/ {print $NF}' | head -1")
+    if fd then
+        local ip = fd:read("*l")
+        fd:close()
+        if ip and ip ~= "" then
+            return ip
+        end
+    end
+    -- 备用方案：获取 br-lan IP
+    fd = io.popen("ip addr show br-lan 2>/dev/null | grep 'inet ' | awk '{print $2}' | cut -d'/' -f1")
+    if fd then
+        local ip = fd:read("*l")
+        fd:close()
+        if ip and ip ~= "" then
+            return ip
+        end
+    end
+    return "192.168.1.1"
+end
+
+-- 启动 Homebox 服务
+local function start_homebox()
+    if is_homebox_running() then
+        return true, "Homebox 已在运行"
+    end
+
+    -- 检查 Homebox 是否存在
+    local fd = io.open(HOMEBOX_BIN, "r")
+    if not fd then
+        return false, "Homebox 未安装"
+    end
+    fd:close()
+
+    -- 验证路径安全
+    if not safe_path(HOMEBOX_BIN) then
+        return false, "Homebox 路径无效"
+    end
+
+    -- 确保有执行权限
+    os.execute("chmod +x " .. HOMEBOX_BIN .. " 2>/dev/null")
+    
+    -- 杀掉可能存在的旧进程
+    os.execute("killall homebox 2>/dev/null")
+    os.remove(HOMEBOX_PID_FILE)
+
+    -- 启动 Homebox（后台运行）
+    local start_cmd = HOMEBOX_BIN .. " serve --port " .. tostring(HOMEBOX_PORT) .. 
+                      " > /tmp/homebox.log 2>&1 &"
+    os.execute(start_cmd)
+    
+    -- 获取新进程 PID
+    local pid_fd = io.popen("pgrep -f 'homebox.*serve' | head -1")
+    if pid_fd then
+        local pid = pid_fd:read("*l")
+        pid_fd:close()
+        if pid and pid ~= "" then
+            local write_fd = io.open(HOMEBOX_PID_FILE, "w")
+            if write_fd then
+                write_fd:write(pid)
+                write_fd:close()
+            end
+        end
+    end
+
+    -- 等待服务启动（最多3秒）
+    local max_wait = 3
+    local waited = 0
+    while waited < max_wait do
+        if is_homebox_running() then
+            return true, "Homebox 启动成功"
+        end
+        os.execute("sleep 1")
+        waited = waited + 1
+    end
+
+    -- 检查日志获取错误信息
+    local log_fd = io.open("/tmp/homebox.log", "r")
+    local log_content = ""
+    if log_fd then
+        log_content = log_fd:read("*all") or ""
+        log_fd:close()
+    end
+    
+    if log_content ~= "" then
+        return false, "启动失败: " .. log_content:sub(1, 200)
+    end
+    
+    return false, "Homebox 启动超时"
+end
+
+-- 启动测速（返回 Homebox URL）
+function api_speed_test()
+    local http = require("luci.http")
+    local util = require("luci.util")
+    local json = require("luci.jsonc")
+
+    local result = {
+        code = 0,
+        status = "ready",
+        message = ""
+    }
+
+    local ok, err = pcall(function()
+        -- 检查并启动 Homebox
+        local success, msg = start_homebox()
+        if not success then
+            result.code = -1
+            result.status = "error"
+            result.message = msg
+            return
+        end
+
+        -- 获取路由器 IP
+        local router_ip = get_router_ip()
+        result.url = "http://" .. router_ip .. ":" .. HOMEBOX_PORT
+        result.status = "ready"
+        result.message = "Homebox 测速服务已就绪"
+    end)
+
+    if not ok then
+        result = error_response(-1, "启动测速服务失败", tostring(err))
+    elseif result.code and result.code < 0 then
+        result.timestamp = os.time()
+    else
+        result = success_response(result)
+    end
+
+    luci.http.prepare_content("application/json")
+    luci.http.write_json(result)
+end
+
+-- 查询测速状态（Homebox 模式下用于检查服务状态）
+function api_speed_test_status()
+    local http = require("luci.http")
+    local json = require("luci.jsonc")
+
+    local result = {
+        code = 0,
+        status = "idle",
+        message = ""
+    }
+
+    local ok, err = pcall(function()
+        if is_homebox_running() then
+            local router_ip = get_router_ip()
+            result.status = "ready"
+            result.url = "http://" .. router_ip .. ":" .. HOMEBOX_PORT
+            result.message = "Homebox 测速服务运行中"
+        else
+            result.status = "stopped"
+            result.message = "Homebox 测速服务未运行"
+        end
+    end)
+
+    if not ok then
+        result = error_response(-1, "查询状态失败", tostring(err))
     else
         result = success_response(result)
     end

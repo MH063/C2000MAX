@@ -634,6 +634,38 @@
         gap: 8px;
     }
 
+    .rm-wifi-header-actions {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+
+    .rm-btn-speed {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 8px 16px;
+        background: linear-gradient(135deg, rgba(0, 212, 255, 0.15) 0%, rgba(0, 153, 204, 0.15) 100%);
+        border: 1px solid rgba(0, 212, 255, 0.3);
+        color: var(--accent-cyan);
+        border-radius: 8px;
+        font-size: 13px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.3s ease;
+    }
+
+    .rm-btn-speed:hover {
+        background: linear-gradient(135deg, rgba(0, 212, 255, 0.25) 0%, rgba(0, 153, 204, 0.25) 100%);
+        border-color: var(--accent-cyan);
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(0, 212, 255, 0.2);
+    }
+
+    .rm-btn-speed:active {
+        transform: translateY(0);
+    }
+
     .rm-wifi-btn {
         padding: 6px 14px;
         background: transparent;
@@ -901,6 +933,7 @@
     }
 
     .rm-chart-container {
+        position: relative;
         padding: 24px;
         background: linear-gradient(135deg, rgba(0, 200, 255, 0.03) 0%, rgba(0, 255, 150, 0.03) 100%);
         border-radius: 12px;
@@ -1555,7 +1588,15 @@
         <div class="rm-card" style="margin-bottom: 20px;">
             <div class="rm-card-header">
                 <div class="rm-card-title">WiFi状态概览</div>
-                <div class="rm-wifi-selector" id="wifi-selector"></div>
+                <div class="rm-wifi-header-actions">
+                    <button class="rm-btn-speed" onclick="startSpeedTest()" title="启动内网测速">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
+                        </svg>
+                        测速
+                    </button>
+                    <div class="rm-wifi-selector" id="wifi-selector"></div>
+                </div>
             </div>
             <div class="rm-wifi-hint" id="wifi-hint">
                 <span class="rm-wifi-hint-icon">
@@ -2024,9 +2065,12 @@ function showChartTooltip(event, index, type, period) {
     var label = type === 'rx' ? '接收' : '发送';
 
     var tooltip = document.getElementById('chart-tooltip');
+    var container = document.querySelector('.rm-chart-container');
+    var containerRect = container.getBoundingClientRect();
+
     tooltip.innerHTML = label + ': ' + formatSize(value);
-    tooltip.style.left = (event.pageX + 10) + 'px';
-    tooltip.style.top = (event.pageY - 30) + 'px';
+    tooltip.style.left = (event.clientX - containerRect.left + 15) + 'px';
+    tooltip.style.top = (event.clientY - containerRect.top - 40) + 'px';
     tooltip.classList.add('active');
 }
 
@@ -2940,6 +2984,64 @@ function renderWifiStatusByIndex(statusList, index) {
 
     var channelEl = document.getElementById('stat-channel');
     if (channelEl) channelEl.textContent = status.channel || '-';
+}
+
+var speedTestRunning = false;
+
+function startSpeedTest() {
+    if (speedTestRunning) {
+        showToast('测速服务正在启动中，请稍候...', 'warning');
+        return;
+    }
+
+    speedTestRunning = true;
+    showToast('正在启动 Homebox 测速服务...', 'info');
+
+    var xhr = new XMLHttpRequest();
+    xhr.open('POST', '<%=luci.dispatcher.build_url("admin/status/router_assistant/speed_test")%>', true);
+    xhr.timeout = 15000;
+    xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+
+    var params = 'token=' + encodeURIComponent(LUCI_TOKEN);
+
+    xhr.onload = function() {
+        speedTestRunning = false;
+
+        if (xhr.status >= 200 && xhr.status < 300) {
+            try {
+                var res = JSON.parse(xhr.responseText);
+                console.log('Speed test response:', res);
+
+                if (res.code === 0 && res.url) {
+                    showToast('Homebox 测速服务已启动', 'success', 3000);
+
+                    var openNew = confirm('测速服务已就绪！\n\n点击"确定"在新窗口打开测速页面\n点击"取消"手动访问: ' + res.url);
+                    if (openNew) {
+                        window.open(res.url, '_blank');
+                    }
+                } else {
+                    showToast('启动失败: ' + (res.message || '未知错误'), 'error');
+                }
+            } catch (e) {
+                console.error('Parse error:', e);
+                showToast('解析响应失败', 'error');
+            }
+        } else {
+            showToast('请求失败: ' + xhr.status, 'error');
+        }
+    };
+
+    xhr.onerror = function() {
+        speedTestRunning = false;
+        showToast('网络错误，请检查连接', 'error');
+    };
+
+    xhr.ontimeout = function() {
+        speedTestRunning = false;
+        showToast('启动超时，请重试', 'warning');
+    };
+
+    xhr.send(params);
 }
 
 function stopAllTimers() {

@@ -3,39 +3,60 @@ LuCI - Lua Configuration Interface
 UCI model helper for router-assistant
 ]]--
 
-module("luci.model.router_assistant_uci", package.seeall)
+local M = {}
 
-local uci = require("uci")
+local uci_cursor = nil
 
-function get_cursor()
-	return uci.cursor()
+local function get_uci()
+    if not uci_cursor then
+        local uci_ok, uci_lib = pcall(require, "uci")
+        if not uci_ok then
+            return nil
+        end
+        uci_cursor = uci_lib.cursor()
+    end
+    return uci_cursor
 end
 
-function get_config(name, section, option)
-	local c = uci.cursor()
-	if option then
-		return c:get(name, section, option)
-	end
-	return c:get_all(name, section)
+function M.get_cursor()
+    return get_uci()
 end
 
-function set_config(name, section, option, value)
-	local c = uci.cursor()
-	c:set(name, section, option, value)
-	return c:save(name)
+function M.get_config(name, section, option)
+    local c = get_uci()
+    if not c then return nil end
+    
+    if option then
+        return c:get(name, section, option)
+    end
+    return c:get_all(name, section)
 end
 
-function add_config(name, type_name, section)
-	local c = uci.cursor()
-	local s = c:section(name, type_name)
-	c:save(name)
-	return s
+function M.set_config(name, section, option, value)
+    local c = get_uci()
+    if not c then return end
+    
+    c:set(name, section, option, value)
+    return c:save(name)
 end
 
-function foreach_config(name, type_name, callback)
-	local c = uci.cursor()
-	c:foreach(name, type_name, function(s)
-		callback(s)
-		return true
-	end)
+function M.add_config(name, type_name, section)
+    local c = get_uci()
+    if not c then return nil end
+    
+    local s = c:section(name, type_name)
+    c:save(name)
+    return s
 end
+
+function M.foreach_config(name, type_name, callback)
+    local c = get_uci()
+    if not c or not callback then return end
+    
+    c:foreach(name, type_name, function(s)
+        callback(s)
+        return true
+    end)
+end
+
+return M
