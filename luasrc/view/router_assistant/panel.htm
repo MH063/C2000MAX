@@ -463,6 +463,14 @@
         margin-top: 2px;
     }
 
+    .rm-device-ipv6 {
+        color: var(--accent-cyan);
+        font-size: 11px;
+        margin-top: 2px;
+        font-family: 'SF Mono', Monaco, monospace;
+        word-break: break-all;
+    }
+
     .rm-mac {
         font-family: 'SF Mono', Monaco, monospace;
         font-size: 13px;
@@ -2293,8 +2301,16 @@ function renderDevices(devices, checkOnly) {
     document.getElementById('stat-wired').textContent = wired;
     document.getElementById('stat-wifi').textContent = wifi;
 
+    var sortedDevices = devices.slice().sort(function(a, b) {
+        var signalA = a.signal || a.rssi || 999;
+        var signalB = b.signal || b.rssi || 999;
+        if (typeof signalA === 'string') signalA = parseFloat(signalA) || 999;
+        if (typeof signalB === 'string') signalB = parseFloat(signalB) || 999;
+        return signalB - signalA;
+    });
+
     var html = '';
-    devices.forEach(function(dev) {
+    sortedDevices.forEach(function(dev) {
         var isWifi = isWifiDevice(dev);
         var kickBtn = '<button class="rm-kick-btn" onclick="kickDevice(\'' + escapeHtml(dev.mac) + '\', \'' + escapeHtml(dev.device || '') + '\')">踢出</button>';
         var noteBtn = '<button class="rm-note-btn" onclick="openNoteModal(\'' + escapeHtml(dev.mac) + '\', \'' + escapeHtml(dev.hostname || '') + '\')" title="编辑备注">编辑</button>';
@@ -2327,7 +2343,7 @@ function renderDevices(devices, checkOnly) {
         html += '<tr>' +
             '<td>' +
                 '<div class="rm-device-name">' + displayName + '</div>' +
-                '<div class="rm-device-ip">' + escapeHtml(dev.ip) + '</div>' +
+                formatDeviceIp(dev.ip) +
             '</td>' +
             '<td><span class="rm-mac">' + escapeHtml(dev.mac) + '</span></td>' +
             '<td style="text-align:center;"><span class="rm-badge ' + (isWifi ? 'rm-badge-wifi' : 'rm-badge-wired') + '">' +
@@ -2395,7 +2411,7 @@ function renderTraffic(data) {
         onlineHtml += '<tr>' +
             '<td>' +
                 '<div class="rm-device-name">' + displayName + '</div>' +
-                '<div class="rm-device-ip">' + escapeHtml(dev.ip) + '</div>' +
+                formatDeviceIp(dev.ip) +
                 onlineDuration +
             '</td>' +
             '<td style="text-align:center;"><span class="rm-mac">' + escapeHtml(dev.mac) + '</span></td>' +
@@ -2454,7 +2470,7 @@ function renderTraffic(data) {
             offlineHtml += '<tr class="rm-offline">' +
                 '<td>' +
                     '<div class="rm-device-name">' + displayName + ' <span class="rm-badge rm-badge-offline">离线</span></div>' +
-                    '<div class="rm-device-ip">' + escapeHtml(dev.ip) + '</div>' +
+                    formatDeviceIp(dev.ip) +
                     lastSeen +
                 '</td>' +
                 '<td style="text-align:center;"><span class="rm-mac">' + escapeHtml(dev.mac) + '</span></td>' +
@@ -2517,6 +2533,27 @@ function escapeHtml(str) {
     var div = document.createElement('div');
     div.textContent = String(str);
     return div.innerHTML;
+}
+
+function formatDeviceIp(ip) {
+    if (!ip || ip === '' || ip === '-') return '<div class="rm-device-ip">-</div>';
+    var ipv4 = '';
+    var ipv6 = '';
+    var parts = ip.split(/\s+/);
+    for (var i = 0; i < parts.length; i++) {
+        var p = parts[i].trim();
+        if (p === '') continue;
+        if (p.match(/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/)) {
+            ipv4 = p;
+        } else if (p.indexOf(':') !== -1) {
+            ipv6 = p;
+        }
+    }
+    var html = '<div class="rm-device-ip">' + escapeHtml(ipv4 || ip) + '</div>';
+    if (ipv6) {
+        html += '<div class="rm-device-ipv6">' + escapeHtml(ipv6) + '</div>';
+    }
+    return html;
 }
 
 function formatSize(bytes) {
