@@ -1,17 +1,94 @@
-#!/bin/sh
+#!/bin/sh /etc/rc.common
 # 流量统计初始化脚本
 # 用于 OpenWrt 路由器启动时恢复 ipset 和 iptables 规则
 
-LOGGER="logger -t traffic-stats"
+START=95
+STOP=15
+
 IPSET_RX="traffic_stats_rx"
 IPSET_TX="traffic_stats_tx"
 CHAIN_RX="TRAFFIC_STATS_RX"
 CHAIN_TX="TRAFFIC_STATS_TX"
 DATA_DIR="/tmp/traffic_stats"
 STATS_FILE="${DATA_DIR}/device_stats.json"
+BLOCKLIST_FILE=""
 
-log() {
-    ${LOGGER} "$1"
+clear_blocklist_rules() {
+    echo "traffic-stats: Clearing blocklist iptables rules..."
+    
+    local mac_list=$(iptables -L INPUT -n 2>/dev/null | grep -oE "MAC[a-fA-F0-9:]+" | sed 's/MAC//' | sort -u)
+    
+    echo "traffic-stats: Found MAC list from iptables: ${mac_list}"
+    
+    for mac in ${mac_list}; do
+        if [ -n "${mac}" ]; then
+            local lower_mac=$(echo "${mac}" | tr '[:upper:]' '[:lower:]')
+            echo "traffic-stats: Removing iptables rule for MAC: ${mac}"
+            iptables -D INPUT -m mac --mac-source ${lower_mac} -j DROP 2>/dev/null
+            iptables -D FORWARD -m mac --mac-source ${lower_mac} -j DROP 2>/dev/null
+        fi
+    done
+
+    echo "traffic-stats: Clearing access_ctl blacklist..."
+
+    find_blocklist_file
+    if [ -f "${BLOCKLIST_FILE}" ]; then
+        local blocked_macs=$(grep -oE '"mac"[[:space:]]*:[[:space:]]*"[0-9A-Fa-f:]+"' "${BLOCKLIST_FILE}" 2>/dev/null | sed 's/.*"mac"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
+        
+        for mac in ${blocked_macs}; do
+            if [ -n "${mac}" ]; then
+                local lower_mac=$(echo "${mac}" | tr '[:upper:]' '[:lower:]')
+                echo "traffic-stats: Removing access_ctl block for MAC: ${mac}"
+                access_ctl.sh -m ${lower_mac} -a 1 2>/dev/null
+            fi
+        done
+
+        echo "traffic-stats: Access_ctl blacklist cleared"
+    else
+        echo "traffic-stats: No blocklist file found, skipping access_ctl cleanup"
+    fi
+
+    echo "traffic-stats: All blocklist rules cleared"
+}
+
+find_blocklist_file() {
+    local search_paths="/mnt/mmcblk0p1 /mnt/sdcard /tmp/mnt/mmcblk0p1 /overlay /tmp"
+    for base_path in ${search_paths}; do
+        local file_path="${base_path}/router_assistant/mac_blocklist.json"
+        if [ -f "${file_path}" ]; then
+            BLOCKLIST_FILE="${file_path}"
+            echo "traffic-stats: Found blocklist file: ${BLOCKLIST_FILE}"
+            return 0
+        fi
+    done
+    echo "traffic-stats: No blocklist file found"
+    return 1
+}
+
+restore_blocklist() {
+    if ! find_blocklist_file; then
+        return 0
+    fi
+
+    if [ ! -f "${BLOCKLIST_FILE}" ]; then
+        echo "traffic-stats: Blocklist file not found"
+        return 1
+    fi
+
+    local count=0
+    local mac_list=$(grep -oE '"mac"[[:space:]]*:[[:space:]]*"[0-9A-Fa-f:]+"' "${BLOCKLIST_FILE}" 2>/dev/null | sed 's/.*"mac"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
+    
+    for mac in ${mac_list}; do
+        if [ -n "${mac}" ]; then
+            local lower_mac=$(echo "${mac}" | tr '[:upper:]' '[:lower:]')
+            iptables -I INPUT -m mac --mac-source ${lower_mac} -j DROP 2>/dev/null
+            iptables -I FORWARD -m mac --mac-source ${lower_mac} -j DROP 2>/dev/null
+            count=$((count + 1))
+            echo "traffic-stats: Restored block rule for MAC: ${mac}"
+        fi
+    done
+
+    echo "traffic-stats: Restored ${count} blocked devices from blocklist"
 }
 
 check_ipset() {
@@ -19,7 +96,7 @@ check_ipset() {
 }
 
 init_ipset() {
-    log "Initializing ipset..."
+    echo "traffic-stats: Initializing ipset..."
 
     ipset create ${IPSET_RX} hash:mac counters 2>/dev/null
     ipset create ${IPSET_TX} hash:mac counters 2>/dev/null
@@ -27,11 +104,11 @@ init_ipset() {
     local existing_rx=$(ipset list ${IPSET_RX} 2>/dev/null | grep -c "^[0-9a-fA-F][0-9a-fA-F]:")
     local existing_tx=$(ipset list ${IPSET_TX} 2>/dev/null | grep -c "^[0-9a-fA-F][0-9a-fA-F]:")
 
-    log "ipset ${IPSET_RX}: ${existing_rx} entries, ${IPSET_TX}: ${existing_tx} entries"
+    echo "traffic-stats: ipset ${IPSET_RX}: ${existing_rx} entries, ${IPSET_TX}: ${existing_tx} entries"
 }
 
 init_iptables() {
-    log "Initializing iptables rules..."
+    echo "traffic-stats: Initializing iptables rules..."
 
     iptables -t mangle -N ${CHAIN_RX} 2>/dev/null
     iptables -t mangle -F ${CHAIN_RX}
@@ -45,7 +122,7 @@ init_iptables() {
     iptables -t mangle -D FORWARD -j ${CHAIN_TX} 2>/dev/null
     iptables -t mangle -I FORWARD -j ${CHAIN_TX}
 
-    log "iptables rules initialized"
+    echo "traffic-stats: iptables rules initialized"
 }
 
 restore_devices() {
@@ -63,12 +140,12 @@ restore_devices() {
         done < "${lease_file}"
     fi
 
-    log "Restored ${count} devices from dhcp.leases"
+    echo "traffic-stats: Restored ${count} devices from dhcp.leases"
 }
 
 restore_from_stats() {
     if [ ! -f "${STATS_FILE}" ]; then
-        log "No stats file found, skipping restore"
+        echo "traffic-stats: No stats file found, skipping restore"
         return
     fi
 
@@ -81,27 +158,30 @@ restore_from_stats() {
         count=$((count + 1))
     done
 
-    log "Restored ${count} devices from previous stats"
+    echo "traffic-stats: Restored ${count} devices from previous stats"
 }
 
 start() {
     if ! check_ipset; then
-        log "ipset not found, skipping..."
+        echo "traffic-stats: ipset not found, skipping..."
         return 1
     fi
 
-    log "Starting traffic statistics service..."
+    echo "traffic-stats: Starting traffic statistics service..."
 
     init_ipset
     init_iptables
     restore_devices
     restore_from_stats
 
-    log "Traffic statistics service started"
+    echo "traffic-stats: Restoring MAC blocklist..."
+    restore_blocklist
+
+    echo "traffic-stats: Traffic statistics service started"
 }
 
 stop() {
-    log "Stopping traffic statistics service..."
+    echo "traffic-stats: Stopping traffic statistics service..."
 
     iptables -t mangle -D FORWARD -j ${CHAIN_RX} 2>/dev/null
     iptables -t mangle -D FORWARD -j ${CHAIN_TX} 2>/dev/null
@@ -110,7 +190,11 @@ stop() {
     iptables -t mangle -X ${CHAIN_RX} 2>/dev/null
     iptables -t mangle -X ${CHAIN_TX} 2>/dev/null
 
-    log "Traffic statistics service stopped"
+    echo "traffic-stats: Calling clear_blocklist_rules..."
+    clear_blocklist_rules
+    echo "traffic-stats: clear_blocklist_rules returned"
+
+    echo "traffic-stats: Traffic statistics service stopped"
 }
 
 reload() {
@@ -131,42 +215,3 @@ status() {
     iptables -t mangle -L ${CHAIN_RX} -n 2>/dev/null
     iptables -t mangle -L ${CHAIN_TX} -n 2>/dev/null
 }
-
-enable() {
-    mkdir -p /etc/rc.d
-    ln -sf ../init.d/traffic-stats /etc/rc.d/S95traffic-stats
-}
-
-disable() {
-    rm -f /etc/rc.d/S95traffic-stats
-}
-
-case "$1" in
-    start)
-        start
-        ;;
-    stop)
-        stop
-        ;;
-    restart)
-        stop
-        sleep 1
-        start
-        ;;
-    reload)
-        reload
-        ;;
-    status)
-        status
-        ;;
-    enable)
-        enable
-        ;;
-    disable)
-        disable
-        ;;
-    *)
-        echo "Usage: $0 {start|stop|restart|reload|status|enable|disable}"
-        exit 1
-        ;;
-esac

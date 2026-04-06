@@ -82,19 +82,7 @@ chmod 755 "$PKG_DIR/CONTROL/prerm"
 echo "=== Step 2: Copying data files ==="
 
 mkdir -p "$PKG_DIR/data/etc/init.d"
-cat > "$PKG_DIR/data/etc/init.d/traffic-stats" << 'ENDTRAFFIC'
-#!/bin/sh /etc/rc.common
-START=95
-STOP=15
-
-start() {
-    echo "Traffic statistics service started"
-}
-
-stop() {
-    echo "Traffic statistics service stopped"
-}
-ENDTRAFFIC
+cp "$SCRIPT_DIR/etc/init.d/traffic-stats" "$PKG_DIR/data/etc/init.d/traffic-stats"
 chmod 755 "$PKG_DIR/data/etc/init.d/traffic-stats"
 
 mkdir -p "$PKG_DIR/data/usr/lib/lua/luci/controller"

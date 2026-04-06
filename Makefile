@@ -74,7 +74,14 @@ endef
 define Package/luci-app-router-assistant/prerm
 #!/bin/sh
 [ -n "$${IPKG_INSTROOT}" ] || {
-	/etc/init.d/traffic-stats stop 2>/dev/null
+	echo "正在停止路由助手服务..."
+	/etc/init.d/traffic-stats stop
+	echo "iptables屏蔽规则已清除"
+	echo ""
+	echo "注意：屏蔽设备配置文件已保留在存储设备中"
+	echo "如需完全清理，请手动删除："
+	echo "  /mnt/mmcblk0p1/router_assistant/mac_blocklist.json"
+	echo "  或 /mnt/sdcard/router_assistant/mac_blocklist.json"
 }
 exit 0
 endef

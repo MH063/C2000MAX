@@ -426,7 +426,7 @@
 
     .rm-table th {
         padding: 16px 20px;
-        text-align: left;
+        text-align: center;
         color: var(--text-secondary);
         font-size: 12px;
         font-weight: 600;
@@ -441,6 +441,7 @@
         color: var(--text-primary);
         font-size: 14px;
         border-bottom: 1px solid var(--border-color);
+        vertical-align: middle;
     }
 
     .rm-table tr:last-child td {
@@ -469,6 +470,8 @@
         background: rgba(0, 0, 0, 0.3);
         padding: 4px 10px;
         border-radius: 6px;
+        display: inline-block;
+        text-align: center;
     }
 
     .rm-badge {
@@ -511,16 +514,19 @@
     .rm-traffic-rx {
         color: var(--accent-cyan);
         font-weight: 600;
+        text-align: center;
     }
 
     .rm-traffic-tx {
         color: var(--accent-green);
         font-weight: 600;
+        text-align: center;
     }
 
     .rm-traffic-total {
         color: var(--accent-orange);
         font-weight: 700;
+        text-align: center;
     }
 
     .rm-kick-btn {
@@ -539,6 +545,31 @@
         background: var(--accent-red);
         color: #fff;
         box-shadow: 0 0 15px rgba(255, 82, 82, 0.4);
+    }
+
+    .rm-action-cell {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+    }
+
+    .rm-btn-success {
+        padding: 6px 14px;
+        background: transparent;
+        border: 1px solid var(--accent-green);
+        color: var(--accent-green);
+        border-radius: 8px;
+        cursor: pointer;
+        font-size: 12px;
+        font-weight: 500;
+        transition: all 0.3s ease;
+    }
+
+    .rm-btn-success:hover {
+        background: var(--accent-green);
+        color: #fff;
+        box-shadow: 0 0 15px rgba(76, 175, 80, 0.4);
     }
 
     .rm-info-grid {
@@ -871,6 +902,9 @@
 
     .rm-chart-container {
         padding: 24px;
+        background: linear-gradient(135deg, rgba(0, 200, 255, 0.03) 0%, rgba(0, 255, 150, 0.03) 100%);
+        border-radius: 12px;
+        border: 1px solid rgba(255, 255, 255, 0.05);
     }
 
     .rm-chart-header {
@@ -883,6 +917,7 @@
     .rm-chart-title {
         font-size: 14px;
         color: var(--text-secondary);
+        font-weight: 500;
     }
 
     .rm-chart-legend {
@@ -902,91 +937,105 @@
         width: 10px;
         height: 10px;
         border-radius: 50%;
+        box-shadow: 0 0 8px currentColor;
     }
 
     .rm-chart-legend-dot.rx {
         background: var(--accent-cyan);
+        color: var(--accent-cyan);
     }
 
     .rm-chart-legend-dot.tx {
         background: var(--accent-green);
+        color: var(--accent-green);
     }
 
     .rm-chart-svg {
         width: 100%;
-        height: 200px;
+        height: 220px;
+        filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.2));
     }
 
     .rm-chart-axis {
-        stroke: var(--border-color);
+        stroke: rgba(255, 255, 255, 0.08);
         stroke-width: 1;
     }
 
     .rm-chart-grid {
-        stroke: var(--border-color);
+        stroke: rgba(255, 255, 255, 0.05);
         stroke-width: 0.5;
-        stroke-dasharray: 4;
+        stroke-dasharray: 4 4;
     }
 
     .rm-chart-line {
         fill: none;
-        stroke-width: 2;
+        stroke-width: 2.5;
         stroke-linecap: round;
         stroke-linejoin: round;
+        filter: drop-shadow(0 0 6px currentColor);
     }
 
     .rm-chart-line.rx {
-        stroke: var(--accent-cyan);
+        stroke: #00E5FF;
     }
 
     .rm-chart-line.tx {
-        stroke: var(--accent-green);
+        stroke: #00FF88;
     }
 
     .rm-chart-area {
-        opacity: 0.1;
+        opacity: 0.15;
     }
 
     .rm-chart-area.rx {
-        fill: var(--accent-cyan);
+        fill: url(#gradient-rx);
     }
 
     .rm-chart-area.tx {
-        fill: var(--accent-green);
+        fill: url(#gradient-tx);
     }
 
     .rm-chart-label {
         fill: var(--text-secondary);
-        font-size: 10px;
+        font-size: 11px;
+        font-weight: 500;
     }
 
     .rm-chart-dot {
-        r: 4;
-        fill: var(--bg-secondary);
-        stroke-width: 2;
+        r: 5;
+        fill: var(--bg-primary);
+        stroke-width: 2.5;
         cursor: pointer;
+        transition: all 0.2s ease;
+    }
+
+    .rm-chart-dot:hover {
+        r: 7;
+        filter: drop-shadow(0 0 8px currentColor);
     }
 
     .rm-chart-dot.rx {
-        stroke: var(--accent-cyan);
+        stroke: #00E5FF;
     }
 
     .rm-chart-dot.tx {
-        stroke: var(--accent-green);
+        stroke: #00FF88;
     }
 
     .rm-chart-tooltip {
         position: absolute;
-        background: var(--bg-secondary);
-        border: 1px solid var(--border-color);
-        border-radius: 8px;
-        padding: 8px 12px;
+        background: linear-gradient(135deg, rgba(20, 25, 40, 0.98) 0%, rgba(15, 20, 35, 0.98) 100%);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 10px;
+        padding: 12px 16px;
         font-size: 12px;
         color: var(--text-primary);
         pointer-events: none;
         opacity: 0;
-        transition: opacity 0.2s;
+        transition: opacity 0.25s ease;
         z-index: 100;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4), 0 0 1px rgba(255, 255, 255, 0.05);
+        backdrop-filter: blur(10px);
     }
 
     .rm-chart-tooltip.active {
@@ -1283,6 +1332,30 @@
                 </div>
             </div>
         </div>
+
+        <!-- 已屏蔽设备管理区域（常驻显示） -->
+        <div class="rm-card" id="blocked-section" style="margin-top:20px;">
+            <div class="rm-card-header">
+                <div class="rm-card-title" style="color:var(--accent-red);">已屏蔽设备</div>
+                <span style="font-size:12px;color:var(--text-secondary);">以下设备已被踢出网络，点击恢复可解除限制</span>
+            </div>
+            <div class="rm-card-body">
+                <div id="blocked-empty" class="rm-empty">
+                    <p>暂无屏蔽设备</p>
+                </div>
+                <table class="rm-table" id="blocked-table" style="display:none;">
+                    <thead>
+                        <tr>
+                            <th>设备名称</th>
+                            <th>MAC地址</th>
+                            <th>IP地址</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="blocked-tbody"></tbody>
+                </table>
+            </div>
+        </div>
     </div>
 
     <div id="tab-traffic" class="rm-tab-content">
@@ -1302,6 +1375,14 @@
                 </div>
                 <div class="rm-stat-value green" id="stat-total-tx">0<span class="rm-stat-unit">B</span></div>
                 <div class="rm-stat-desc">所有设备发送的数据总量</div>
+            </div>
+            <div class="rm-stat-card" style="--accent-cyan:var(--gradient-card-1);background:linear-gradient(135deg, rgba(138, 43, 226, 0.15) 0%, rgba(75, 0, 130, 0.15) 100%);border:1px solid rgba(138, 43, 226, 0.3);">
+                <div class="rm-stat-header">
+                    <span class="rm-stat-label">总流量消耗</span>
+                    <span class="rm-stat-tag" style="background:rgba(138, 43, 226, 0.2);color:#BA55D3;">TOTAL</span>
+                </div>
+                <div class="rm-stat-value" style="color:#E066FF;" id="stat-total-all">0<span class="rm-stat-unit"></span></div>
+                <div class="rm-stat-desc">系统累计流量消耗统计</div>
             </div>
             <div class="rm-stat-card orange">
                 <div class="rm-stat-header">
@@ -1343,7 +1424,17 @@
                         </div>
                     </div>
                 </div>
-                <svg class="rm-chart-svg" id="traffic-chart" viewBox="0 0 800 200">
+                <svg class="rm-chart-svg" id="traffic-chart" viewBox="0 0 800 220">
+                    <defs>
+                        <linearGradient id="gradient-rx" x1="0%" y1="0%" x2="0%" y2="100%">
+                            <stop offset="0%" style="stop-color:#00E5FF;stop-opacity:0.4"/>
+                            <stop offset="100%" style="stop-color:#00E5FF;stop-opacity:0.02"/>
+                        </linearGradient>
+                        <linearGradient id="gradient-tx" x1="0%" y1="0%" x2="0%" y2="100%">
+                            <stop offset="0%" style="stop-color:#00FF88;stop-opacity:0.4"/>
+                            <stop offset="100%" style="stop-color:#00FF88;stop-opacity:0.02"/>
+                        </linearGradient>
+                    </defs>
                     <g class="rm-chart-grid-lines"></g>
                     <g class="rm-chart-x-labels"></g>
                     <g class="rm-chart-y-labels"></g>
@@ -1949,7 +2040,7 @@ function kickDevice(mac, device) {
         return;
     }
 
-    if (!confirm('确定要踢出该设备 (' + escapeHtml(mac) + ') 吗？设备将断开网络连接。')) {
+    if (!confirm('确定要踢出该设备 (' + escapeHtml(mac) + ') 吗？设备将断开网络连接并加入屏蔽列表。')) {
         return;
     }
 
@@ -1961,8 +2052,52 @@ function kickDevice(mac, device) {
     safeXHRpost('<%=luci.dispatcher.build_url("admin/status/router_assistant/kick_device")%>', params,
         function(res) {
             if (res.code === 0) {
-                showToast('设备已成功踢出', 'success');
+                showToast(res.message || '设备已成功踢出', 'success');
+
+                // 立即从设备列表中移除该设备（即时反馈）
+                var tbody = document.getElementById('devices-tbody');
+                if (tbody) {
+                    var rows = tbody.getElementsByTagName('tr');
+                    for (var i = 0; i < rows.length; i++) {
+                        var macCell = rows[i].querySelector('.rm-mac');
+                        if (macCell && macCell.textContent.trim().toUpperCase() === mac.toUpperCase()) {
+                            tbody.removeChild(rows[i]);
+                            break;
+                        }
+                    }
+                }
+
+                // 添加到本地屏蔽列表
+                var newDevice = {
+                    mac: mac.toUpperCase(),
+                    name: device || '未知设备',
+                    ip: res.ip || ''
+                };
+
+                // 检查是否已存在，避免重复
+                var exists = false;
+                for (var j = 0; j < localBlockedDevices.length; j++) {
+                    if (localBlockedDevices[j].mac === newDevice.mac) {
+                        exists = true;
+                        break;
+                    }
+                }
+                if (!exists) {
+                    localBlockedDevices.push(newDevice);
+                }
+
+                renderBlockedDevices(localBlockedDevices);
+
+                // 更新统计数字
+                var totalEl = document.getElementById('stat-total');
+                if (totalEl) {
+                    var currentTotal = parseInt(totalEl.textContent) || 0;
+                    totalEl.textContent = Math.max(0, currentTotal - 1);
+                }
+
+                // 后台刷新完整数据
                 loadDevices();
+                loadBlockedDevices();
             } else {
                 showToast('踢出失败：' + escapeHtml(res.message || '未知错误'), 'error');
             }
@@ -1971,6 +2106,109 @@ function kickDevice(mac, device) {
             showToast('网络错误：' + error, 'error');
         }
     );
+}
+
+function enableDevice(mac) {
+    if (!mac || mac === '') {
+        showToast('MAC地址无效', 'error');
+        return;
+    }
+
+    if (!confirm('确定要恢复该设备 (' + escapeHtml(mac) + ') 吗？设备将重新获得网络访问权限。')) {
+        return;
+    }
+
+    var params = 'mac=' + encodeURIComponent(mac);
+
+    safeXHRpost('<%=luci.dispatcher.build_url("admin/status/router_assistant/enable_device")%>', params,
+        function(res) {
+            if (res.code === 0) {
+                showToast(res.message || '设备已恢复', 'success');
+
+                // 从本地屏蔽列表中移除
+                var macUpper = mac.toUpperCase();
+                localBlockedDevices = localBlockedDevices.filter(function(d) {
+                    return d.mac !== macUpper;
+                });
+
+                renderBlockedDevices(localBlockedDevices);
+
+                // 后台刷新完整数据
+                loadDevices();
+                loadBlockedDevices();
+            } else {
+                showToast('恢复失败：' + escapeHtml(res.message || '未知错误'), 'error');
+            }
+        },
+        function(error) {
+            showToast('网络错误：' + error, 'error');
+        }
+    );
+}
+
+var blockedDevicesTimer = null;
+var localBlockedDevices = [];
+
+function loadBlockedDevices() {
+    safeXHR(
+        '<%=luci.dispatcher.build_url("admin/status/router_assistant/get_blocked_devices")%>',
+        function(res) {
+            var blockedList = null;
+
+            if (res.code === 0) {
+                if (res.blocked && Array.isArray(res.blocked)) {
+                    blockedList = res.blocked;
+                } else if (res.data && res.data.blocked && Array.isArray(res.data.blocked)) {
+                    blockedList = res.data.blocked;
+                }
+            }
+
+            // 始终更新本地缓存（即使为空数组）
+            if (blockedList !== null) {
+                localBlockedDevices = blockedList;
+            }
+
+            renderBlockedDevices(localBlockedDevices);
+        },
+        function(error) {
+            // 请求失败时也渲染当前缓存
+            renderBlockedDevices(localBlockedDevices);
+        }
+    );
+}
+
+function renderBlockedDevices(blockedList) {
+    var container = document.getElementById('blocked-section');
+    var table = document.getElementById('blocked-table');
+    var empty = document.getElementById('blocked-empty');
+    var tbody = document.getElementById('blocked-tbody');
+
+    if (!container || !table || !tbody) return;
+
+    // 始终显示已屏蔽设备区域（常驻显示）
+    container.style.display = 'block';
+
+    if (!blockedList || blockedList.length === 0) {
+        // 没有屏蔽设备时显示空状态提示
+        empty.style.display = 'block';
+        table.style.display = 'none';
+        return;
+    }
+
+    // 有屏蔽设备时显示表格
+    empty.style.display = 'none';
+    table.style.display = 'table';
+
+    var html = '';
+    blockedList.forEach(function(dev) {
+        html += '<tr>' +
+            '<td><div class="rm-device-name">' + escapeHtml(dev.name || '未知设备') + '</div></td>' +
+            '<td style="text-align:center;"><span class="rm-mac">' + escapeHtml(dev.mac) + '</span></td>' +
+            '<td style="text-align:center;">' + (dev.ip || '-') + '</td>' +
+            '<td style="text-align:center;"><button class="rm-btn-success" onclick="enableDevice(\'' + escapeHtml(dev.mac) + '\')" title="解除屏蔽">恢复</button></td>' +
+            '</tr>';
+    });
+    tbody.innerHTML = html;
 }
 
 function isWifiDevice(dev) {
@@ -2048,10 +2286,10 @@ function renderDevices(devices, checkOnly) {
                 '<div class="rm-device-ip">' + escapeHtml(dev.ip) + '</div>' +
             '</td>' +
             '<td><span class="rm-mac">' + escapeHtml(dev.mac) + '</span></td>' +
-            '<td><span class="rm-badge ' + (isWifi ? 'rm-badge-wifi' : 'rm-badge-wired') + '">' +
+            '<td style="text-align:center;"><span class="rm-badge ' + (isWifi ? 'rm-badge-wifi' : 'rm-badge-wired') + '">' +
             (isWifi ? 'WiFi' : '有线') + '</span></td>' +
-            '<td>' + signalDisplay + '</td>' +
-            '<td>' + noteBtn + ' ' + kickBtn + '</td>' +
+            '<td style="text-align:center;">' + signalDisplay + '</td>' +
+            '<td style="text-align:center;"><div class="rm-action-cell">' + noteBtn + ' ' + kickBtn + '</div></td>' +
             '</tr>';
     });
 
@@ -2070,6 +2308,9 @@ function renderTraffic(data) {
     document.getElementById('stat-online-count').textContent = stats.online_count || 0;
     document.getElementById('stat-offline-count').textContent = stats.offline_count || 0;
     document.getElementById('online-count-label').textContent = stats.online_count || 0;
+
+    var totalAll = (stats.total_rx || 0) + (stats.total_tx || 0);
+    document.getElementById('stat-total-all').innerHTML = formatSize(totalAll) + '<span class="rm-stat-unit"></span>';
 
     var onlineHtml = '';
     var currentTime = Math.floor(Date.now() / 1000);
@@ -2113,7 +2354,7 @@ function renderTraffic(data) {
                 '<div class="rm-device-ip">' + escapeHtml(dev.ip) + '</div>' +
                 onlineDuration +
             '</td>' +
-            '<td><span class="rm-mac">' + escapeHtml(dev.mac) + '</span></td>' +
+            '<td style="text-align:center;"><span class="rm-mac">' + escapeHtml(dev.mac) + '</span></td>' +
             // 接收(RX)图标 - 更专业的设计
             '<td class="rm-traffic-rx"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:4px;"><path d="M12 5v14"/><path d="M19 12l-7 7-7-7"/></svg> ' + escapeHtml(dev.rx_display) + '</td>' +
             // 发送(TX)图标 - 更专业的设计
@@ -2172,7 +2413,7 @@ function renderTraffic(data) {
                     '<div class="rm-device-ip">' + escapeHtml(dev.ip) + '</div>' +
                     lastSeen +
                 '</td>' +
-                '<td><span class="rm-mac">' + escapeHtml(dev.mac) + '</span></td>' +
+                '<td style="text-align:center;"><span class="rm-mac">' + escapeHtml(dev.mac) + '</span></td>' +
                 // 接收(RX)图标 - 更专业的设计
                 '<td class="rm-traffic-rx"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:4px;"><path d="M12 5v14"/><path d="M19 12l-7 7-7-7"/></svg> ' + escapeHtml(dev.rx_display) + '</td>' +
                 // 发送(TX)图标 - 更专业的设计
@@ -2211,12 +2452,12 @@ function renderWifi(wifiList, checkOnly) {
 
         html += '<tr>' +
             '<td><strong>' + escapeHtml(wifi.iface) + '</strong></td>' +
-            '<td>' + escapeHtml(wifi.ssid) + '</td>' +
-            '<td>' + escapeHtml(wifi.channel) + '</td>' +
-            '<td>' + escapeHtml(wifi.signal) + '</td>' +
-            '<td><span class="rm-encryption">' + escapeHtml(wifi.encryption) + '</span></td>' +
-            '<td>' + (wifi.clients || 0) + '</td>' +
-            '<td>' + statusBadge + '</td>' +
+            '<td style="text-align:center;">' + escapeHtml(wifi.ssid) + '</td>' +
+            '<td style="text-align:center;">' + escapeHtml(wifi.channel) + '</td>' +
+            '<td style="text-align:center;">' + escapeHtml(wifi.signal) + '</td>' +
+            '<td style="text-align:center;"><span class="rm-encryption">' + escapeHtml(wifi.encryption) + '</span></td>' +
+            '<td style="text-align:center;">' + (wifi.clients || 0) + '</td>' +
+            '<td style="text-align:center;">' + statusBadge + '</td>' +
             '</tr>';
     });
 
@@ -2266,7 +2507,6 @@ function loadStorageStatus() {
             }
         },
         function(error) {
-            console.log('Storage status load error:', error);
         }
     );
 }
@@ -2340,7 +2580,6 @@ function getCache(key) {
 
     var now = Date.now();
     if (cache.data && (now - cache.timestamp) < cache.ttl) {
-        console.log('[缓存] 命中: ' + key);
         return cache.data;
     }
 
@@ -2353,7 +2592,6 @@ function setCache(key, data) {
 
     cache.data = data;
     cache.timestamp = Date.now();
-    console.log('[缓存] 更新: ' + key);
 }
 
 function clearCache(key) {
@@ -2369,7 +2607,6 @@ function clearCache(key) {
             dataCache[k].timestamp = 0;
         }
     }
-    console.log('[缓存] 清除: ' + (key || '全部'));
 }
 
 var pendingRequests = {
@@ -2626,7 +2863,6 @@ function renderWifiStatus(statusList) {
     });
 
     wifiStatusData = validWifiList;
-    console.log('[WiFi状态] 数据更新:', validWifiList.length, '个有效网络 (原始:', statusList.length, '), 选中索引:', selectedWifiIndex);
 
     var grid = document.getElementById('wifi-info-grid');
     var hint = document.getElementById('wifi-hint');
@@ -2663,7 +2899,6 @@ function renderWifiStatus(statusList) {
     }
 
     if (validWifiList.length > 0 && selectedWifiIndex >= 0 && selectedWifiIndex < validWifiList.length) {
-        console.log('[WiFi状态] 更新选中网络信息, 索引:', selectedWifiIndex);
         if (hint) hint.style.display = 'none';
         if (grid) grid.style.display = 'grid';
         renderWifiStatusByIndex(validWifiList, selectedWifiIndex);
@@ -2690,11 +2925,9 @@ function renderWifiStatus(statusList) {
 
 function renderWifiStatusByIndex(statusList, index) {
     if (!statusList || !statusList[index]) {
-        console.log('[WiFi状态] renderWifiStatusByIndex 无效数据');
         return;
     }
     var status = statusList[index];
-    console.log('[WiFi状态] 更新网络详情:', status.ssid, '信号:', status.signal, '状态:', status.status);
 
     document.getElementById('wifi-ssid').textContent = status.ssid || '-';
     document.getElementById('wifi-signal').textContent = status.signal || '-';
@@ -2714,6 +2947,7 @@ function stopAllTimers() {
     if (trafficTimer) { clearInterval(trafficTimer); trafficTimer = null; }
     if (wifiTimer) { clearInterval(wifiTimer); wifiTimer = null; }
     if (timeTimer) { clearInterval(timeTimer); timeTimer = null; }
+    if (blockedDevicesTimer) { clearInterval(blockedDevicesTimer); blockedDevicesTimer = null; }
 }
 
 function startRefresh() {
@@ -2723,9 +2957,11 @@ function startRefresh() {
     loadDevices();
     loadTraffic();
     loadWifi();
+    loadBlockedDevices();
     devicesTimer = setInterval(loadDevices, refreshConfig.interval);
     trafficTimer = setInterval(loadTraffic, refreshConfig.interval);
     wifiTimer = setInterval(loadWifi, refreshConfig.interval);
+    blockedDevicesTimer = setInterval(loadBlockedDevices, 30000);
 }
 
 function startTabRefresh(tabName) {

@@ -27,7 +27,7 @@ function index()
     entry({"admin", "status", "router_assistant", "get_version"}, call("api_get_version")).leaf = true
     entry({"admin", "status", "router_assistant", "kick_device"}, post("api_kick_device")).leaf = true
     entry({"admin", "status", "router_assistant", "enable_device"}, post("api_enable_device")).leaf = true
-    entry({"admin", "status", "router_assistant", "get_blocked"}, call("api_get_blocked_devices")).leaf = true
+    entry({"admin", "status", "router_assistant", "get_blocked_devices"}, call("api_get_blocked_devices")).leaf = true
     entry({"admin", "status", "router_assistant", "get_storage_status"}, call("api_get_storage_status")).leaf = true
     entry({"admin", "status", "router_assistant", "migrate_storage"}, post("api_migrate_storage")).leaf = true
     entry({"admin", "status", "router_assistant", "clear_data"}, post("api_clear_data")).leaf = true
@@ -58,7 +58,7 @@ local function validate_csrf()
     return true
 end
 
-function is_wifi_device(client)
+local function is_wifi_device(client)
     if client.type == "wireless" then
         return true
     end
@@ -84,6 +84,132 @@ function is_wifi_device(client)
     end
 
     return false
+end
+
+local function get_encryption_name(enc)
+    if not enc or enc == "" or enc == "none" or enc == "open" then
+        return nil
+    elseif enc == "psk" then
+        return "WPA-PSK"
+    elseif enc == "psk2" then
+        return "WPA2-PSK"
+    elseif enc == "psk-mixed" then
+        return "WPA/WPA2混合"
+    elseif enc == "sae" then
+        return "WPA3-SAE"
+    elseif enc == "sae-mixed" then
+        return "WPA2/WPA3混合"
+    elseif enc == "wep" then
+        return "WEP"
+    elseif enc == "wpa" then
+        return "WPA-Enterprise"
+    elseif enc == "wpa2" then
+        return "WPA2-Enterprise"
+    elseif enc:match("PSK") or enc:match("WPA") or enc:match("WEP") then
+        return enc
+    else
+        return nil
+    end
+end
+
+local function load_dhcp_leases()
+    local leases = {}
+    local fd = io.open("/tmp/dhcp.leases", "r")
+    if fd then
+        for line in fd:lines() do
+            local parts = {}
+            for part in line:gmatch("%S+") do
+                table.insert(parts, part)
+            end
+            if #parts >= 4 then
+                local mac = parts[2]:upper()
+                local ip = parts[3]
+                local name = parts[4]
+                if name and name ~= "" and name ~= "*" then
+                    leases[mac] = {ip = ip, name = name}
+                end
+            end
+        end
+        fd:close()
+    end
+    return leases
+end
+
+-- 检查设备是否已被屏蔽（在iptables黑名单中）
+local _blocked_macs_cache = nil
+local _blocked_macs_cache_time = 0
+
+local function is_device_blocked(mac)
+    if not mac or mac == "" then return false end
+    local mac_upper = mac:upper()
+
+    -- 缓存黑名单列表，5秒内有效
+    local current_time = os.time()
+    if _blocked_macs_cache and (current_time - _blocked_macs_cache_time) < 5 then
+        return _blocked_macs_cache[mac_upper] == true
+    end
+
+    -- 重新加载黑名单
+    _blocked_macs_cache = {}
+    _blocked_macs_cache_time = current_time
+
+    local util = require("luci.util")
+
+    -- 从iptables输出中提取MAC地址的通用函数
+    local function extract_macs_from_iptables(output)
+        local macs = {}
+        if not output then return macs end
+
+        -- 方法1：匹配 --mac-source XX:XX:XX:XX:XX:XX 格式
+        for mac in output:gmatch("--mac%-source%s+([%da-fA-F:]+)") do
+            if mac and #mac >= 17 then
+                macs[mac:upper()] = true
+            end
+        end
+
+        -- 方法2：匹配 MACxx:xx:xx:xx:xx:xx 格式（iptables -L 输出格式，MAC前缀无空格）
+        for mac in output:gmatch("MAC([%da-fA-F][%da-fA-F:]+)") do
+            if mac and #mac >= 17 then
+                macs[mac:upper()] = true
+            end
+        end
+
+        -- 方法3：匹配独立的MAC地址格式 XX:XX:XX:XX:XX:XX（在规则行中）
+        for mac in output:gmatch("(%da-fA-F[%da-fA-F]:%da-fA-F[%da-fA-F]:%da-fA-F[%da-fA-F]:%da-fA-F[%da-fA-F]:%da-fA-F[%da-fA-F])") do
+            macs[mac:upper()] = true
+        end
+
+        return macs
+    end
+
+    -- 检查INPUT链中的DROP规则
+    local input_output = util.exec("iptables -L INPUT -n --line-numbers 2>/dev/null")
+    if input_output then
+        local input_macs = extract_macs_from_iptables(input_output)
+        for mac, _ in pairs(input_macs) do
+            _blocked_macs_cache[mac] = true
+        end
+    end
+
+    -- 检查FORWARD链中的DROP规则
+    local forward_output = util.exec("iptables -L FORWARD -n --line-numbers 2>/dev/null")
+    if forward_output then
+        local forward_macs = extract_macs_from_iptables(forward_output)
+        for mac, _ in pairs(forward_macs) do
+            _blocked_macs_cache[mac] = true
+        end
+    end
+
+    -- 检查internet_access链
+    local access_output = util.exec("iptables -L internet_access -n --line-numbers 2>/dev/null")
+    if access_output then
+        local access_macs = extract_macs_from_iptables(access_output)
+        for mac, _ in pairs(access_macs) do
+            _blocked_macs_cache[mac] = true
+        end
+    end
+
+    return _blocked_macs_cache[mac_upper] == true
 end
 
 function api_get_devices()
@@ -115,6 +241,7 @@ function api_get_devices()
         end
 
         if data.client then
+            local dhcp_leases = load_dhcp_leases()
             for mac, client in pairs(data.client) do
                 local mac_str = ""
                 if mac and type(mac) == "string" then
@@ -127,8 +254,10 @@ function api_get_devices()
                 local is_wifi = is_wifi_device(client)
 
                 local hostname = "Unknown"
-                if client.hostname and type(client.hostname) == "string" then
+                if client.hostname and type(client.hostname) == "string" and client.hostname ~= "" and client.hostname ~= "*" then
                     hostname = client.hostname
+                elseif dhcp_leases[mac_upper] then
+                    hostname = dhcp_leases[mac_upper].name
                 end
 
                 local ip = "-"
@@ -151,7 +280,8 @@ function api_get_devices()
                 end
 
                 local is_upstream = (ifname == "eth1" or ifname == "eth3")
-                if not is_upstream then
+                -- 过滤掉已被屏蔽的设备
+                if not is_upstream and not is_device_blocked(mac_upper) then
                     table.insert(devices_list, {
                         ip = ip,
                         mac = mac_upper,
@@ -169,7 +299,6 @@ function api_get_devices()
     end)
 
     if not ok then
-        os.execute("echo 'api_get_devices error: " .. tostring(err) .. "' >> /tmp/traffic_debug.log")
         response_data = error_response(-1, "获取设备列表失败", tostring(err))
     end
 
@@ -186,6 +315,7 @@ local DATA_FILE_NAME = "traffic_stats.json"
 local NOTES_FILE_NAME = "device_notes.json"
 local HISTORY_FILE_NAME = "traffic_history.json"
 local ALERTS_FILE_NAME = "traffic_alerts.json"
+local BLOCKLIST_FILE_NAME = "mac_blocklist.json"
 
 local function get_storage_type(path)
     if path:find("mmcblk0") or path:find("sdcard") or path:find("storage") then
@@ -330,6 +460,90 @@ local function save_json_file(filename, data)
     return save_data_atomic(filepath, json_str)
 end
 
+-- ========== MAC屏蔽列表持久化管理 ==========
+
+local function get_blocklist_filepath()
+    local dir = get_data_dir()
+    ensure_directory(dir)
+    return dir .. "/" .. BLOCKLIST_FILE_NAME
+end
+
+local function load_blocklist()
+    local filepath = get_blocklist_filepath()
+    local fd = io.open(filepath, "r")
+    if not fd then 
+        return {devices = {}}
+    end
+    local content = fd:read("*all")
+    fd:close()
+    if not content or content == "" then
+        return {devices = {}}
+    end
+    local json = require("luci.jsonc")
+    local ok, data = pcall(json.parse, content)
+    if not ok or not data or not data.devices then
+        return {devices = {}}
+    end
+    return data
+end
+
+local function save_blocklist(blocklist)
+    local filepath = get_blocklist_filepath()
+    local json = require("luci.jsonc")
+    local json_str = json.stringify(blocklist) or '{"devices":[]}'
+    return save_data_atomic(filepath, json_str)
+end
+
+local function add_to_blocklist(mac, name, ip)
+    if not mac or mac == "" then return false end
+    local mac_upper = mac:upper()
+    local blocklist = load_blocklist()
+    for _, device in ipairs(blocklist.devices) do
+        if device.mac == mac_upper then
+            return true
+        end
+    end
+    table.insert(blocklist.devices, {
+        mac = mac_upper,
+        name = name or "未知设备",
+        ip = ip or "",
+        blocked_at = os.time()
+    })
+    return save_blocklist(blocklist)
+end
+
+local function remove_from_blocklist(mac)
+    if not mac or mac == "" then return false end
+    local mac_upper = mac:upper()
+    local blocklist = load_blocklist()
+    local new_devices = {}
+    for _, device in ipairs(blocklist.devices) do
+        if device.mac ~= mac_upper then
+            table.insert(new_devices, device)
+        end
+    end
+    blocklist.devices = new_devices
+    return save_blocklist(blocklist)
+end
+
+local function apply_iptables_block(mac)
+    if not mac or mac == "" then return false end
+    local mac_lower = mac:lower()
+    os.execute("iptables -I INPUT -m mac --mac-source " .. mac_lower .. " -j DROP 2>/dev/null")
+    os.execute("iptables -I FORWARD -m mac --mac-source " .. mac_lower .. " -j DROP 2>/dev/null")
+    return true
+end
+
+local function remove_iptables_block(mac)
+    if not mac or mac == "" then return false end
+    local mac_lower = mac:lower()
+    os.execute("iptables -D INPUT -m mac --mac-source " .. mac_lower .. " -j DROP 2>/dev/null")
+    os.execute("iptables -D FORWARD -m mac --mac-source " .. mac_lower .. " -j DROP 2>/dev/null")
+    return true
+end
+
+-- ========== MAC屏蔽列表持久化管理结束 ==========
+
 local function aggregate_traffic_history()
     local history = load_json_file(HISTORY_FILE_NAME) or {hourly = {}, daily = {}}
     local current_traffic = load_json_file(DATA_FILE_NAME) or {}
@@ -409,6 +623,7 @@ function api_get_traffic()
         local total_tx = 0
         local online_count = 0
         local offline_count = 0
+        local dhcp_leases = load_dhcp_leases()
 
         local cmd = "ubus call infocd terminal 2>/dev/null"
         local output = util.exec(cmd)
@@ -421,7 +636,10 @@ function api_get_traffic()
                     local real_mac_raw = client.real_mac
                     local real_mac = (real_mac_raw and type(real_mac_raw) == "string" and real_mac_raw ~= "") and real_mac_raw or ""
                     local device_id = (real_mac ~= "" and real_mac ~= mac_str) and real_mac:upper() or mac_upper
-                    local hostname = (client.hostname and type(client.hostname) == "string" and client.hostname ~= "") and client.hostname or "Unknown"
+                    local hostname = (client.hostname and type(client.hostname) == "string" and client.hostname ~= "" and client.hostname ~= "*") and client.hostname or nil
+                    if not hostname then
+                        hostname = dhcp_leases[device_id] and dhcp_leases[device_id].name or "Unknown"
+                    end
                     local ip = "-"
                     if client.ipaddr and type(client.ipaddr) == "string" and client.ipaddr ~= "" then
                         ip = client.ipaddr
@@ -523,6 +741,7 @@ function api_get_traffic()
                         online = false,
                         first_seen = data.first_seen or 0,
                         last_seen = data.last_seen or current_time,
+                        is_wifi = data.is_wifi or false
                     })
                 end
             end
@@ -557,7 +776,12 @@ function api_get_traffic()
         }
     end)
     if not ok then
-        response_data = {code = -1, message = "Error: " .. tostring(err), online_devices = {}, offline_devices = {}, stats = {}}
+        response_data = error_response(-1, "获取流量统计失败", tostring(err))
+        response_data.online_devices = {}
+        response_data.offline_devices = {}
+        response_data.stats = {}
+    else
+        response_data = success_response(response_data)
     end
     luci.http.prepare_content("application/json")
     luci.http.write_json(response_data)
@@ -566,31 +790,6 @@ end
 function api_get_wifi()
     local result = {code = 0, wifi = {}}
     local sys = require("luci.sys")
-
-    -- 加密方式友好名称转换
-    local function getEncryptionName(enc)
-        if not enc or enc == "" or enc == "none" or enc == "open" then
-            return "无加密"
-        elseif enc == "psk" then
-            return "WPA-PSK"
-        elseif enc == "psk2" then
-            return "WPA2-PSK"
-        elseif enc == "psk-mixed" then
-            return "WPA/WPA2混合"
-        elseif enc == "sae" then
-            return "WPA3-SAE"
-        elseif enc == "sae-mixed" then
-            return "WPA2/WPA3混合"
-        elseif enc == "wep" then
-            return "WEP"
-        elseif enc == "wpa" then
-            return "WPA-Enterprise"
-        elseif enc == "wpa2" then
-            return "WPA2-Enterprise"
-        else
-            return enc
-        end
-    end
 
     local ok, err = pcall(function()
         local uci = require("luci.model.uci").cursor()
@@ -669,6 +868,9 @@ function api_get_wifi()
                 status = "disconnected"
             end
 
+            local enc_name = get_encryption_name(wifi_info.encryption)
+            local encryption = enc_name or "无加密"
+
             local ssid = real_ssid or wifi_info.ssid or "-"
             if ssid ~= "" and ssid ~= "-" then
                 table.insert(result.wifi, {
@@ -677,7 +879,7 @@ function api_get_wifi()
                     mode = mode,
                     channel = channel,
                     signal = signal,
-                    encryption = getEncryptionName(wifi_info.encryption),
+                    encryption = encryption,
                     clients = client_count,
                     status = status
                 })
@@ -686,7 +888,9 @@ function api_get_wifi()
     end)
 
     if not ok then
-        os.execute("echo 'api_get_wifi error: " .. tostring(err) .. "' >> /tmp/traffic_debug.log")
+        result = error_response(-1, "获取WiFi信息失败", tostring(err))
+    else
+        result = success_response(result)
     end
 
     luci.http.prepare_content("application/json")
@@ -702,8 +906,9 @@ function api_get_device_notes()
         end
     end)
     if not ok then
-        result.code = -1
-        result.message = "Error: " .. tostring(err)
+        result = error_response(-1, "获取设备备注失败", tostring(err))
+    else
+        result = success_response(result)
     end
     luci.http.prepare_content("application/json")
     luci.http.write_json(result)
@@ -734,15 +939,15 @@ function api_save_device_note()
         }
         local save_ok = save_json_file(NOTES_FILE_NAME, notes)
         if not save_ok then
-            result.code = -1
-            result.message = "保存失败"
+            result = error_response(-1, "保存失败")
             return
         end
         result.message = "备注已保存"
     end)
     if not ok then
-        result.code = -1
-        result.message = "Error: " .. tostring(err)
+        result = error_response(-1, "保存设备备注失败", tostring(err))
+    else
+        result = success_response(result)
     end
     luci.http.prepare_content("application/json")
     luci.http.write_json(result)
@@ -770,8 +975,9 @@ function api_delete_device_note()
         result.message = "备注已删除"
     end)
     if not ok then
-        result.code = -1
-        result.message = "Error: " .. tostring(err)
+        result = error_response(-1, "删除设备备注失败", tostring(err))
+    else
+        result = success_response(result)
     end
     luci.http.prepare_content("application/json")
     luci.http.write_json(result)
@@ -802,8 +1008,9 @@ function api_get_traffic_history()
         end
     end)
     if not ok then
-        result.code = -1
-        result.message = "Error: " .. tostring(err)
+        result = error_response(-1, "获取流量历史失败", tostring(err))
+    else
+        result = success_response(result)
     end
     luci.http.prepare_content("application/json")
     luci.http.write_json(result)
@@ -821,8 +1028,9 @@ function api_get_alerts()
         end
     end)
     if not ok then
-        result.code = -1
-        result.message = "Error: " .. tostring(err)
+        result = error_response(-1, "获取报警设置失败", tostring(err))
+    else
+        result = success_response(result)
     end
     luci.http.prepare_content("application/json")
     luci.http.write_json(result)
@@ -855,15 +1063,15 @@ function api_save_alert()
         
         local save_ok = save_json_file(ALERTS_FILE_NAME, alerts)
         if not save_ok then
-            result.code = -1
-            result.message = "保存失败"
+            result = error_response(-1, "保存失败")
             return
         end
         result.message = "报警设置已保存"
     end)
     if not ok then
-        result.code = -1
-        result.message = "Error: " .. tostring(err)
+        result = error_response(-1, "保存报警设置失败", tostring(err))
+    else
+        result = success_response(result)
     end
     luci.http.prepare_content("application/json")
     luci.http.write_json(result)
@@ -877,8 +1085,9 @@ function api_delete_alert()
         result.message = "报警已重置"
     end)
     if not ok then
-        result.code = -1
-        result.message = "Error: " .. tostring(err)
+        result = error_response(-1, "重置报警设置失败", tostring(err))
+    else
+        result = success_response(result)
     end
     luci.http.prepare_content("application/json")
     luci.http.write_json(result)
@@ -911,33 +1120,6 @@ function api_get_wifi_status()
                 connected_stations = {}
             }
 
-            -- 加密方式友好名称转换
-            local function getEncryptionName(enc)
-                if not enc or enc == "" or enc == "none" or enc == "open" then
-                    return nil
-                elseif enc == "psk" then
-                    return "WPA-PSK"
-                elseif enc == "psk2" then
-                    return "WPA2-PSK"
-                elseif enc == "psk-mixed" then
-                    return "WPA/WPA2混合"
-                elseif enc == "sae" then
-                    return "WPA3-SAE"
-                elseif enc == "sae-mixed" then
-                    return "WPA2/WPA3混合"
-                elseif enc == "wep" then
-                    return "WEP"
-                elseif enc == "wpa" then
-                    return "WPA-Enterprise"
-                elseif enc == "wpa2" then
-                    return "WPA2-Enterprise"
-                elseif enc:match("PSK") or enc:match("WPA") or enc:match("WEP") then
-                    return enc
-                else
-                    return nil
-                end
-            end
-
             if ifname and ifname ~= "" then
                 -- 优先使用iw dev获取真实SSID（iwinfo可能显示错误的SSID）
                 local iw_dev_output = sys.exec("iw dev " .. ifname .. " info 2>/dev/null")
@@ -961,12 +1143,12 @@ function api_get_wifi_status()
                 if actual_enc then
                     actual_enc = actual_enc:gsub("^%s+", ""):gsub("%s+$", "")
                 end
-                local enc_name = getEncryptionName(actual_enc)
+                local enc_name = get_encryption_name(actual_enc)
                 if enc_name then
                     status.encryption = enc_name
                 else
                     -- iwinfo获取不到有效加密信息，从UCI配置获取
-                    enc_name = getEncryptionName(s.encryption)
+                    enc_name = get_encryption_name(s.encryption)
                     if enc_name then
                         status.encryption = enc_name
                     else
@@ -1047,7 +1229,9 @@ function api_get_wifi_status()
     end)
 
     if not ok then
-        os.execute("echo 'api_get_wifi_status error: " .. tostring(err) .. "' >> /tmp/traffic_debug.log")
+        result = error_response(-1, "获取WiFi状态失败", tostring(err))
+    else
+        result = success_response(result)
     end
 
     luci.http.prepare_content("application/json")
@@ -1056,12 +1240,12 @@ end
 
 function api_get_version()
     local result = {
-        code = 0,
         version = "1.0.1",
         author = "MH",
         description = "路由助手 - 网络管理工具"
     }
 
+    result = success_response(result)
     luci.http.prepare_content("application/json")
     luci.http.write_json(result)
 end
@@ -1150,6 +1334,13 @@ function api_kick_device()
         os.execute("iptables -I INPUT -m mac --mac-source " .. mac_lower .. " -j DROP 2>/dev/null")
         os.execute("iptables -I FORWARD -m mac --mac-source " .. mac_lower .. " -j DROP 2>/dev/null")
 
+        -- 保存到持久化配置文件
+        add_to_blocklist(mac_colon, device or "未知设备", device_ip)
+
+        -- 清除黑名单缓存，使更改立即生效
+        _blocked_macs_cache = nil
+        _blocked_macs_cache_time = 0
+
         os.execute("ubus call infocdp trigger \"{'sync':1}\" >/dev/null")
 
         local message = "设备已断开"
@@ -1168,8 +1359,9 @@ function api_kick_device()
     end)
 
     if not ok then
-        response_data.code = -1
-        response_data.message = "操作失败: " .. tostring(err)
+        response_data = error_response(-1, "操作失败: " .. tostring(err))
+    else
+        response_data = success_response(response_data)
     end
 
     luci.http.prepare_content("application/json")
@@ -1200,20 +1392,33 @@ function api_enable_device()
         end
         local mac_lower = mac_colon:lower()
 
+        -- 删除iptables DROP规则（恢复网络访问）
+        os.execute("iptables -D INPUT -m mac --mac-source " .. mac_lower .. " -j DROP 2>/dev/null")
+        os.execute("iptables -D FORWARD -m mac --mac-source " .. mac_lower .. " -j DROP 2>/dev/null")
+
+        -- 从持久化配置文件中删除
+        remove_from_blocklist(mac_colon)
+
+        -- 清除黑名单缓存，使更改立即生效
+        _blocked_macs_cache = nil
+        _blocked_macs_cache_time = 0
+
+        -- 通过access_ctl.sh解除限制
         local acl_cmd = "access_ctl.sh -m " .. mac_lower .. " -a 1 2>&1"
         local acl_result = util.exec(acl_cmd)
 
+        -- 同步设备状态
         os.execute("ubus call infocdp trigger \"{'sync':1}\" >/dev/null")
 
-        response_data.message = "设备已解除限制"
+        response_data.message = "设备已解除限制，已恢复网络访问权限"
         response_data.mac = mac_colon
         response_data.success = true
     end)
 
     if not ok then
-        os.execute("echo 'api_enable_device error: " .. tostring(err) .. "' >> /tmp/traffic_debug.log")
-        response_data.code = -1
-        response_data.message = "操作失败: " .. tostring(err)
+        response_data = error_response(-1, "操作失败: " .. tostring(err))
+    else
+        response_data = success_response(response_data)
     end
 
     luci.http.prepare_content("application/json")
@@ -1225,6 +1430,7 @@ function api_get_blocked_devices()
     local result = {code = 0, blocked = {}}
 
     local ok, err = pcall(function()
+        -- 获取DHCP租约表中的设备信息
         local device_info = {}
         local leases_file = io.open("/tmp/dhcp.leases", "r")
         if leases_file then
@@ -1243,30 +1449,84 @@ function api_get_blocked_devices()
             leases_file:close()
         end
 
-        local iptables_output = util.exec("iptables -L internet_access -n --line-numbers 2>/dev/null")
-        if iptables_output then
-            local blocked_macs = {}
-            for line in iptables_output:gmatch("[^\n]+") do
-                local mac = line:match("MAC([%x:]+)")
-                if mac then
-                    local mac_upper = mac:upper()
-                    if not blocked_macs[mac_upper] then
-                        blocked_macs[mac_upper] = true
-                        local info = device_info[mac_upper] or {}
-                        table.insert(result.blocked, {
-                            mac = mac_upper,
-                            name = info.name or "未知设备",
-                            ip = info.ip or "",
-                            switch = 0
-                        })
-                    end
+        -- 收集所有被屏蔽的MAC地址（使用集合去重）
+        local blocked_macs = {}
+
+        -- 从iptables输出中提取MAC地址的通用函数
+        local function extract_macs_from_iptables(output)
+            local macs = {}
+            if not output then return macs end
+
+            -- 方法1：匹配 --mac-source XX:XX:XX:XX:XX:XX 格式
+            for mac in output:gmatch("--mac%-source%s+([%da-fA-F:]+)") do
+                if mac and #mac >= 17 then
+                    macs[mac:upper()] = true
                 end
             end
+
+            -- 方法2：匹配 MACxx:xx:xx:xx:xx:xx 格式（iptables -L 输出格式，MAC前缀无空格）
+            for mac in output:gmatch("MAC([%da-fA-F][%da-fA-F:]+)") do
+                if mac and #mac >= 17 then
+                    macs[mac:upper()] = true
+                end
+            end
+
+            -- 方法3：匹配独立的MAC地址格式 XX:XX:XX:XX:XX:XX（在规则行中）
+            for mac in output:gmatch("(%da-fA-F[%da-fA-F]:%da-fA-F[%da-fA-F]:%da-fA-F[%da-fA-F]:%da-fA-F[%da-fA-F]:%da-fA-F[%da-fA-F])") do
+                macs[mac:upper()] = true
+            end
+
+            return macs
         end
+
+        -- 检测方法1：检查iptables INPUT链中的DROP规则
+        local input_output = util.exec("iptables -L INPUT -n --line-numbers 2>/dev/null")
+        local input_macs = {}
+        if input_output then
+            input_macs = extract_macs_from_iptables(input_output)
+        end
+        for mac, _ in pairs(input_macs) do
+            blocked_macs[mac] = true
+        end
+
+        -- 检测方法2：检查iptables FORWARD链中的DROP规则
+        local forward_output = util.exec("iptables -L FORWARD -n --line-numbers 2>/dev/null")
+        if forward_output then
+            local forward_macs = extract_macs_from_iptables(forward_output)
+            for mac, _ in pairs(forward_macs) do
+                blocked_macs[mac] = true
+            end
+        end
+
+        -- 检测方法3：检查internet_access链（access_ctl.sh管理的黑名单）
+        local access_output = util.exec("iptables -L internet_access -n --line-numbers 2>/dev/null")
+        if access_output then
+            local access_macs = extract_macs_from_iptables(access_output)
+            for mac, _ in pairs(access_macs) do
+                blocked_macs[mac] = true
+            end
+        end
+
+        -- 生成已屏蔽设备列表
+        for mac_upper, _ in pairs(blocked_macs) do
+            local info = device_info[mac_upper] or {}
+            table.insert(result.blocked, {
+                mac = mac_upper,
+                name = info.name or "未知设备",
+                ip = info.ip or ""
+            })
+        end
+
+        -- 按MAC地址排序
+        table.sort(result.blocked, function(a, b)
+            return a.mac < b.mac
+        end)
     end)
 
     if not ok then
-        os.execute("echo 'api_get_blocked_devices error: " .. tostring(err) .. "' >> /tmp/traffic_debug.log")
+        result = error_response(-1, "获取黑名单设备失败", tostring(err))
+    else
+        result = success_response(result)
     end
 
     luci.http.prepare_content("application/json")
@@ -1398,8 +1658,9 @@ function api_get_storage_status()
     end)
 
     if not ok then
-        result.code = -1
-        result.message = "Error: " .. tostring(err)
+        result = error_response(-1, "获取存储状态失败", tostring(err))
+    else
+        result = success_response(result)
     end
 
     luci.http.prepare_content("application/json")
@@ -1451,8 +1712,7 @@ function api_migrate_storage()
         
         local save_ok, save_err = save_with_fallback(target_path, source_data)
         if not save_ok then
-            result.code = -1
-            result.message = "迁移失败: " .. tostring(save_err)
+            result = error_response(-1, "迁移失败: " .. tostring(save_err))
             return
         end
         
@@ -1466,8 +1726,9 @@ function api_migrate_storage()
     end)
 
     if not ok then
-        result.code = -1
-        result.message = "Error: " .. tostring(err)
+        result = error_response(-1, "数据迁移失败", tostring(err))
+    else
+        result = success_response(result)
     end
 
     luci.http.prepare_content("application/json")
@@ -1500,8 +1761,9 @@ function api_clear_data()
     end)
 
     if not ok then
-        result.code = -1
-        result.message = "Error: " .. tostring(err)
+        result = error_response(-1, "清除数据失败", tostring(err))
+    else
+        result = success_response(result)
     end
 
     luci.http.prepare_content("application/json")
@@ -1559,8 +1821,9 @@ function api_get_data_stats()
     end)
 
     if not ok then
-        result.code = -1
-        result.message = "Error: " .. tostring(err)
+        result = error_response(-1, "获取数据统计失败", tostring(err))
+    else
+        result = success_response(result)
     end
 
     luci.http.prepare_content("application/json")
@@ -1638,8 +1901,9 @@ function api_clear_all_data()
     end)
 
     if not ok then
-        result.code = -1
-        result.message = "Error: " .. tostring(err)
+        result = error_response(-1, "清理数据失败", tostring(err))
+    else
+        result = success_response(result)
     end
 
     luci.http.prepare_content("application/json")
