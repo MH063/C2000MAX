@@ -16,6 +16,9 @@ homebox-linux-arm64-musl.tar.gz
 *.swp
 *.swo
 
+# 开发工具临时目录
+.workbuddy/
+
 # 构建输出
 *.pyc
 __pycache__/
