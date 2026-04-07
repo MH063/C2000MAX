@@ -421,11 +421,12 @@
 
     .rm-table {
         width: 100%;
-        border-collapse: collapse;
+        border-collapse: separate;
+        border-spacing: 0;
     }
 
     .rm-table th {
-        padding: 16px 20px;
+        padding: 18px 22px;
         text-align: center;
         color: var(--text-secondary);
         font-size: 12px;
@@ -437,10 +438,10 @@
     }
 
     .rm-table td {
-        padding: 16px 20px;
+        padding: 18px 22px;
         color: var(--text-primary);
         font-size: 14px;
-        border-bottom: 1px solid var(--border-color);
+        border-bottom: 1px solid rgba(255, 255, 255, 0.04);
         vertical-align: middle;
     }
 
@@ -450,6 +451,105 @@
 
     .rm-table tr:hover {
         background: rgba(255, 255, 255, 0.02);
+    }
+
+    .rm-pagination {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 16px 20px;
+        margin-top: 12px;
+        border-top: 1px solid var(--border-color);
+    }
+
+    .rm-pagination-info {
+        color: var(--text-secondary);
+        font-size: 13px;
+        display: flex;
+        align-items: center;
+        gap: 16px;
+    }
+
+    .rm-page-size-select {
+        background: rgba(0, 200, 255, 0.08);
+        color: var(--accent-cyan);
+        border: 1px solid rgba(0, 200, 255, 0.2);
+        border-radius: 6px;
+        padding: 4px 8px;
+        font-size: 12px;
+        cursor: pointer;
+        outline: none;
+    }
+
+    .rm-page-size-select:focus {
+        border-color: var(--accent-cyan);
+        box-shadow: 0 0 8px rgba(0, 200, 255, 0.3);
+    }
+
+    .rm-pagination-nav {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+    }
+
+    .rm-page-btn {
+        min-width: 34px;
+        height: 32px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 6px;
+        font-size: 13px;
+        cursor: pointer;
+        transition: all 0.25s ease;
+        border: 1px solid transparent;
+        background: transparent;
+        color: var(--text-secondary);
+        padding: 0 10px;
+    }
+
+    .rm-page-btn:hover:not(:disabled):not(.active) {
+        background: rgba(0, 200, 255, 0.1);
+        color: var(--accent-cyan);
+        border-color: rgba(0, 200, 255, 0.2);
+    }
+
+    .rm-page-btn.active {
+        background: linear-gradient(135deg, var(--accent-cyan), var(--accent-green));
+        color: var(--bg-primary);
+        font-weight: 600;
+        box-shadow: 0 2px 10px rgba(0, 200, 255, 0.35);
+    }
+
+    .rm-page-btn:disabled {
+        opacity: 0.35;
+        cursor: not-allowed;
+    }
+
+    .rm-page-jump {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-left: 10px;
+        color: var(--text-secondary);
+        font-size: 12px;
+    }
+
+    .rm-page-jump input {
+        width: 44px;
+        height: 28px;
+        text-align: center;
+        background: rgba(0, 0, 0, 0.3);
+        border: 1px solid var(--border-color);
+        border-radius: 5px;
+        color: var(--text-primary);
+        font-size: 12px;
+        outline: none;
+    }
+
+    .rm-page-jump input:focus {
+        border-color: var(--accent-cyan);
+        box-shadow: 0 0 6px rgba(0, 200, 255, 0.25);
     }
 
     .rm-device-name {
@@ -1817,6 +1917,11 @@ var LUCI_TOKEN = '<%=token%>';
 var deviceNotes = {};
 var globalThreshold = 0;
 var colorLevels = {warning: 50, danger: 80, critical: 100};
+var currentDevices = [];
+var currentBlocked = [];
+var currentTrafficOnline = [];
+var currentTrafficOffline = [];
+var currentTrafficStats = {};
 
 function loadDeviceNotes() {
     safeXHR(
@@ -2237,22 +2342,31 @@ function renderBlockedDevices(blockedList) {
 
     if (!container || !table || !tbody) return;
 
-    // 始终显示已屏蔽设备区域（常驻显示）
     container.style.display = 'block';
 
+    currentBlocked = blockedList || [];
+
     if (!blockedList || blockedList.length === 0) {
-        // 没有屏蔽设备时显示空状态提示
         empty.style.display = 'block';
         table.style.display = 'none';
+        var pagEl = document.getElementById('blocked-pagination');
+        if (pagEl) pagEl.remove();
         return;
     }
 
-    // 有屏蔽设备时显示表格
     empty.style.display = 'none';
     table.style.display = 'table';
 
+    initPageState('blocked');
+    var state = pageStates['blocked'];
+    var totalPages = Math.ceil(blockedList.length / state.pageSize);
+    if (state.page > totalPages) state.page = totalPages || 1;
+
+    var startIndex = (state.page - 1) * state.pageSize;
+    var pageData = blockedList.slice(startIndex, startIndex + state.pageSize);
+
     var html = '';
-    blockedList.forEach(function(dev) {
+    pageData.forEach(function(dev) {
         html += '<tr>' +
             '<td><div class="rm-device-name">' + escapeHtml(dev.name || '未知设备') + '</div></td>' +
             '<td style="text-align:center;"><span class="rm-mac">' + escapeHtml(dev.mac) + '</span></td>' +
@@ -2261,6 +2375,14 @@ function renderBlockedDevices(blockedList) {
             '</tr>';
     });
     tbody.innerHTML = html;
+
+    var pagContainer = document.getElementById('blocked-pagination');
+    if (!pagContainer) {
+        pagContainer = document.createElement('div');
+        pagContainer.id = 'blocked-pagination';
+        table.parentNode.appendChild(pagContainer);
+    }
+    pagContainer.outerHTML = renderPagination('blocked', blockedList.length);
 }
 
 function isWifiDevice(dev) {
@@ -2297,9 +2419,13 @@ function renderDevices(devices, checkOnly) {
     }
     lastDataHash.devices = dataKey;
 
+    currentDevices = devices;
+
     document.getElementById('stat-total').textContent = devices.length;
     document.getElementById('stat-wired').textContent = wired;
     document.getElementById('stat-wifi').textContent = wifi;
+
+    initPageState('devices');
 
     var sortedDevices = devices.slice().sort(function(a, b) {
         var signalA = a.signal || a.rssi || 999;
@@ -2309,8 +2435,15 @@ function renderDevices(devices, checkOnly) {
         return signalB - signalA;
     });
 
+    var state = pageStates['devices'];
+    var totalPages = Math.ceil(sortedDevices.length / state.pageSize);
+    if (state.page > totalPages) state.page = totalPages || 1;
+
+    var startIndex = (state.page - 1) * state.pageSize;
+    var pageData = sortedDevices.slice(startIndex, startIndex + state.pageSize);
+
     var html = '';
-    sortedDevices.forEach(function(dev) {
+    pageData.forEach(function(dev) {
         var isWifi = isWifiDevice(dev);
         var kickBtn = '<button class="rm-kick-btn" onclick="kickDevice(\'' + escapeHtml(dev.mac) + '\', \'' + escapeHtml(dev.device || '') + '\')">踢出</button>';
         var noteBtn = '<button class="rm-note-btn" onclick="openNoteModal(\'' + escapeHtml(dev.mac) + '\', \'' + escapeHtml(dev.hostname || '') + '\')" title="编辑备注">编辑</button>';
@@ -2355,6 +2488,13 @@ function renderDevices(devices, checkOnly) {
 
     document.getElementById('devices-tbody').innerHTML = html;
     document.getElementById('devices-table').style.display = 'block';
+    var pagContainer = document.getElementById('devices-pagination');
+    if (!pagContainer) {
+        pagContainer = document.createElement('div');
+        pagContainer.id = 'devices-pagination';
+        document.getElementById('devices-table').parentNode.appendChild(pagContainer);
+    }
+    pagContainer.outerHTML = renderPagination('devices', sortedDevices.length);
     return true;
 }
 
@@ -2363,18 +2503,32 @@ function renderTraffic(data) {
     var offlineDevices = data.offline_devices || [];
     var stats = data.stats || {};
 
-    document.getElementById('stat-total-rx').innerHTML = formatSize(stats.total_rx || 0) + '<span class="rm-stat-unit"></span>';
-    document.getElementById('stat-total-tx').innerHTML = formatSize(stats.total_tx || 0) + '<span class="rm-stat-unit"></span>';
-    document.getElementById('stat-online-count').textContent = stats.online_count || 0;
-    document.getElementById('stat-offline-count').textContent = stats.offline_count || 0;
-    document.getElementById('online-count-label').textContent = stats.online_count || 0;
+    currentTrafficOnline = onlineDevices;
+    currentTrafficOffline = offlineDevices;
+    if (Object.keys(stats).length > 0) {
+        currentTrafficStats = stats;
+    }
 
-    var totalAll = (stats.total_rx || 0) + (stats.total_tx || 0);
-    document.getElementById('stat-total-all').innerHTML = formatSize(totalAll) + '<span class="rm-stat-unit"></span>';
+    if (Object.keys(stats).length > 0) {
+        document.getElementById('stat-total-rx').innerHTML = formatSize(stats.total_rx || 0) + '<span class="rm-stat-unit"></span>';
+        document.getElementById('stat-total-tx').innerHTML = formatSize(stats.total_tx || 0) + '<span class="rm-stat-unit"></span>';
+        document.getElementById('stat-online-count').textContent = stats.online_count || 0;
+        document.getElementById('stat-offline-count').textContent = stats.offline_count || 0;
+        document.getElementById('online-count-label').textContent = stats.online_count || 0;
+        var totalAll = (stats.total_rx || 0) + (stats.total_tx || 0);
+        document.getElementById('stat-total-all').innerHTML = formatSize(totalAll) + '<span class="rm-stat-unit"></span>';
+    }
+
+    initPageState('traffic-online');
+    var onlineState = pageStates['traffic-online'];
+    var onlineTotalPages = Math.ceil(onlineDevices.length / onlineState.pageSize);
+    if (onlineState.page > onlineTotalPages) onlineState.page = onlineTotalPages || 1;
+    var onlineStartIdx = (onlineState.page - 1) * onlineState.pageSize;
+    var onlinePageData = onlineDevices.slice(onlineStartIdx, onlineStartIdx + onlineState.pageSize);
 
     var onlineHtml = '';
     var currentTime = Math.floor(Date.now() / 1000);
-    onlineDevices.forEach(function(dev) {
+    onlinePageData.forEach(function(dev) {
         var onlineDuration = '';
         if (dev.first_seen && dev.first_seen > 0) {
             var duration = currentTime - dev.first_seen;
@@ -2424,6 +2578,14 @@ function renderTraffic(data) {
     });
     document.getElementById('traffic-tbody').innerHTML = onlineHtml;
 
+    var onlinePagContainer = document.getElementById('traffic-online-pagination');
+    if (!onlinePagContainer) {
+        onlinePagContainer = document.createElement('div');
+        onlinePagContainer.id = 'traffic-online-pagination';
+        document.getElementById('traffic-table').parentNode.appendChild(onlinePagContainer);
+    }
+    onlinePagContainer.outerHTML = renderPagination('traffic-online', onlineDevices.length);
+
     var offlineCard = document.getElementById('offline-card');
     var offlineEmpty = document.getElementById('offline-empty');
     var offlineTable = document.getElementById('offline-table');
@@ -2432,8 +2594,15 @@ function renderTraffic(data) {
         if (offlineCard) offlineCard.style.display = 'block';
         document.getElementById('offline-count-label').textContent = offlineDevices.length;
 
+        initPageState('traffic-offline');
+        var offlineState = pageStates['traffic-offline'];
+        var offlineTotalPages = Math.ceil(offlineDevices.length / offlineState.pageSize);
+        if (offlineState.page > offlineTotalPages) offlineState.page = offlineTotalPages || 1;
+        var offlineStartIdx = (offlineState.page - 1) * offlineState.pageSize;
+        var offlinePageData = offlineDevices.slice(offlineStartIdx, offlineStartIdx + offlineState.pageSize);
+
         var offlineHtml = '';
-        offlineDevices.forEach(function(dev) {
+        offlinePageData.forEach(function(dev) {
             var lastSeen = '';
             if (dev.last_seen && dev.last_seen > 0) {
                 var lastSeenDuration = currentTime - dev.last_seen;
@@ -2484,6 +2653,14 @@ function renderTraffic(data) {
         document.getElementById('offline-tbody').innerHTML = offlineHtml;
         if (offlineEmpty) offlineEmpty.style.display = 'none';
         if (offlineTable) offlineTable.style.display = 'block';
+
+        var offlinePagContainer = document.getElementById('traffic-offline-pagination');
+        if (!offlinePagContainer) {
+            offlinePagContainer = document.createElement('div');
+            offlinePagContainer.id = 'traffic-offline-pagination';
+            offlineTable.parentNode.appendChild(offlinePagContainer);
+        }
+        offlinePagContainer.outerHTML = renderPagination('traffic-offline', offlineDevices.length);
     } else {
         if (offlineCard) offlineCard.style.display = 'none';
     }
@@ -2554,6 +2731,144 @@ function formatDeviceIp(ip) {
         html += '<div class="rm-device-ipv6">' + escapeHtml(ipv6) + '</div>';
     }
     return html;
+}
+
+var pageStates = {};
+
+function initPageState(tableId) {
+    var saved = localStorage.getItem('rm_page_' + tableId);
+    if (saved) {
+        try {
+            pageStates[tableId] = JSON.parse(saved);
+        } catch(e) {
+            pageStates[tableId] = {page: 1, pageSize: 5};
+        }
+    } else {
+        pageStates[tableId] = {page: 1, pageSize: 5};
+    }
+}
+
+function savePageState(tableId) {
+    localStorage.setItem('rm_page_' + tableId, JSON.stringify(pageStates[tableId]));
+}
+
+function renderPagination(tableId, totalItems) {
+    var state = pageStates[tableId];
+    if (!state) return '';
+    var totalPages = Math.ceil(totalItems / state.pageSize);
+    if (totalPages <= 1 && totalItems <= 10) return '';
+
+    var startItem = totalItems === 0 ? 0 : (state.page - 1) * state.pageSize + 1;
+    var endItem = Math.min(state.page * state.pageSize, totalItems);
+
+    var html = '<div class="rm-pagination" id="' + tableId + '-pagination">';
+    html += '<div class="rm-pagination-info">';
+    html += '<span>共 ' + totalItems + ' 条记录</span>';
+    html += '<span><label style="color:var(--text-secondary);">每页 </label>';
+    html += '<select class="rm-page-size-select" onchange="changePageSize(\'' + tableId + '\', this.value)">';
+    [5, 10, 20, 50, 100].forEach(function(size) {
+        html += '<option value="' + size + '"' + (state.pageSize == size ? ' selected' : '') + '>' + size + '</option>';
+    });
+    html += '</select><label> 条</label></span>';
+    html += '<span>' + startItem + '-' + endItem + ' / ' + totalItems + '</span>';
+    html += '</div>';
+
+    html += '<div class="rm-pagination-nav">';
+    html += '<button class="rm-page-btn" onclick="goPage(\'' + tableId + '\', 1)"' + (state.page <= 1 ? ' disabled' : '') + '>«</button>';
+    html += '<button class="rm-page-btn" onclick="goPage(\'' + tableId + '\', ' + (state.page - 1) + ')"' + (state.page <= 1 ? ' disabled' : '') + '>&lt;</button>';
+
+    var maxVisible = 7;
+    var startPage = Math.max(1, state.page - Math.floor(maxVisible / 2));
+    var endPage = Math.min(totalPages, startPage + maxVisible - 1);
+    if (endPage - startPage < maxVisible - 1) {
+        startPage = Math.max(1, endPage - maxVisible + 1);
+    }
+
+    if (startPage > 1) {
+        html += '<button class="rm-page-btn" onclick="goPage(\'' + tableId + '\', 1)">1</button>';
+        if (startPage > 2) html += '<span style="color:var(--text-secondary);padding:0 4px;">...</span>';
+    }
+    for (var p = startPage; p <= endPage; p++) {
+        html += '<button class="rm-page-btn' + (p == state.page ? ' active' : '') + '" onclick="goPage(\'' + tableId + '\', ' + p + ')">' + p + '</button>';
+    }
+    if (endPage < totalPages) {
+        if (endPage < totalPages - 1) html += '<span style="color:var(--text-secondary);padding:0 4px;">...</span>';
+        html += '<button class="rm-page-btn" onclick="goPage(\'' + tableId + '\', ' + totalPages + ')">' + totalPages + '</button>';
+    }
+
+    html += '<button class="rm-page-btn" onclick="goPage(\'' + tableId + '\', ' + (state.page + 1) + ')"' + (state.page >= totalPages ? ' disabled' : '') + '>&gt;</button>';
+    html += '<button class="rm-page-btn" onclick="goPage(\'' + tableId + '\', ' + totalPages + ')"' + (state.page >= totalPages ? ' disabled' : '') + '>»</button>';
+
+    html += '<div class="rm-page-jump">';
+    html += '<span>跳至</span>';
+    html += '<input type="number" min="1" max="' + totalPages + '" value="' + state.page + '" ';
+    html += 'onkeydown="if(event.keyCode===13){jumpToPage(\'' + tableId + '\',this.value)}">';
+    html += '<span>页</span>';
+    html += '</div>';
+
+    html += '</div></div>';
+    return html;
+}
+
+function goPage(tableId, page) {
+    var state = pageStates[tableId];
+    if (!state) return;
+    var totalItems = getTableTotalItems(tableId);
+    var totalPages = Math.ceil(totalItems / state.pageSize);
+    if (page < 1) page = 1;
+    if (page > totalPages) page = totalPages;
+    state.page = page;
+    savePageState(tableId);
+    refreshTable(tableId);
+}
+
+function changePageSize(tableId, pageSize) {
+    var state = pageStates[tableId];
+    if (!state) return;
+    state.pageSize = parseInt(pageSize);
+    state.page = 1;
+    savePageState(tableId);
+    refreshTable(tableId);
+}
+
+function jumpToPage(tableId, pageStr) {
+    var page = parseInt(pageStr);
+    if (!isNaN(page)) {
+        goPage(tableId, page);
+    }
+}
+
+function getTableTotalItems(tableId) {
+    switch(tableId) {
+        case 'devices': return currentDevices.length;
+        case 'blocked': return currentBlocked.length;
+        case 'traffic-online': return currentTrafficOnline.length;
+        case 'traffic-offline': return currentTrafficOffline.length;
+        default: return 0;
+    }
+}
+
+function refreshTable(tableId) {
+    switch(tableId) {
+        case 'devices':
+            if (currentDevices && currentDevices.length > 0) {
+                renderDevices(currentDevices);
+            }
+            break;
+        case 'blocked':
+            if (currentBlocked) {
+                renderBlockedDevices(currentBlocked);
+            }
+            break;
+        case 'traffic-online':
+        case 'traffic-offline':
+            renderTraffic({
+                online_devices: currentTrafficOnline, 
+                offline_devices: currentTrafficOffline, 
+                stats: {}
+            });
+            break;
+    }
 }
 
 function formatSize(bytes) {

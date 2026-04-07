@@ -177,11 +177,34 @@ start() {
     echo "traffic-stats: Restoring MAC blocklist..."
     restore_blocklist
 
+    setup_cron
+
     echo "traffic-stats: Traffic statistics service started"
+}
+
+setup_cron() {
+    local cron_file="/etc/crontabs/root"
+    local cron_entry="0 * * * * /usr/bin/wget -q -O /dev/null 'http://127.0.0.1/cgi-bin/luci/admin/status/router_assistant/collect_traffic' 2>/dev/null"
+
+    if [ -f "${cron_file}" ]; then
+        if grep -q "collect_traffic" "${cron_file}" 2>/dev/null; then
+            echo "traffic-stats: Cron job already exists"
+        else
+            echo "${cron_entry}" >> "${cron_file}"
+            /etc/init.d/cron restart 2>/dev/null
+            echo "traffic-stats: Cron job added (hourly traffic collection)"
+        fi
+    else
+        echo "${cron_entry}" > "${cron_file}"
+        /etc/init.d/cron restart 2>/dev/null
+        echo "traffic-stats: Cron file created with hourly traffic collection"
+    fi
 }
 
 stop() {
     echo "traffic-stats: Stopping traffic statistics service..."
+
+    remove_cron
 
     iptables -t mangle -D FORWARD -j ${CHAIN_RX} 2>/dev/null
     iptables -t mangle -D FORWARD -j ${CHAIN_TX} 2>/dev/null
@@ -195,6 +218,15 @@ stop() {
     echo "traffic-stats: clear_blocklist_rules returned"
 
     echo "traffic-stats: Traffic statistics service stopped"
+}
+
+remove_cron() {
+    local cron_file="/etc/crontabs/root"
+    if [ -f "${cron_file}" ]; then
+        sed -i '/collect_traffic/d' "${cron_file}" 2>/dev/null
+        /etc/init.d/cron restart 2>/dev/null
+        echo "traffic-stats: Cron job removed"
+    fi
 }
 
 reload() {

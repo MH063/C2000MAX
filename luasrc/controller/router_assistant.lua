@@ -42,6 +42,7 @@ function index()
     entry({"admin", "status", "router_assistant", "delete_alert"}, post("api_delete_alert")).leaf = true
     entry({"admin", "status", "router_assistant", "speed_test"}, post("api_speed_test")).leaf = true
     entry({"admin", "status", "router_assistant", "speed_test_status"}, call("api_speed_test_status")).leaf = true
+    entry({"admin", "status", "router_assistant", "collect_traffic"}, call("api_collect_traffic")).leaf = true
 end
 
 local function is_wifi_device(client)
@@ -555,17 +556,75 @@ local function aggregate_traffic_history()
     local current_time = os.time()
     local current_hour = os.date("%Y%m%d%H", current_time)
     local current_day = os.date("%Y%m%d", current_time)
+
     local total_rx = 0
     local total_tx = 0
     for mac, data in pairs(current_traffic) do
         total_rx = total_rx + (data.rx or 0)
         total_tx = total_tx + (data.tx or 0)
     end
+
     local last_hour = history.last_hour or ""
     if last_hour ~= current_hour then
+        local prev_hourly = history.hourly[history.last_hour] or {}
+        local prev_total_rx = prev_hourly.total_rx or 0
+        local prev_total_tx = prev_hourly.total_tx or 0
+
+        local delta_rx = total_rx - prev_total_rx
+        local delta_tx = total_tx - prev_total_tx
+        
+        -- 检查是否有有效的历史记录
+        local has_valid_history = false
+        for _ in pairs(history.hourly or {}) do
+            has_valid_history = true
+            break
+        end
+        
+        -- 首次采集（无历史记录）时，不记录增量（避免记录累计总量）
+        if not has_valid_history then
+            delta_rx = 0
+            delta_tx = 0
+        end
+        
+        if delta_rx < 0 then delta_rx = total_rx; prev_total_rx = 0 end
+        if delta_tx < 0 then delta_tx = total_tx; prev_total_tx = 0 end
+
+        local function parse_hour(hour_str)
+            return os.time({
+                year = tonumber(hour_str:sub(1, 4)),
+                month = tonumber(hour_str:sub(5, 6)),
+                day = tonumber(hour_str:sub(7, 8)),
+                hour = tonumber(hour_str:sub(9, 10)) or 0,
+                min = 0, sec = 0
+            })
+        end
+
+        local prev_hour_time = parse_hour(last_hour)
+        local curr_hour_time = parse_hour(current_hour)
+        local hours_diff = math.floor(os.difftime(curr_hour_time, prev_hour_time) / 3600)
+
+        if hours_diff > 1 and prev_total_rx > 0 then
+            local avg_rx = math.floor(delta_rx / hours_diff)
+            local avg_tx = math.floor(delta_tx / hours_diff)
+
+            for i = 1, hours_diff - 1 do
+                local mid_hour = os.date("%Y%m%d%H", prev_hour_time + i * 3600)
+                history.hourly[mid_hour] = {
+                    rx = avg_rx,
+                    tx = avg_tx,
+                    total_rx = prev_total_rx + avg_rx * i,
+                    total_tx = prev_total_tx + avg_tx * i,
+                    timestamp = prev_hour_time + i * 3600,
+                    estimated = true
+                }
+            end
+        end
+
         history.hourly[current_hour] = {
-            rx = total_rx,
-            tx = total_tx,
+            rx = delta_rx,
+            tx = delta_tx,
+            total_rx = total_rx,
+            total_tx = total_tx,
             timestamp = current_time
         }
         history.last_hour = current_hour
@@ -579,23 +638,142 @@ local function aggregate_traffic_history()
             history.hourly[oldest] = nil
         end
     end
+
     local last_day = history.last_day or ""
+
+    local function parse_date(date_str)
+        return os.time({
+            year = tonumber(date_str:sub(1, 4)),
+            month = tonumber(date_str:sub(5, 6)),
+            day = tonumber(date_str:sub(7, 8)),
+            hour = 0, min = 0, sec = 0
+        })
+    end
+
+    local function calculate_daily_from_hourly(target_day)
+        local day_rx = 0
+        local day_tx = 0
+        local has_data = false
+        for hour_str, hour_data in pairs(history.hourly) do
+            if hour_str:sub(1, 8) == target_day then
+                day_rx = day_rx + (hour_data.rx or 0)
+                day_tx = day_tx + (hour_data.tx or 0)
+                has_data = true
+            end
+        end
+        if has_data then
+            return day_rx, day_tx
+        end
+        return nil, nil
+    end
+
     if last_day ~= current_day then
-        history.daily[current_day] = {
-            rx = total_rx,
-            tx = total_tx,
-            timestamp = current_time
-        }
+        local prev_daily = history.daily[history.last_day] or {}
+        local prev_total_rx = prev_daily.total_rx or 0
+        local prev_total_tx = prev_daily.total_tx or 0
+
+        local delta_rx = total_rx - prev_total_rx
+        local delta_tx = total_tx - prev_total_tx
+        
+        -- 检查是否有有效的历史记录
+        local has_valid_history = false
+        for _ in pairs(history.daily or {}) do
+            has_valid_history = true
+            break
+        end
+        
+        -- 首次采集（无历史记录）时，不记录增量（避免记录累计总量）
+        if not has_valid_history then
+            delta_rx = 0
+            delta_tx = 0
+        end
+        
+        if delta_rx < 0 then delta_rx = total_rx; prev_total_rx = 0 end
+        if delta_tx < 0 then delta_tx = total_tx; prev_total_tx = 0 end
+
+        local prev_day_time = parse_date(last_day)
+        local curr_day_time = parse_date(current_day)
+        local days_diff = math.floor(os.difftime(curr_day_time, prev_day_time) / 86400)
+
+        if days_diff > 1 and prev_total_rx > 0 then
+            local avg_rx = math.floor(delta_rx / days_diff)
+            local avg_tx = math.floor(delta_tx / days_diff)
+            local remaining_rx = delta_rx
+            local remaining_tx = delta_tx
+
+            for i = 1, days_diff - 1 do
+                local mid_day = os.date("%Y%m%d", prev_day_time + i * 86400)
+                local day_rx = avg_rx
+                local day_tx = avg_tx
+                if i == days_diff - 1 then
+                    day_rx = remaining_rx - avg_rx * (days_diff - 2)
+                    day_tx = remaining_tx - avg_tx * (days_diff - 2)
+                end
+                history.daily[mid_day] = {
+                    rx = day_rx,
+                    tx = day_tx,
+                    total_rx = prev_total_rx + avg_rx * i,
+                    total_tx = prev_total_tx + avg_tx * i,
+                    timestamp = prev_day_time + i * 86400,
+                    estimated = true
+                }
+            end
+        end
+
         history.last_day = current_day
-        local day_keys = {}
-        for k, _ in pairs(history.daily) do
-            table.insert(day_keys, k)
+    end
+
+    local day_rx_from_hourly, day_tx_from_hourly = calculate_daily_from_hourly(current_day)
+
+    if day_rx_from_hourly and day_tx_from_hourly then
+        history.daily[current_day] = {
+            rx = day_rx_from_hourly,
+            tx = day_tx_from_hourly,
+            total_rx = total_rx,
+            total_tx = total_tx,
+            timestamp = current_time,
+            source = "hourly"
+        }
+    else
+        local existing = history.daily[current_day]
+        if not existing or existing.source ~= "hourly" then
+            local prev_for_delta = history.daily[history.last_day] or {}
+            if last_day == current_day and existing then
+                prev_for_delta = {total_rx = existing.snapshot_rx or 0, total_tx = existing.snapshot_tx or 0}
+            end
+            local prev_total_rx = prev_for_delta.total_rx or 0
+            local prev_total_tx = prev_for_delta.total_tx or 0
+
+            local delta_rx = total_rx - prev_total_rx
+            local delta_tx = total_tx - prev_total_tx
+            if delta_rx < 0 then delta_rx = total_rx end
+            if delta_tx < 0 then delta_tx = total_tx end
+
+            history.daily[current_day] = {
+                rx = math.max(delta_rx, (existing and existing.rx or 0)),
+                tx = math.max(delta_tx, (existing and existing.tx or 0)),
+                total_rx = total_rx,
+                total_tx = total_tx,
+                snapshot_rx = total_rx,
+                snapshot_tx = total_tx,
+                timestamp = current_time,
+                source = "delta"
+            }
+        else
+            history.daily[current_day].total_rx = total_rx
+            history.daily[current_day].total_tx = total_tx
+            history.daily[current_day].timestamp = current_time
         end
-        table.sort(day_keys)
-        while #day_keys > 30 do
-            local oldest = table.remove(day_keys, 1)
-            history.daily[oldest] = nil
-        end
+    end
+
+    local day_keys = {}
+    for k, _ in pairs(history.daily) do
+        table.insert(day_keys, k)
+    end
+    table.sort(day_keys)
+    while #day_keys > 30 do
+        local oldest = table.remove(day_keys, 1)
+        history.daily[oldest] = nil
     end
     save_json_file(HISTORY_FILE_NAME, history)
     return history
@@ -981,6 +1159,20 @@ function api_delete_device_note()
     end)
     if not ok then
         result = error_response(-1, "删除设备备注失败", tostring(err))
+    else
+        result = success_response(result)
+    end
+    luci.http.prepare_content("application/json")
+    luci.http.write_json(result)
+end
+
+function api_collect_traffic()
+    local result = {code = 0, message = "流量采集完成"}
+    local ok, err = pcall(function()
+        aggregate_traffic_history()
+    end)
+    if not ok then
+        result = error_response(-1, "流量采集失败", tostring(err))
     else
         result = success_response(result)
     end
