@@ -19,7 +19,9 @@ homebox-linux-arm64-musl.tar.gz
 # 开发工具临时目录
 .workbuddy/
 
-# 构建输出
+# SDK和工具链
+openwrt-sdk-*.tar.xz
+scripts/
 *.pyc
 __pycache__/
 

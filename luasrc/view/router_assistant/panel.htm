@@ -637,6 +637,28 @@
         text-align: center;
     }
 
+    .rm-rank-medal {
+        font-size: 22px;
+        display: inline-block;
+        line-height: 1;
+        animation: medalBounce 0.6s ease-out;
+    }
+    @keyframes medalBounce {
+        0% { transform: scale(0); opacity: 0; }
+        50% { transform: scale(1.3); }
+        100% { transform: scale(1); opacity: 1; }
+    }
+    .rm-medal-gold { filter: drop-shadow(0 2px 4px rgba(255,215,0,0.5)); }
+    .rm-medal-silver { filter: drop-shadow(0 2px 4px rgba(192,192,192,0.5)); }
+    .rm-medal-bronze { filter: drop-shadow(0 2px 4px rgba(205,127,50,0.5)); }
+    .rm-rank-num {
+        color: var(--text-secondary);
+        font-size: 14px;
+        font-weight: 600;
+        min-width: 24px;
+        display: inline-block;
+    }
+
     .rm-kick-btn {
         padding: 8px 16px;
         background: transparent;
@@ -1040,149 +1062,6 @@
         color: #fff;
     }
 
-    .rm-chart-container {
-        position: relative;
-        padding: 24px;
-        background: linear-gradient(135deg, rgba(0, 200, 255, 0.03) 0%, rgba(0, 255, 150, 0.03) 100%);
-        border-radius: 12px;
-        border: 1px solid rgba(255, 255, 255, 0.05);
-    }
-
-    .rm-chart-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 20px;
-    }
-
-    .rm-chart-title {
-        font-size: 14px;
-        color: var(--text-secondary);
-        font-weight: 500;
-    }
-
-    .rm-chart-legend {
-        display: flex;
-        gap: 16px;
-    }
-
-    .rm-chart-legend-item {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        font-size: 12px;
-        color: var(--text-secondary);
-    }
-
-    .rm-chart-legend-dot {
-        width: 10px;
-        height: 10px;
-        border-radius: 50%;
-        box-shadow: 0 0 8px currentColor;
-    }
-
-    .rm-chart-legend-dot.rx {
-        background: var(--accent-cyan);
-        color: var(--accent-cyan);
-    }
-
-    .rm-chart-legend-dot.tx {
-        background: var(--accent-green);
-        color: var(--accent-green);
-    }
-
-    .rm-chart-svg {
-        width: 100%;
-        height: 220px;
-        filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.2));
-    }
-
-    .rm-chart-axis {
-        stroke: rgba(255, 255, 255, 0.08);
-        stroke-width: 1;
-    }
-
-    .rm-chart-grid {
-        stroke: rgba(255, 255, 255, 0.05);
-        stroke-width: 0.5;
-        stroke-dasharray: 4 4;
-    }
-
-    .rm-chart-line {
-        fill: none;
-        stroke-width: 2.5;
-        stroke-linecap: round;
-        stroke-linejoin: round;
-        filter: drop-shadow(0 0 6px currentColor);
-    }
-
-    .rm-chart-line.rx {
-        stroke: #00E5FF;
-    }
-
-    .rm-chart-line.tx {
-        stroke: #00FF88;
-    }
-
-    .rm-chart-area {
-        opacity: 0.15;
-    }
-
-    .rm-chart-area.rx {
-        fill: url(#gradient-rx);
-    }
-
-    .rm-chart-area.tx {
-        fill: url(#gradient-tx);
-    }
-
-    .rm-chart-label {
-        fill: var(--text-secondary);
-        font-size: 11px;
-        font-weight: 500;
-    }
-
-    .rm-chart-dot {
-        r: 5;
-        fill: var(--bg-primary);
-        stroke-width: 2.5;
-        cursor: pointer;
-        transition: all 0.2s ease;
-    }
-
-    .rm-chart-dot:hover {
-        r: 7;
-        filter: drop-shadow(0 0 8px currentColor);
-    }
-
-    .rm-chart-dot.rx {
-        stroke: #00E5FF;
-    }
-
-    .rm-chart-dot.tx {
-        stroke: #00FF88;
-    }
-
-    .rm-chart-tooltip {
-        position: absolute;
-        background: linear-gradient(135deg, rgba(20, 25, 40, 0.98) 0%, rgba(15, 20, 35, 0.98) 100%);
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        border-radius: 10px;
-        padding: 12px 16px;
-        font-size: 12px;
-        color: var(--text-primary);
-        pointer-events: none;
-        opacity: 0;
-        transition: opacity 0.25s ease;
-        z-index: 100;
-        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4), 0 0 1px rgba(255, 255, 255, 0.05);
-        backdrop-filter: blur(10px);
-    }
-
-    .rm-chart-tooltip.active {
-        opacity: 1;
-    }
-
     .rm-badge-alert {
         background: rgba(255, 82, 82, 0.2);
         color: var(--accent-red);
@@ -1543,52 +1422,6 @@
             </div>
         </div>
 
-        <div class="rm-card" style="margin-bottom: 20px;">
-            <div class="rm-card-header">
-                <div class="rm-card-title">流量趋势</div>
-                <div class="rm-wifi-selector">
-                    <button class="rm-wifi-btn active" onclick="loadChart('daily')" id="chart-daily-btn">日统计</button>
-                    <button class="rm-wifi-btn" onclick="loadChart('hourly')" id="chart-hourly-btn">时统计</button>
-                </div>
-            </div>
-            <div class="rm-chart-container">
-                <div class="rm-chart-header">
-                    <div class="rm-chart-title" id="chart-title">近7天流量趋势</div>
-                    <div class="rm-chart-legend">
-                        <div class="rm-chart-legend-item">
-                            <div class="rm-chart-legend-dot rx"></div>
-                            <span>接收 (RX)</span>
-                        </div>
-                        <div class="rm-chart-legend-item">
-                            <div class="rm-chart-legend-dot tx"></div>
-                            <span>发送 (TX)</span>
-                        </div>
-                    </div>
-                </div>
-                <svg class="rm-chart-svg" id="traffic-chart" viewBox="0 0 800 220">
-                    <defs>
-                        <linearGradient id="gradient-rx" x1="0%" y1="0%" x2="0%" y2="100%">
-                            <stop offset="0%" style="stop-color:#00E5FF;stop-opacity:0.4"/>
-                            <stop offset="100%" style="stop-color:#00E5FF;stop-opacity:0.02"/>
-                        </linearGradient>
-                        <linearGradient id="gradient-tx" x1="0%" y1="0%" x2="0%" y2="100%">
-                            <stop offset="0%" style="stop-color:#00FF88;stop-opacity:0.4"/>
-                            <stop offset="100%" style="stop-color:#00FF88;stop-opacity:0.02"/>
-                        </linearGradient>
-                    </defs>
-                    <g class="rm-chart-grid-lines"></g>
-                    <g class="rm-chart-x-labels"></g>
-                    <g class="rm-chart-y-labels"></g>
-                    <path class="rm-chart-area rx" id="chart-area-rx"></path>
-                    <path class="rm-chart-area tx" id="chart-area-tx"></path>
-                    <path class="rm-chart-line rx" id="chart-line-rx"></path>
-                    <path class="rm-chart-line tx" id="chart-line-tx"></path>
-                    <g class="rm-chart-dots" id="chart-dots"></g>
-                </svg>
-                <div class="rm-chart-tooltip" id="chart-tooltip"></div>
-            </div>
-        </div>
-
         <div class="rm-card">
             <div class="rm-card-header">
                 <div class="rm-card-title">设备流量消耗排行（在线 <span id="online-count-label">0</span> 台）</div>
@@ -1616,6 +1449,7 @@
                     <table class="rm-table">
                         <thead>
                             <tr>
+                                <th>排名</th>
                                 <th>设备信息</th>
                                 <th>MAC地址</th>
                                 <th>接收 (RX)</th>
@@ -1629,7 +1463,7 @@
             </div>
         </div>
 
-        <div class="rm-card" id="offline-card" style="display:none;">
+        <div class="rm-card" id="offline-card" style="display:none; margin-top: 20px;">
             <div class="rm-card-header">
                 <div class="rm-card-title">离线设备历史流量（<span id="offline-count-label">0</span> 台）</div>
             </div>
@@ -2047,150 +1881,6 @@ function saveAlert() {
     );
 }
 
-var chartData = {daily: [], hourly: []};
-
-function loadChart(period) {
-    document.getElementById('chart-daily-btn').classList.remove('active');
-    document.getElementById('chart-hourly-btn').classList.remove('active');
-    document.getElementById('chart-' + period + '-btn').classList.add('active');
-
-    safeXHR(
-        '<%=luci.dispatcher.build_url("admin/status/router_assistant/get_traffic_history")%>?period=' + period,
-        function(res) {
-            if (res.code === 0) {
-                if (period === 'daily') {
-                    chartData.daily = res.daily_list || [];
-                    document.getElementById('chart-title').textContent = '近30天流量趋势';
-                } else {
-                    chartData.hourly = res.hourly_list || [];
-                    document.getElementById('chart-title').textContent = '近7天流量趋势';
-                }
-                renderChart(period);
-            }
-        },
-        function(error) {}
-    );
-}
-
-function renderChart(period) {
-    var data = period === 'daily' ? chartData.daily : chartData.hourly;
-    if (!data || data.length === 0) {
-        document.getElementById('chart-line-rx').setAttribute('d', '');
-        document.getElementById('chart-line-tx').setAttribute('d', '');
-        document.getElementById('chart-area-rx').setAttribute('d', '');
-        document.getElementById('chart-area-tx').setAttribute('d', '');
-        return;
-    }
-
-    var width = 800;
-    var height = 200;
-    var padding = {top: 20, right: 20, bottom: 30, left: 50};
-    var chartWidth = width - padding.left - padding.right;
-    var chartHeight = height - padding.top - padding.bottom;
-
-    var maxValue = 0;
-    data.forEach(function(d) {
-        maxValue = Math.max(maxValue, d.rx || 0, d.tx || 0);
-    });
-    maxValue = maxValue || 1;
-
-    var xScale = function(i) {
-        return padding.left + (i / (data.length - 1 || 1)) * chartWidth;
-    };
-    var yScale = function(v) {
-        return height - padding.bottom - (v / maxValue) * chartHeight;
-    };
-
-    var gridLines = '';
-    for (var i = 0; i <= 4; i++) {
-        var y = padding.top + (i / 4) * chartHeight;
-        gridLines += '<line class="rm-chart-grid" x1="' + padding.left + '" y1="' + y + '" x2="' + (width - padding.right) + '" y2="' + y + '"/>';
-    }
-    document.querySelector('.rm-chart-grid-lines').innerHTML = gridLines;
-
-    var yLabels = '';
-    for (var i = 0; i <= 4; i++) {
-        var y = padding.top + (i / 4) * chartHeight;
-        var value = maxValue * (1 - i / 4);
-        yLabels += '<text class="rm-chart-label" x="' + (padding.left - 5) + '" y="' + (y + 4) + '" text-anchor="end">' + formatSize(value) + '</text>';
-    }
-    document.querySelector('.rm-chart-y-labels').innerHTML = yLabels;
-
-    var xLabels = '';
-    var step = Math.max(1, Math.floor(data.length / 7));
-    for (var i = 0; i < data.length; i += step) {
-        var x = xScale(i);
-        var label = '';
-        if (period === 'daily') {
-            var dateStr = data[i].date || '';
-            label = dateStr.substring(4, 6) + '/' + dateStr.substring(6, 8);
-        } else {
-            var timeStr = data[i].time || '';
-            label = timeStr.substring(4, 6) + '/' + timeStr.substring(6, 8) + ' ' + timeStr.substring(8, 10) + 'h';
-        }
-        xLabels += '<text class="rm-chart-label" x="' + x + '" y="' + (height - 10) + '" text-anchor="middle">' + label + '</text>';
-    }
-    document.querySelector('.rm-chart-x-labels').innerHTML = xLabels;
-
-    var rxPath = '';
-    var txPath = '';
-    var rxArea = '';
-    var txArea = '';
-    var dots = '';
-
-    data.forEach(function(d, i) {
-        var x = xScale(i);
-        var yRx = yScale(d.rx || 0);
-        var yTx = yScale(d.tx || 0);
-
-        if (i === 0) {
-            rxPath = 'M ' + x + ' ' + yRx;
-            txPath = 'M ' + x + ' ' + yTx;
-            rxArea = 'M ' + x + ' ' + (height - padding.bottom) + ' L ' + x + ' ' + yRx;
-            txArea = 'M ' + x + ' ' + (height - padding.bottom) + ' L ' + x + ' ' + yTx;
-        } else {
-            rxPath += ' L ' + x + ' ' + yRx;
-            txPath += ' L ' + x + ' ' + yTx;
-            rxArea += ' L ' + x + ' ' + yRx;
-            txArea += ' L ' + x + ' ' + yTx;
-        }
-
-        dots += '<circle class="rm-chart-dot rx" cx="' + x + '" cy="' + yRx + '" onmouseenter="showChartTooltip(event, ' + i + ', \'rx\', \'' + period + '\')" onmouseleave="hideChartTooltip()"/>';
-        dots += '<circle class="rm-chart-dot tx" cx="' + x + '" cy="' + yTx + '" onmouseenter="showChartTooltip(event, ' + i + ', \'tx\', \'' + period + '\')" onmouseleave="hideChartTooltip()"/>';
-    });
-
-    rxArea += ' L ' + xScale(data.length - 1) + ' ' + (height - padding.bottom) + ' Z';
-    txArea += ' L ' + xScale(data.length - 1) + ' ' + (height - padding.bottom) + ' Z';
-
-    document.getElementById('chart-line-rx').setAttribute('d', rxPath);
-    document.getElementById('chart-line-tx').setAttribute('d', txPath);
-    document.getElementById('chart-area-rx').setAttribute('d', rxArea);
-    document.getElementById('chart-area-tx').setAttribute('d', txArea);
-    document.getElementById('chart-dots').innerHTML = dots;
-}
-
-function showChartTooltip(event, index, type, period) {
-    var data = period === 'daily' ? chartData.daily : chartData.hourly;
-    if (!data || !data[index]) return;
-
-    var d = data[index];
-    var value = type === 'rx' ? d.rx : d.tx;
-    var label = type === 'rx' ? '接收' : '发送';
-
-    var tooltip = document.getElementById('chart-tooltip');
-    var container = document.querySelector('.rm-chart-container');
-    var containerRect = container.getBoundingClientRect();
-
-    tooltip.innerHTML = label + ': ' + formatSize(value);
-    tooltip.style.left = (event.clientX - containerRect.left + 15) + 'px';
-    tooltip.style.top = (event.clientY - containerRect.top - 40) + 'px';
-    tooltip.classList.add('active');
-}
-
-function hideChartTooltip() {
-    document.getElementById('chart-tooltip').classList.remove('active');
-}
-
 function kickDevice(mac, device) {
     if (!mac || mac === '') {
         showToast('MAC地址无效', 'error');
@@ -2476,7 +2166,7 @@ function renderDevices(devices, checkOnly) {
         html += '<tr>' +
             '<td>' +
                 '<div class="rm-device-name">' + displayName + '</div>' +
-                formatDeviceIp(dev.ip) +
+                formatDeviceIp(dev.ip, dev.ipv6) +
             '</td>' +
             '<td><span class="rm-mac">' + escapeHtml(dev.mac) + '</span></td>' +
             '<td style="text-align:center;"><span class="rm-badge ' + (isWifi ? 'rm-badge-wifi' : 'rm-badge-wired') + '">' +
@@ -2524,6 +2214,19 @@ function renderTraffic(data) {
     var onlineTotalPages = Math.ceil(onlineDevices.length / onlineState.pageSize);
     if (onlineState.page > onlineTotalPages) onlineState.page = onlineTotalPages || 1;
     var onlineStartIdx = (onlineState.page - 1) * onlineState.pageSize;
+    
+    // 对在线设备按流量排行排序（合并计算rx和tx）
+    var sortedOnlineDevices = onlineDevices.slice().sort(function(a, b) {
+        var totalA = (a.rx || 0) + (a.tx || 0);
+        var totalB = (b.rx || 0) + (b.tx || 0);
+        return totalB - totalA;
+    });
+    // 创建MAC到排名的映射
+    var onlineRankMap = {};
+    sortedOnlineDevices.forEach(function(dev, idx) {
+        onlineRankMap[dev.mac] = idx + 1;
+    });
+    
     var onlinePageData = onlineDevices.slice(onlineStartIdx, onlineStartIdx + onlineState.pageSize);
 
     var onlineHtml = '';
@@ -2562,10 +2265,23 @@ function renderTraffic(data) {
             }
         }
 
+        var rank = onlineRankMap[dev.mac] || 0;
+        var rankHtml = '';
+        if (rank === 1) {
+            rankHtml = '<span class="rm-rank-medal rm-medal-gold" title="第1名">🥇</span>';
+        } else if (rank === 2) {
+            rankHtml = '<span class="rm-rank-medal rm-medal-silver" title="第2名">🥈</span>';
+        } else if (rank === 3) {
+            rankHtml = '<span class="rm-rank-medal rm-medal-bronze" title="第3名">🥉</span>';
+        } else if (rank > 0) {
+            rankHtml = '<span class="rm-rank-num">' + rank + '</span>';
+        }
+
         onlineHtml += '<tr>' +
+            '<td style="text-align:center;">' + rankHtml + '</td>' +
             '<td>' +
                 '<div class="rm-device-name">' + displayName + '</div>' +
-                formatDeviceIp(dev.ip) +
+                formatDeviceIp(dev.ip, dev.ipv6) +
                 onlineDuration +
             '</td>' +
             '<td style="text-align:center;"><span class="rm-mac">' + escapeHtml(dev.mac) + '</span></td>' +
@@ -2639,7 +2355,7 @@ function renderTraffic(data) {
             offlineHtml += '<tr class="rm-offline">' +
                 '<td>' +
                     '<div class="rm-device-name">' + displayName + ' <span class="rm-badge rm-badge-offline">离线</span></div>' +
-                    formatDeviceIp(dev.ip) +
+                    formatDeviceIp(dev.ip, dev.ipv6) +
                     lastSeen +
                 '</td>' +
                 '<td style="text-align:center;"><span class="rm-mac">' + escapeHtml(dev.mac) + '</span></td>' +
@@ -2712,23 +2428,18 @@ function escapeHtml(str) {
     return div.innerHTML;
 }
 
-function formatDeviceIp(ip) {
-    if (!ip || ip === '' || ip === '-') return '<div class="rm-device-ip">-</div>';
-    var ipv4 = '';
-    var ipv6 = '';
-    var parts = ip.split(/\s+/);
-    for (var i = 0; i < parts.length; i++) {
-        var p = parts[i].trim();
-        if (p === '') continue;
-        if (p.match(/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/)) {
-            ipv4 = p;
-        } else if (p.indexOf(':') !== -1) {
-            ipv6 = p;
+function formatDeviceIp(ip, ipv6List) {
+    if (!ip || ip === '' || ip === '-') {
+        if (ipv6List && ipv6List.length > 0) {
+            return '<div class="rm-device-ip">-</div><div class="rm-device-ipv6">' + escapeHtml(ipv6List[0]) + '</div>';
         }
+        return '<div class="rm-device-ip">-</div>';
     }
-    var html = '<div class="rm-device-ip">' + escapeHtml(ipv4 || ip) + '</div>';
-    if (ipv6) {
-        html += '<div class="rm-device-ipv6">' + escapeHtml(ipv6) + '</div>';
+    var html = '<div class="rm-device-ip">' + escapeHtml(ip) + '</div>';
+    if (ipv6List && ipv6List.length > 0) {
+        for (var i = 0; i < ipv6List.length; i++) {
+            html += '<div class="rm-device-ipv6">' + escapeHtml(ipv6List[i]) + '</div>';
+        }
     }
     return html;
 }
@@ -2755,8 +2466,8 @@ function savePageState(tableId) {
 function renderPagination(tableId, totalItems) {
     var state = pageStates[tableId];
     if (!state) return '';
+    if (totalItems === 0) return '';
     var totalPages = Math.ceil(totalItems / state.pageSize);
-    if (totalPages <= 1 && totalItems <= 10) return '';
 
     var startItem = totalItems === 0 ? 0 : (state.page - 1) * state.pageSize + 1;
     var endItem = Math.min(state.page * state.pageSize, totalItems);
@@ -3440,7 +3151,6 @@ document.addEventListener('DOMContentLoaded', function() {
     loadStorageStatus();
     loadDeviceNotes();
     loadAlerts();
-    loadChart('daily');
     startRefresh();
 });
 </script>

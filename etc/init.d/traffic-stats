@@ -184,7 +184,8 @@ start() {
 
 setup_cron() {
     local cron_file="/etc/crontabs/root"
-    local cron_entry="0 * * * * /usr/bin/wget -q -O /dev/null 'http://127.0.0.1/cgi-bin/luci/admin/status/router_assistant/collect_traffic' 2>/dev/null"
+    local lua_script="/usr/libexec/router_assistant/collect_traffic.lua"
+    local cron_entry="0 * * * * /usr/bin/lua ${lua_script} >/dev/null 2>&1"
 
     if [ -f "${cron_file}" ]; then
         if grep -q "collect_traffic" "${cron_file}" 2>/dev/null; then

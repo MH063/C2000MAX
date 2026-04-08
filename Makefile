@@ -37,6 +37,7 @@ define Package/luci-app-router-assistant/install
 	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/view
 	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/model
 	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/ucode
+	$(INSTALL_DIR) $(1)/usr/libexec/router_assistant
 	$(INSTALL_DIR) $(1)/usr/share/router-assistant
 	$(INSTALL_DIR) $(1)/usr/lib/traffic_stats
 	$(INSTALL_DIR) $(1)/usr/lib/json
@@ -51,6 +52,8 @@ define Package/luci-app-router-assistant/install
 	$(CP) ./luasrc/ucode/* $(1)/usr/lib/lua/luci/ucode/
 	$(CP) ./htdocs/* $(1)/www/lu-static/
 	$(CP) ./rootfs/* $(1)/
+	$(CP) ./scripts/collect_traffic.lua $(1)/usr/libexec/router_assistant/
+	chmod 755 $(1)/usr/libexec/router_assistant/collect_traffic.lua
 	$(CP) ./version.json $(1)/usr/share/router-assistant/
 	$(CP) ./usr/lib/traffic_stats/* $(1)/usr/lib/traffic_stats/
 	$(CP) ./usr/lib/json.lua $(1)/usr/lib/json/

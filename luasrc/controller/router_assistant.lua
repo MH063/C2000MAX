@@ -128,7 +128,30 @@ local function load_dhcp_leases()
     return leases
 end
 
--- 检查设备是否已被屏蔽（在iptables黑名单中）
+-- 加载IPv6邻居表（从ip -6 neigh获取）
+local function load_ipv6_neighbors()
+    local neighbors = {}
+    local fd = io.popen("ip -6 neigh show 2>/dev/null")
+    if fd then
+        for line in fd:lines() do
+            if line and #line < 512 then
+                local ipv6 = line:match("^(%S+)")
+                local mac = line:match("lladdr%s+(%S+)")
+                if ipv6 and mac and mac ~= "00:00:00:00:00:00" then
+                    local mac_upper = mac:upper()
+                    if not neighbors[mac_upper] then
+                        neighbors[mac_upper] = {}
+                    end
+                    if #neighbors[mac_upper] < 3 then
+                        table.insert(neighbors[mac_upper], ipv6)
+                    end
+                end
+            end
+        end
+        fd:close()
+    end
+    return neighbors
+end
 local _blocked_macs_cache = nil
 local _blocked_macs_cache_time = 0
 
@@ -235,6 +258,7 @@ function api_get_devices()
 
         if data.client then
             local dhcp_leases = load_dhcp_leases()
+            local ipv6_neighbors = load_ipv6_neighbors()
             for mac, client in pairs(data.client) do
                 local mac_str = ""
                 if mac and type(mac) == "string" then
@@ -260,6 +284,8 @@ function api_get_devices()
                     ip = client.ap_ipaddr
                 end
 
+                local ipv6_list = ipv6_neighbors[mac_upper] or {}
+
                 local ifname = ""
                 if client.ifname and type(client.ifname) == "string" then
                     ifname = client.ifname
@@ -273,10 +299,10 @@ function api_get_devices()
                 end
 
                 local is_upstream = (ifname == "eth1" or ifname == "eth3")
-                -- 过滤掉已被屏蔽的设备
                 if not is_upstream and not is_device_blocked(mac_upper) then
                     table.insert(devices_list, {
                         ip = ip,
+                        ipv6 = ipv6_list,
                         mac = mac_upper,
                         hostname = hostname,
                         device = ifname,
@@ -586,9 +612,16 @@ local function aggregate_traffic_history()
             delta_tx = 0
         end
         
-        if delta_rx < 0 then delta_rx = total_rx; prev_total_rx = 0 end
-        if delta_tx < 0 then delta_tx = total_tx; prev_total_tx = 0 end
-
+        -- 1. 负值处理（计数器重置）
+        if delta_rx < 0 then delta_rx = 0 end
+        if delta_tx < 0 then delta_tx = 0 end
+        
+        -- 2. 极小噪声过滤（< 1KB）
+        if delta_rx < 1024 then delta_rx = 0 end
+        if delta_tx < 1024 then delta_tx = 0 end
+        
+        -- 不设置任何上限！真实流量无论多高都记录
+        
         local function parse_hour(hour_str)
             return os.time({
                 year = tonumber(hour_str:sub(1, 4)),
@@ -654,11 +687,21 @@ local function aggregate_traffic_history()
         local day_rx = 0
         local day_tx = 0
         local has_data = false
+        -- 异常值过滤：只忽略小于1KB的数据（可能是计数器刚重置的噪声）
+        local MIN_THRESHOLD = 1 * 1024  -- 1KB
         for hour_str, hour_data in pairs(history.hourly) do
             if hour_str:sub(1, 8) == target_day then
-                day_rx = day_rx + (hour_data.rx or 0)
-                day_tx = day_tx + (hour_data.tx or 0)
-                has_data = true
+                local hour_rx = hour_data.rx or 0
+                local hour_tx = hour_data.tx or 0
+                -- 过滤异常值：只忽略过小的数据（噪声）
+                if hour_rx >= MIN_THRESHOLD then
+                    day_rx = day_rx + hour_rx
+                    has_data = true
+                end
+                if hour_tx >= MIN_THRESHOLD then
+                    day_tx = day_tx + hour_tx
+                    has_data = true
+                end
             end
         end
         if has_data then
@@ -688,8 +731,15 @@ local function aggregate_traffic_history()
             delta_tx = 0
         end
         
-        if delta_rx < 0 then delta_rx = total_rx; prev_total_rx = 0 end
-        if delta_tx < 0 then delta_tx = total_tx; prev_total_tx = 0 end
+        -- 1. 负值处理（计数器重置）
+        if delta_rx < 0 then delta_rx = 0 end
+        if delta_tx < 0 then delta_tx = 0 end
+        
+        -- 2. 极小噪声过滤（< 1KB）
+        if delta_rx < 1024 then delta_rx = 0 end
+        if delta_tx < 1024 then delta_tx = 0 end
+        
+        -- 不设置任何上限！真实流量无论多高都记录
 
         local prev_day_time = parse_date(last_day)
         local curr_day_time = parse_date(current_day)
@@ -829,6 +879,62 @@ function api_get_traffic()
                     elseif client.ap_ipaddr and type(client.ap_ipaddr) == "string" and client.ap_ipaddr ~= "" then
                         ip = client.ap_ipaddr
                     end
+                    -- 处理随机MAC问题：如果当前MAC不在历史中，尝试通过hostname+MAC前缀(OUI)+IP匹配
+                    -- 改进逻辑：
+                    -- 1. 精确匹配 MAC → 直接复用
+                    -- 2. hostname + OUI 匹配：
+                    --    - 该组只有1台历史设备 → 直接复用
+                    --    - 该组有2+台历史设备：
+                    --      - 新IP与任一历史设备IP相同 → 复用该设备
+                    --      - 新IP与所有历史设备IP都不同 → 创建新记录
+                    -- 3. 补充判断：如果hostname相同 + IP相同（但OUI不同），也考虑复用
+                    --    - 适用于DHCP分配相同IP但随机MAC的情况
+                    local current_time = os.time()
+                    if not history[device_id] and hostname and hostname ~= "Unknown" then
+                        local mac_prefix = string.sub(device_id, 1, 8):upper()  -- 取MAC前6字节(oui)
+                        local matched_devices = {}
+                        for hist_mac, hist_data in pairs(history) do
+                            local hist_prefix = string.sub(hist_mac, 1, 8):upper()
+                            -- 匹配条件：相同hostname + 相同MAC前缀(OUI) + 7天内活跃
+                            if hist_data.hostname == hostname and hist_prefix == mac_prefix then
+                                local age = current_time - ((hist_data.last_seen) or 0)
+                                if age < 604800 then
+                                    matched_devices[hist_mac] = hist_data
+                                end
+                            end
+                        end
+                        local matched_count = 0
+                        for _ in pairs(matched_devices) do matched_count = matched_count + 1 end
+                        if matched_count == 1 then
+                            -- 只有1台匹配，直接复用
+                            for hist_mac, _ in pairs(matched_devices) do
+                                device_id = hist_mac
+                                break
+                            end
+                        elseif matched_count > 1 then
+                            -- 有2+台匹配，根据IP判断
+                            local ip_matched = false
+                            for hist_mac, hist_data in pairs(matched_devices) do
+                                if hist_data.ip == ip then
+                                    device_id = hist_mac
+                                    ip_matched = true
+                                    break
+                                end
+                            end
+                            -- 如果没有IP匹配的，创建新记录（不复用任何历史）
+                        else
+                            -- 没有hostname+OUI匹配的，补充判断：hostname + IP相同
+                            for hist_mac, hist_data in pairs(history) do
+                                if hist_data.hostname == hostname and hist_data.ip == ip then
+                                    local age = current_time - ((hist_data.last_seen) or 0)
+                                    if age < 604800 then
+                                        device_id = hist_mac
+                                        break
+                                    end
+                                end
+                            end
+                        end
+                    end
                     local ifname = (client.ifname and type(client.ifname) == "string") and client.ifname or ""
                     local tx_bytes = 0
                     local rx_bytes = 0
@@ -902,6 +1008,12 @@ function api_get_traffic()
             end
         end
         local current_time = os.time()
+        -- 统一历史数据中的MAC地址格式（大写），避免因大小写不一致导致设备被错误归类
+        local normalized_history = {}
+        for dev_id, data in pairs(history) do
+            normalized_history[dev_id:upper()] = data
+        end
+        history = normalized_history
         for dev_id, data in pairs(history) do
             if not current_traffic[dev_id] then
                 local age = current_time - ((data and data.last_seen) or 0)
