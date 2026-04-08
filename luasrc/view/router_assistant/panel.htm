@@ -1,6 +1,18 @@
 <%+header%>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="format-detection" content="telephone=no">
+<meta name="mobile-web-app-capable" content="yes">
 
 <style>
+    /* LuCI框架覆盖 - 确保移动端显示完整 */
+    #maincontent, .main-content, .container, .cbi-map {
+        max-width: 100% !important;
+        overflow-x: visible !important;
+        padding: 0 !important;
+    }
+
     :root {
         --bg-primary: #0a1628;
         --bg-secondary: #0d1b2a;
@@ -55,6 +67,7 @@
         background: var(--bg-primary);
         min-height: 600px;
         border-radius: 16px;
+        overflow-x: visible;
     }
 
     .rm-header {
@@ -73,6 +86,7 @@
         display: flex;
         align-items: center;
         gap: 16px;
+        flex-shrink: 0;
     }
 
     .rm-header-icon {
@@ -85,6 +99,7 @@
         justify-content: center;
         color: #000;
         box-shadow: var(--shadow-glow);
+        flex-shrink: 0;
     }
 
     .rm-header-title {
@@ -93,6 +108,8 @@
         font-weight: 700;
         margin: 0;
         letter-spacing: 1px;
+        white-space: nowrap;
+        overflow: visible;
     }
 
     .rm-header-subtitle {
@@ -417,6 +434,26 @@
 
     .rm-card-body {
         padding: 0;
+    }
+
+    .rm-table-wrapper {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: thin;
+        scrollbar-color: var(--accent-cyan) transparent;
+    }
+
+    .rm-table-wrapper::-webkit-scrollbar {
+        height: 6px;
+    }
+
+    .rm-table-wrapper::-webkit-scrollbar-track {
+        background: transparent;
+    }
+
+    .rm-table-wrapper::-webkit-scrollbar-thumb {
+        background: var(--accent-cyan);
+        border-radius: 3px;
     }
 
     .rm-table {
@@ -877,36 +914,401 @@
         margin-top: 40px;
     }
 
-    @media (max-width: 768px) {
+    /* ========== 移动端适配 - 平板设备 ========== */
+    @media (max-width: 1024px) {
+        .rm-container {
+            padding: 16px;
+        }
+
         .rm-stats {
-            grid-template-columns: 1fr;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 16px;
+        }
+
+        .rm-info-grid {
+            grid-template-columns: repeat(2, 1fr);
+        }
+
+        .rm-stat-value {
+            font-size: 36px;
+        }
+    }
+
+    /* ========== 移动端适配 - 手机设备 ========== */
+    @media (max-width: 768px) {
+        .rm-container {
+            padding: 12px;
+        }
+
+        .rm-stats {
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+
+        .rm-stat-card {
+            padding: 16px;
+        }
+
+        .rm-stat-value {
+            font-size: 28px;
+        }
+
+        .rm-stat-label {
+            font-size: 12px;
         }
 
         .rm-info-grid {
             grid-template-columns: 1fr;
+            gap: 12px;
         }
 
         .rm-tabs {
             flex-direction: column;
+            gap: 8px;
+        }
+
+        .rm-tab {
+            width: 100%;
+            justify-content: center;
+            padding: 12px 16px;
         }
 
         .rm-header {
             flex-direction: column;
-            gap: 16px;
+            gap: 12px;
             text-align: center;
+            padding: 16px 20px;
+            overflow: visible;
+        }
+
+        .rm-header-left {
+            flex-direction: column;
+            gap: 8px;
+            width: 100%;
         }
 
         .rm-header-status {
             align-items: center;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .rm-header-title {
+            font-size: 20px;
+            white-space: nowrap;
+            overflow: visible;
+            text-overflow: clip;
+            width: auto;
+            max-width: none;
+        }
+
+        .rm-header-subtitle {
+            font-size: 12px;
+        }
+
+        .rm-header-icon {
+            width: 40px;
+            height: 40px;
+        }
+
+        .rm-card {
+            padding: 16px;
+            margin-bottom: 16px;
+        }
+
+        .rm-card-title {
+            font-size: 15px;
+        }
+
+        .rm-table-wrapper {
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+            margin: 0 -16px;
+            padding: 0 16px;
         }
 
         .rm-table {
             font-size: 12px;
+            min-width: 600px;
         }
 
         .rm-table th,
         .rm-table td {
-            padding: 12px 10px;
+            padding: 10px 8px;
+            white-space: nowrap;
+        }
+
+        .rm-table th {
+            font-size: 11px;
+        }
+
+        .rm-device-name {
+            font-size: 13px;
+        }
+
+        .rm-device-ip,
+        .rm-device-ipv6 {
+            font-size: 11px;
+        }
+
+        .rm-mac {
+            font-size: 11px;
+        }
+
+        .rm-kick-btn {
+            padding: 6px 12px;
+            font-size: 11px;
+        }
+
+        .rm-btn {
+            padding: 8px 16px;
+            font-size: 13px;
+        }
+
+        .rm-badge {
+            font-size: 10px;
+            padding: 2px 6px;
+        }
+
+        .rm-rank-medal {
+            font-size: 18px;
+        }
+
+        .rm-rank-num {
+            font-size: 12px;
+        }
+
+        .rm-storage-info {
+            flex-direction: column;
+            gap: 8px;
+            text-align: center;
+        }
+
+        .rm-empty-state {
+            padding: 24px 16px;
+        }
+
+        .rm-empty-icon {
+            width: 48px;
+            height: 48px;
+        }
+
+        .rm-empty-state p {
+            font-size: 13px;
+        }
+
+        .rm-stat-tag {
+            font-size: 10px;
+            padding: 3px 8px;
+        }
+
+        .rm-stat-desc {
+            font-size: 11px;
+        }
+    }
+
+    /* ========== 移动端适配 - 小屏手机 ========== */
+    @media (max-width: 480px) {
+        .rm-container {
+            padding: 8px;
+        }
+
+        .rm-stats {
+            grid-template-columns: 1fr;
+            gap: 10px;
+        }
+
+        .rm-stat-card {
+            padding: 14px;
+        }
+
+        .rm-stat-value {
+            font-size: 24px;
+        }
+
+        .rm-stat-header {
+            margin-bottom: 10px;
+        }
+
+        .rm-header {
+            padding: 12px 16px;
+        }
+
+        .rm-header-title {
+            font-size: 18px;
+            white-space: nowrap;
+            overflow: visible;
+            width: auto;
+        }
+
+        .rm-card {
+            padding: 12px;
+            margin-bottom: 12px;
+            border-radius: 12px;
+        }
+
+        .rm-card-title {
+            font-size: 14px;
+            margin-bottom: 12px;
+        }
+
+        .rm-table {
+            font-size: 11px;
+            min-width: 500px;
+        }
+
+        .rm-table th,
+        .rm-table td {
+            padding: 8px 6px;
+        }
+
+        .rm-device-name {
+            font-size: 12px;
+        }
+
+        .rm-device-ip,
+        .rm-device-ipv6 {
+            font-size: 10px;
+        }
+
+        .rm-kick-btn {
+            padding: 5px 10px;
+            font-size: 10px;
+        }
+
+        .rm-btn {
+            padding: 6px 12px;
+            font-size: 12px;
+        }
+
+        .rm-tab {
+            padding: 10px 12px;
+            font-size: 12px;
+        }
+
+        .rm-empty-state {
+            padding: 20px 12px;
+        }
+
+        .rm-empty-icon {
+            width: 40px;
+            height: 40px;
+        }
+
+        .rm-status-badge {
+            font-size: 11px;
+            padding: 4px 10px;
+        }
+
+        .rm-status-time {
+            font-size: 11px;
+        }
+
+        .rm-rank-medal {
+            font-size: 16px;
+        }
+
+        .rm-modal {
+            min-width: auto;
+            max-width: 95%;
+            width: 95%;
+            margin: 10px;
+            padding: 16px;
+            border-radius: 12px;
+        }
+
+        .rm-modal-title {
+            font-size: 16px;
+        }
+
+        .rm-modal-footer {
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .rm-modal-footer .rm-btn {
+            width: 100%;
+        }
+
+        .rm-form-input {
+            font-size: 16px;
+        }
+
+        .rm-pagination {
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .rm-page-jump {
+            width: 100%;
+            justify-content: center;
+            margin-left: 0;
+            margin-top: 8px;
+        }
+    }
+
+    /* ========== 触控优化 ========== */
+    @media (hover: none) and (pointer: coarse) {
+        .rm-kick-btn,
+        .rm-btn,
+        .rm-tab,
+        .rm-modal-close {
+            min-height: 44px;
+            min-width: 44px;
+        }
+
+        .rm-table tr {
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        .rm-stat-card:hover,
+        .rm-card:hover {
+            transform: none;
+            box-shadow: none;
+        }
+
+        .rm-stat-card:active,
+        .rm-card:active {
+            transform: scale(0.98);
+        }
+
+        .rm-btn:active,
+        .rm-kick-btn:active,
+        .rm-tab:active {
+            transform: scale(0.95);
+        }
+
+        .rm-modal-close {
+            width: 44px;
+            height: 44px;
+        }
+    }
+
+    /* ========== 横屏模式优化 ========== */
+    @media (max-width: 896px) and (orientation: landscape) {
+        .rm-header {
+            flex-direction: row;
+            justify-content: space-between;
+        }
+
+        .rm-header-status {
+            flex-direction: row;
+        }
+
+        .rm-stats {
+            grid-template-columns: repeat(3, 1fr);
+        }
+    }
+
+    /* ========== 安全区域适配（刘海屏） ========== */
+    @supports (padding: env(safe-area-inset-bottom)) {
+        .rm-container {
+            padding-bottom: calc(20px + env(safe-area-inset-bottom));
+        }
+
+        .rm-modal {
+            padding-bottom: calc(24px + env(safe-area-inset-bottom));
         }
     }
 
@@ -1337,18 +1739,20 @@
                     <p>未找到连接设备</p>
                 </div>
                 <div id="devices-table" style="display:none;">
-                    <table class="rm-table">
-                        <thead>
-                            <tr>
-                                <th>设备信息</th>
-                                <th>MAC地址</th>
-                                <th>连接类型</th>
-                                <th>信号强度</th>
-                                <th>操作</th>
-                            </tr>
-                        </thead>
-                        <tbody id="devices-tbody"></tbody>
-                    </table>
+                    <div class="rm-table-wrapper">
+                        <table class="rm-table">
+                            <thead>
+                                <tr>
+                                    <th>设备信息</th>
+                                    <th>MAC地址</th>
+                                    <th>连接类型</th>
+                                    <th>信号强度</th>
+                                    <th>操作</th>
+                                </tr>
+                            </thead>
+                            <tbody id="devices-tbody"></tbody>
+                        </table>
+                    </div>
                 </div>
             </div>
         </div>
@@ -1363,17 +1767,19 @@
                 <div id="blocked-empty" class="rm-empty">
                     <p>暂无屏蔽设备</p>
                 </div>
-                <table class="rm-table" id="blocked-table" style="display:none;">
-                    <thead>
-                        <tr>
-                            <th>设备名称</th>
-                            <th>MAC地址</th>
-                            <th>IP地址</th>
-                            <th>操作</th>
-                        </tr>
-                    </thead>
-                    <tbody id="blocked-tbody"></tbody>
-                </table>
+                <div class="rm-table-wrapper" id="blocked-table-wrapper" style="display:none;">
+                    <table class="rm-table" id="blocked-table">
+                        <thead>
+                            <tr>
+                                <th>设备名称</th>
+                                <th>MAC地址</th>
+                                <th>IP地址</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody id="blocked-tbody"></tbody>
+                    </table>
+                </div>
             </div>
         </div>
     </div>
@@ -1446,19 +1852,21 @@
                     <p>暂无流量统计数据</p>
                 </div>
                 <div id="traffic-table" style="display:none;">
-                    <table class="rm-table">
-                        <thead>
-                            <tr>
-                                <th>排名</th>
-                                <th>设备信息</th>
-                                <th>MAC地址</th>
-                                <th>接收 (RX)</th>
-                                <th>发送 (TX)</th>
-                                <th>总计</th>
-                            </tr>
-                        </thead>
-                        <tbody id="traffic-tbody"></tbody>
-                    </table>
+                    <div class="rm-table-wrapper">
+                        <table class="rm-table">
+                            <thead>
+                                <tr>
+                                    <th>排名</th>
+                                    <th>设备信息</th>
+                                    <th>MAC地址</th>
+                                    <th>接收 (RX)</th>
+                                    <th>发送 (TX)</th>
+                                    <th>总计</th>
+                                </tr>
+                            </thead>
+                            <tbody id="traffic-tbody"></tbody>
+                        </table>
+                    </div>
                 </div>
             </div>
         </div>
@@ -1482,18 +1890,20 @@
                     <p>暂无离线设备记录</p>
                 </div>
                 <div id="offline-table">
-                    <table class="rm-table">
-                        <thead>
-                            <tr>
-                                <th>设备信息</th>
-                                <th>MAC地址</th>
-                                <th>接收 (RX)</th>
-                                <th>发送 (TX)</th>
-                                <th>总计</th>
-                            </tr>
-                        </thead>
-                        <tbody id="offline-tbody"></tbody>
-                    </table>
+                    <div class="rm-table-wrapper">
+                        <table class="rm-table">
+                            <thead>
+                                <tr>
+                                    <th>设备信息</th>
+                                    <th>MAC地址</th>
+                                    <th>接收 (RX)</th>
+                                    <th>发送 (TX)</th>
+                                    <th>总计</th>
+                                </tr>
+                            </thead>
+                            <tbody id="offline-tbody"></tbody>
+                        </table>
+                    </div>
                 </div>
             </div>
         </div>
@@ -1674,20 +2084,22 @@
                     <p>未找到WiFi设备</p>
                 </div>
                 <div id="wifi-table" style="display:none;">
-                    <table class="rm-table">
-                        <thead>
-                            <tr>
-                                <th>接口</th>
-                                <th>SSID</th>
-                                <th>信道</th>
-                                <th>信号</th>
-                                <th>加密</th>
-                                <th>客户端</th>
-                                <th>状态</th>
-                            </tr>
-                        </thead>
-                        <tbody id="wifi-tbody"></tbody>
-                    </table>
+                    <div class="rm-table-wrapper">
+                        <table class="rm-table">
+                            <thead>
+                                <tr>
+                                    <th>接口</th>
+                                    <th>SSID</th>
+                                    <th>信道</th>
+                                    <th>信号</th>
+                                    <th>加密</th>
+                                    <th>客户端</th>
+                                    <th>状态</th>
+                                </tr>
+                            </thead>
+                            <tbody id="wifi-tbody"></tbody>
+                        </table>
+                    </div>
                 </div>
             </div>
         </div>
@@ -2026,25 +2438,26 @@ function loadBlockedDevices() {
 
 function renderBlockedDevices(blockedList) {
     var container = document.getElementById('blocked-section');
+    var tableWrapper = document.getElementById('blocked-table-wrapper');
     var table = document.getElementById('blocked-table');
     var empty = document.getElementById('blocked-empty');
     var tbody = document.getElementById('blocked-tbody');
-
-    if (!container || !table || !tbody) return;
+    if (!container || !table) return;
 
     container.style.display = 'block';
 
     currentBlocked = blockedList || [];
 
     if (!blockedList || blockedList.length === 0) {
-        empty.style.display = 'block';
-        table.style.display = 'none';
+        empty.style.display = 'flex';
+        if (tableWrapper) tableWrapper.style.display = 'none';
         var pagEl = document.getElementById('blocked-pagination');
         if (pagEl) pagEl.remove();
         return;
     }
 
     empty.style.display = 'none';
+    if (tableWrapper) tableWrapper.style.display = 'block';
     table.style.display = 'table';
 
     initPageState('blocked');
