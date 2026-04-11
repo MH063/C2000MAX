@@ -73,6 +73,145 @@ local function is_wifi_device(client)
     return false
 end
 
+local function get_device_type(hostname, mac, is_wifi)
+    local mac_upper = mac and mac:upper() or ""
+    local mac_prefix = mac_upper:sub(1, 8)
+
+    local oui_map = {
+        ["00:03:93"] = "apple", ["00:1E:C2"] = "apple", ["00:0A:27"] = "apple",
+        ["00:1F:F3"] = "apple", ["04:0C:CE"] = "apple", ["14:99:29"] = "apple",
+        ["18:65:90"] = "apple", ["28:CF:DA"] = "apple", ["34:15:9E"] = "apple",
+        ["40:D8:55"] = "apple", ["44:00:10"] = "apple", ["58:1F:AA"] = "apple",
+        ["64:DB:50"] = "apple", ["78:4F:43"] = "apple", ["88:66:FA"] = "apple",
+        ["A0:99:82"] = "apple", ["AC:DE:48"] = "apple", ["B0:19:C6"] = "apple",
+        ["C8:2A:14"] = "apple", ["D0:03:4B"] = "apple", ["DC:41:95"] = "apple",
+        ["E0:AC:CB"] = "apple", ["F0:18:98"] = "apple", ["FC:E9:83"] = "apple",
+        ["00:05:69"] = "vmware", ["00:0C:29"] = "vmware", ["00:1C:42"] = "vmware",
+        ["00:50:56"] = "vmware", ["08:00:27"] = "virtualbox", ["0A:00:27"] = "virtualbox",
+        ["52:54:00"] = "qemu", ["00:15:5D"] = "hyperv", ["00:1D:92"] = "parallels",
+        ["00:03:FF"] = "microsoft", ["00:0D:3A"] = "microsoft", ["00:12:5A"] = "microsoft",
+        ["00:17:FA"] = "microsoft", ["00:1D:D8"] = "microsoft", ["00:22:48"] = "microsoft",
+        ["00:25:AE"] = "microsoft", ["00:50:F2"] = "microsoft",
+        ["28:18:78"] = "microsoft", ["7C:ED:8D"] = "microsoft", ["DC:B4:C4"] = "microsoft",
+        ["F4:8E:38"] = "microsoft",
+        ["00:21:6A"] = "samsung", ["00:23:4E"] = "samsung", ["00:24:91"] = "samsung",
+        ["00:26:08"] = "samsung", ["00:26:AB"] = "samsung", ["38:BC:1A"] = "samsung",
+        ["40:A6:D7"] = "samsung", ["4C:02:92"] = "samsung", ["58:2D:34"] = "samsung",
+        ["70:A2:8E"] = "samsung", ["74:51:BA"] = "samsung", ["80:89:17"] = "samsung",
+        ["84:A8:E4"] = "samsung", ["8C:BE:BE"] = "samsung", ["94:CE:BF"] = "samsung",
+        ["A0:07:E0"] = "samsung", ["AC:85:3D"] = "samsung", ["B4:79:97"] = "samsung",
+        ["C0:FF:D4"] = "samsung", ["CC:B2:55"] = "samsung", ["D4:61:CD"] = "samsung",
+        ["E0:04:C5"] = "samsung", ["E4:FB:FD"] = "samsung", ["E8:4E:CE"] = "samsung",
+        ["EC:1A:59"] = "samsung", ["F0:27:09"] = "samsung", ["F4:8B:32"] = "samsung",
+        ["FC:64:2B"] = "samsung", ["FC:D9:E3"] = "samsung",
+        ["88:C6:63"] = "huawei", ["AC:9E:17"] = "huawei", ["B0:A2:DC"] = "huawei",
+        ["B4:15:13"] = "huawei", ["BC:62:0E"] = "huawei", ["C4:05:28"] = "huawei",
+        ["E0:19:1D"] = "huawei", ["E0:DB:10"] = "huawei", ["EC:08:6B"] = "huawei",
+        ["FC:2F:40"] = "huawei",
+        ["34:CE:00"] = "xiaomi", ["50:7E:5D"] = "xiaomi", ["64:16:66"] = "xiaomi",
+        ["68:DF:DD"] = "xiaomi", ["78:11:DC"] = "xiaomi", ["7C:49:EB"] = "xiaomi",
+        ["88:C3:97"] = "xiaomi", ["8C:BE:BE"] = "xiaomi", ["A0:20:60"] = "xiaomi",
+        ["A4:86:01"] = "xiaomi", ["B4:E1:0F"] = "xiaomi", ["C8:0F:9E"] = "xiaomi",
+        ["CC:22:3D"] = "xiaomi", ["D0:AE:AF"] = "xiaomi", ["E4:57:35"] = "xiaomi",
+        ["F8:16:F1"] = "xiaomi", ["FC:64:8B"] = "xiaomi", ["FC:B4:08"] = "xiaomi",
+        ["38:D6:7A"] = "xiaomi", ["38:D5:7A"] = "xiaomi", ["A4:CC:B3"] = "xiaomi", ["1E:8B:EF"] = "xiaomi",
+        ["00:1A:11"] = "google", ["3C:5A:B4"] = "google", ["54:60:09"] = "google",
+        ["64:16:66"] = "google", ["94:EB:2C"] = "google", ["A4:77:33"] = "google",
+        ["F4:F5:D8"] = "google", ["F4:F5:E8"] = "google",
+        ["00:22:43"] = "hp", ["00:26:BB"] = "hp", ["3C:4A:92"] = "hp",
+        ["3C:D9:2E"] = "hp", ["F4:CE:46"] = "hp",
+        ["00:1B:21"] = "lenovo", ["00:1E:67"] = "lenovo", ["00:21:CC"] = "lenovo",
+        ["00:24:D1"] = "lenovo", ["00:30:52"] = "lenovo", ["00:50:56"] = "lenovo",
+        ["08:9E:01"] = "lenovo", ["10:7B:44"] = "lenovo", ["14:91:52"] = "lenovo",
+        ["18:87:96"] = "lenovo", ["1C:1B:0D"] = "lenovo", ["20:47:32"] = "lenovo",
+        ["20:64:32"] = "lenovo", ["24:B6:FB"] = "lenovo", ["28:CF:E9"] = "lenovo",
+        ["34:17:E9"] = "lenovo", ["38:EA:A7"] = "lenovo", ["40:8D:5C"] = "lenovo",
+        ["44:37:E6"] = "lenovo", ["50:9A:4C"] = "lenovo", ["58:3D:77"] = "lenovo",
+        ["5C:51:81"] = "lenovo", ["64:16:B0"] = "lenovo", ["68:B5:99"] = "lenovo",
+        ["70:5A:0F"] = "lenovo", ["78:92:9C"] = "lenovo", ["88:6F:62"] = "lenovo",
+        ["90:1A:50"] = "lenovo", ["A0:20:66"] = "lenovo", ["AC:85:3D"] = "lenovo",
+        ["B8:27:EB"] = "lenovo", ["BC:AA:CA"] = "lenovo", ["C0:61:18"] = "lenovo",
+        ["C8:5B:76"] = "lenovo", ["CC:12:9D"] = "lenovo", ["D0:50:99"] = "lenovo",
+        ["D4:BE:D9"] = "lenovo", ["D8:BB:C1"] = "lenovo", ["DC:A6:32"] = "lenovo",
+        ["E0:94:4F"] = "lenovo", ["E4:67:EB"] = "lenovo", ["E8:B1:1C"] = "lenovo",
+        ["EC:F4:BB"] = "lenovo", ["F0:92:1C"] = "lenovo", ["F4:CF:E2"] = "lenovo",
+        ["F8:32:78"] = "lenovo", ["FC:58:FA"] = "lenovo", ["00:93:37"] = "lenovo",
+        ["00:04:4B"] = "nvidia", ["04:4B:80"] = "nvidia", ["30:9A:4C"] = "nvidia",
+        ["48:B0:2D"] = "nvidia", ["70:17:7F"] = "nvidia", ["8C:70:8A"] = "nvidia",
+        ["A4:C3:F0"] = "nvidia", ["AC:ED:5C"] = "nvidia", ["B4:2E:99"] = "nvidia",
+        ["DC:56:E7"] = "nvidia", ["E0:75:0A"] = "nvidia", ["F4:5C:40"] = "nvidia",
+        ["FC:0F:E8"] = "nvidia",
+        ["B8:27:EB"] = "raspberry", ["DC:A6:32"] = "raspberry", ["E4:5F:01"] = "raspberry",
+        ["00:0D:3A"] = "realtek", ["00:E0:4C"] = "realtek", ["00:04:5A"] = "realtek",
+        ["00:1A:A0"] = "realtek", ["00:24:7E"] = "realtek",
+        ["00:26:AB"] = "oppo", ["A4:45:19"] = "oppo", ["B0:19:C6"] = "oppo",
+        ["C8:BC:C8"] = "oppo", ["F0:97:C5"] = "oppo",
+        ["00:1C:BF"] = "oneplus", ["00:24:93"] = "oneplus", ["2C:33:61"] = "oneplus",
+        ["30:AE:A4"] = "oneplus", ["38:00:25"] = "oneplus", ["48:3C:0C"] = "oneplus",
+        ["5C:93:A2"] = "oneplus", ["74:45:8A"] = "oneplus", ["78:02:F8"] = "oneplus",
+        ["90:68:5C"] = "oneplus", ["A4:7B:9D"] = "oneplus", ["A8:5C:2C"] = "oneplus",
+        ["C8:1E:3B"] = "oneplus", ["CC:0D:60"] = "oneplus", ["E8:4E:84"] = "oneplus",
+        ["F4:8B:32"] = "oneplus",
+        ["F8:36:C4"] = "realme", ["C4:0B:CB"] = "xiaomi",
+        ["00:23:7F"] = "vivo", ["00:25:6E"] = "vivo", ["00:3A:79"] = "vivo",
+        ["9C:98:11"] = "vivo", ["BC:54:36"] = "vivo", ["D8:50:E6"] = "vivo",
+        ["F8:D1:11"] = "vivo", ["D6:F9:C8"] = "vivo",
+        ["12:BD:6E"] = "tablet"
+    }
+
+    local mac_brand = oui_map[mac_prefix]
+
+    if mac_brand == "apple" then
+        return "phone"
+    elseif mac_brand == "samsung" then
+        return "phone"
+    elseif mac_brand == "huawei" then
+        return "phone"
+    elseif mac_brand == "xiaomi" then
+        return "phone"
+    elseif mac_brand == "oppo" then
+        return "phone"
+    elseif mac_brand == "oneplus" then
+        return "phone"
+    elseif mac_brand == "vivo" then
+        return "phone"
+    elseif mac_brand == "meizu" then
+        return "phone"
+    elseif mac_brand == "zte" or mac_brand == "nokia" then
+        return "phone"
+    elseif mac_brand == "honor" then
+        return "phone"
+    elseif mac_brand == "sony" then
+        return "phone"
+    elseif mac_brand == "tcl" or mac_brand == "hisense" then
+        return "tv"
+    elseif mac_brand == "tablet" then
+        return "tablet"
+    elseif mac_brand == "google" then
+        return "phone"
+    elseif mac_brand == "microsoft" then
+        return "desktop"
+    elseif mac_brand == "lenovo" then
+        return "desktop"
+    elseif mac_brand == "hp" or mac_brand == "dell" then
+        return "desktop"
+    elseif mac_brand == "nvidia" then
+        return "gaming"
+    elseif mac_brand == "raspberry" then
+        return "server"
+    elseif mac_brand == "realtek" then
+        return "unknown"
+    elseif mac_brand == "smartwatch" then
+        return "wearable"
+    elseif mac_brand == "philips" then
+        return "smart_home"
+    elseif mac_brand == "htc" then
+        return "phone"
+    else
+        return "unknown"
+    end
+end
+
 local function get_encryption_name(enc)
     if not enc or enc == "" or enc == "none" or enc == "open" then
         return nil
@@ -299,6 +438,7 @@ function api_get_devices()
                 end
 
                 local is_upstream = (ifname == "eth1" or ifname == "eth3")
+                local device_type = get_device_type(hostname, mac_upper, is_wifi)
                 if not is_upstream and not is_device_blocked(mac_upper) then
                     table.insert(devices_list, {
                         ip = ip,
@@ -308,7 +448,8 @@ function api_get_devices()
                         device = ifname,
                         is_wifi = is_wifi,
                         signal = rssi,
-                        iface = ifname
+                        iface = ifname,
+                        device_type = device_type
                     })
                 end
             end
@@ -623,18 +764,31 @@ local function aggregate_traffic_history()
         -- 不设置任何上限！真实流量无论多高都记录
         
         local function parse_hour(hour_str)
+            if not hour_str or hour_str == "" or #hour_str < 10 then
+                return 0
+            end
+            local year = tonumber(hour_str:sub(1, 4))
+            local month = tonumber(hour_str:sub(5, 6))
+            local day = tonumber(hour_str:sub(7, 8))
+            local hour = tonumber(hour_str:sub(9, 10))
+            if not year or not month or not day then
+                return 0
+            end
             return os.time({
-                year = tonumber(hour_str:sub(1, 4)),
-                month = tonumber(hour_str:sub(5, 6)),
-                day = tonumber(hour_str:sub(7, 8)),
-                hour = tonumber(hour_str:sub(9, 10)) or 0,
+                year = year,
+                month = month,
+                day = day,
+                hour = hour or 0,
                 min = 0, sec = 0
             })
         end
 
         local prev_hour_time = parse_hour(last_hour)
         local curr_hour_time = parse_hour(current_hour)
-        local hours_diff = math.floor(os.difftime(curr_hour_time, prev_hour_time) / 3600)
+        local hours_diff = 0
+        if prev_hour_time > 0 and curr_hour_time > 0 then
+            hours_diff = math.floor(os.difftime(curr_hour_time, prev_hour_time) / 3600)
+        end
 
         if hours_diff > 1 and prev_total_rx > 0 then
             local avg_rx = math.floor(delta_rx / hours_diff)
@@ -675,10 +829,19 @@ local function aggregate_traffic_history()
     local last_day = history.last_day or ""
 
     local function parse_date(date_str)
+        if not date_str or date_str == "" or #date_str < 8 then
+            return 0
+        end
+        local year = tonumber(date_str:sub(1, 4))
+        local month = tonumber(date_str:sub(5, 6))
+        local day = tonumber(date_str:sub(7, 8))
+        if not year or not month or not day then
+            return 0
+        end
         return os.time({
-            year = tonumber(date_str:sub(1, 4)),
-            month = tonumber(date_str:sub(5, 6)),
-            day = tonumber(date_str:sub(7, 8)),
+            year = year,
+            month = month,
+            day = day,
             hour = 0, min = 0, sec = 0
         })
     end
@@ -743,7 +906,10 @@ local function aggregate_traffic_history()
 
         local prev_day_time = parse_date(last_day)
         local curr_day_time = parse_date(current_day)
-        local days_diff = math.floor(os.difftime(curr_day_time, prev_day_time) / 86400)
+        local days_diff = 0
+        if prev_day_time > 0 and curr_day_time > 0 then
+            days_diff = math.floor(os.difftime(curr_day_time, prev_day_time) / 86400)
+        end
 
         if days_diff > 1 and prev_total_rx > 0 then
             local avg_rx = math.floor(delta_rx / days_diff)
@@ -936,45 +1102,51 @@ function api_get_traffic()
                         end
                     end
                     local ifname = (client.ifname and type(client.ifname) == "string") and client.ifname or ""
-                    local tx_bytes = 0
-                    local rx_bytes = 0
+                    local router_tx_bytes = 0 -- 路由器发送 = 用户下载 (RX)
+                    local router_rx_bytes = 0 -- 路由器接收 = 用户上传 (TX)
                     if client.txbytes then
-                        tx_bytes = (type(client.txbytes) == "number") and client.txbytes or (tonumber(client.txbytes) or 0)
+                        router_tx_bytes = (type(client.txbytes) == "number") and client.txbytes or (tonumber(client.txbytes) or 0)
                     end
                     if client.rxbytes then
-                        rx_bytes = (type(client.rxbytes) == "number") and client.rxbytes or (tonumber(client.rxbytes) or 0)
+                        router_rx_bytes = (type(client.rxbytes) == "number") and client.rxbytes or (tonumber(client.rxbytes) or 0)
                     end
                     if ifname ~= "eth1" and ifname ~= "eth3" then
                         local hist = history[device_id] or {}
-                        local last_tx = (hist.tx and type(hist.tx) == "number") and hist.tx or 0
-                        local last_rx = (hist.rx and type(hist.rx) == "number") and hist.rx or 0
-                        local last_raw_tx = (hist.raw_tx and type(hist.raw_tx) == "number") and hist.raw_tx or 0
-                        local last_raw_rx = (hist.raw_rx and type(hist.raw_rx) == "number") and hist.raw_rx or 0
+                        local last_rx = (hist.rx and type(hist.rx) == "number") and hist.rx or 0 -- 历史下载总量
+                        local last_tx = (hist.tx and type(hist.tx) == "number") and hist.tx or 0 -- 历史上传总量
+                        local last_raw_rx = (hist.raw_rx and type(hist.raw_rx) == "number") and hist.raw_rx or 0 -- 历史原始下载
+                        local last_raw_tx = (hist.raw_tx and type(hist.raw_tx) == "number") and hist.raw_tx or 0 -- 历史原始上传
                         local current_time = os.time()
-                        local counter_reset = (tx_bytes < last_raw_tx) or (rx_bytes < last_raw_rx)
-                        local device_total_tx, device_total_rx
+                        
+                        -- 比较原始值是否重置 (路由器重启或网卡重启会导致计数器清零)
+                        local counter_reset = (router_tx_bytes < last_raw_rx) or (router_rx_bytes < last_raw_tx)
+                        
+                        local device_total_rx, device_total_tx
                         if counter_reset then
-                            if last_tx > 0 or last_rx > 0 then
-                                device_total_tx = tx_bytes + last_tx
-                                device_total_rx = rx_bytes + last_rx
+                            if last_rx > 0 or last_tx > 0 then
+                                device_total_rx = router_tx_bytes + last_rx
+                                device_total_tx = router_rx_bytes + last_tx
                             else
-                                device_total_tx = tx_bytes
-                                device_total_rx = rx_bytes
+                                device_total_rx = router_tx_bytes
+                                device_total_tx = router_rx_bytes
                             end
                         else
-                            device_total_tx = last_tx + (tx_bytes - last_raw_tx)
-                            device_total_rx = last_rx + (rx_bytes - last_raw_rx)
+                            device_total_rx = last_rx + (router_tx_bytes - last_raw_rx)
+                            device_total_tx = last_tx + (router_rx_bytes - last_raw_tx)
                         end
-                        device_total_tx = (device_total_tx and device_total_tx == device_total_tx) and device_total_tx or 0
+                        
                         device_total_rx = (device_total_rx and device_total_rx == device_total_rx) and device_total_rx or 0
-                        if device_total_tx < 0 then device_total_tx = last_tx end
+                        device_total_tx = (device_total_tx and device_total_tx == device_total_tx) and device_total_tx or 0
                         if device_total_rx < 0 then device_total_rx = last_rx end
-                        local device_total = device_total_tx + device_total_rx
+                        if device_total_tx < 0 then device_total_tx = last_tx end
+                        
+                        local device_total = device_total_rx + device_total_tx
                         total_rx = total_rx + device_total_rx
                         total_tx = total_tx + device_total_tx
                         online_count = online_count + 1
 
                         local is_wifi = is_wifi_device(client)
+                        local device_type = get_device_type(hostname, mac_upper, is_wifi)
 
                         table.insert(online_devices, {
                             mac = device_id,
@@ -989,13 +1161,14 @@ function api_get_traffic()
                             online = true,
                             first_seen = hist.first_seen or current_time,
                             is_wifi = is_wifi,
-                            ifname = ifname
+                            ifname = ifname,
+                            device_type = device_type
                         })
                         current_traffic[device_id] = {
-                            tx = device_total_tx,
                             rx = device_total_rx,
-                            raw_tx = tx_bytes,
-                            raw_rx = rx_bytes,
+                            tx = device_total_tx,
+                            raw_rx = router_tx_bytes,
+                            raw_tx = router_rx_bytes,
                             ip = ip,
                             hostname = hostname,
                             mac = mac_upper,
