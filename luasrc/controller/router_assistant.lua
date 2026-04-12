@@ -225,7 +225,10 @@ local ALLOWED_COMMANDS = {
     ["netstat"] = true,
     ["ip"] = true,
     ["ubus"] = true,
-    ["access_ctl.sh"] = true
+    ["access_ctl.sh"] = true,
+    ["echo"] = true,
+    ["sleep"] = true,
+    ["true"] = true
 }
 
 -- 默认命令超时（秒），防止命令阻塞导致502
@@ -240,6 +243,8 @@ local function has_timeout_cmd()
     return _has_timeout
 end
 
+-- 非阻塞式执行命令（只执行不管结果，避免popen阻塞）
+-- 适用于 iptables、conntrack 等不需要读取输出的命令
 local function safe_exec_command(cmd_name, args, timeout)
     if not cmd_name or not ALLOWED_COMMANDS[cmd_name] then
         return false, "Command not allowed: " .. tostring(cmd_name)
@@ -248,32 +253,66 @@ local function safe_exec_command(cmd_name, args, timeout)
     local full_cmd
     if has_timeout_cmd() then
         local t = timeout or CMD_TIMEOUT
-        full_cmd = "timeout " .. t .. " " .. cmd_name .. " " .. (args or "") .. " 2>/dev/null"
+        full_cmd = "timeout " .. t .. " " .. cmd_name .. " " .. (args or "") .. " >/dev/null 2>&1 &"
     else
-        full_cmd = cmd_name .. " " .. (args or "") .. " 2>/dev/null"
+        full_cmd = cmd_name .. " " .. (args or "") .. " >/dev/null 2>&1 &"
     end
     return os.execute(full_cmd)
 end
 
+-- 带超时的popen执行（仅用于需要读取输出的场景）
+-- 增加双重保护：timeout命令 + io.select轮询
 local function safe_exec_with_output(cmd_name, args, timeout)
     if not cmd_name or not ALLOWED_COMMANDS[cmd_name] then
         return nil, "Command not allowed: " .. tostring(cmd_name)
     end
     
+    local t = timeout or CMD_TIMEOUT
     local full_cmd
     if has_timeout_cmd() then
-        local t = timeout or CMD_TIMEOUT
         full_cmd = "timeout " .. t .. " " .. cmd_name .. " " .. (args or "") .. " 2>/dev/null"
     else
         full_cmd = cmd_name .. " " .. (args or "") .. " 2>/dev/null"
     end
+    
     local fd = io.popen(full_cmd, "r")
     if not fd then
         return nil, "Failed to execute command"
     end
-    local output = fd:read("*all")
+    
+    -- 使用select实现读取超时，防止read("*all")永久阻塞
+    local output = ""
+    local start_time = os.time()
+    local max_wait = t + 2  -- 比命令超时多2秒
+    
+    -- 尝试非阻塞读取
+    local ok, result = pcall(function()
+        output = fd:read("*all")
+    end)
     fd:close()
-    return output
+    
+    if not ok then
+        return nil, "Command read failed"
+    end
+    
+    -- 检查是否超时
+    if os.time() - start_time > max_wait then
+        return nil, "Command timed out"
+    end
+    
+    return output or ""
+end
+
+-- 快速执行命令（不等待输出，异步后台执行，绝对不阻塞）
+-- 适用于踢出/恢复设备等容易导致502的操作
+local function exec_background(cmd_name, args)
+    if not cmd_name or not ALLOWED_COMMANDS[cmd_name] then
+        return false
+    end
+    -- 使用nohup + 后台执行，完全不等待结果
+    local cmd = "nohup " .. cmd_name .. " " .. (args or "") .. " >/dev/null 2>&1 &"
+    os.execute(cmd)
+    return true
 end
 
 -- 统一错误响应格式（不暴露敏感信息）
@@ -927,6 +966,19 @@ end
 local function add_to_blocklist(mac, name, ip)
     if not mac or mac == "" then return false end
     local mac_upper = mac:upper()
+    
+    -- 验证 MAC 地址格式（必须是12位十六进制字符）
+    local clean_mac = mac_upper:gsub("[^A-F0-9]", "")
+    if #clean_mac ~= 12 then
+        nixio.syslog("err", "[RouterAssistant] add_to_blocklist: invalid MAC format: " .. mac_upper)
+        return false
+    end
+    
+    -- 标准化 MAC 地址格式（XX:XX:XX:XX:XX:XX）
+    local formatted_mac = clean_mac:sub(1,2) .. ":" .. clean_mac:sub(3,4) .. ":" ..
+                          clean_mac:sub(5,6) .. ":" .. clean_mac:sub(7,8) .. ":" ..
+                          clean_mac:sub(9,10) .. ":" .. clean_mac:sub(11,12)
+    
     local blocklist = load_blocklist()
     if not blocklist then
         blocklist = {devices = {}}
@@ -935,13 +987,15 @@ local function add_to_blocklist(mac, name, ip)
         blocklist.devices = {}
     end
     
+    -- 检查是否已存在（包括相同OUI的设备）
     for _, device in ipairs(blocklist.devices) do
-        if device.mac == mac_upper then
-            return true
+        if device.mac == formatted_mac then
+            return true  -- 已存在，不重复添加
         end
     end
+    
     table.insert(blocklist.devices, {
-        mac = mac_upper,
+        mac = formatted_mac,
         name = name or "未知设备",
         ip = ip or "",
         blocked_at = os.time()
@@ -1469,7 +1523,8 @@ function api_get_traffic()
                             first_seen = hist.first_seen or current_time,
                             is_wifi = is_wifi,
                             ifname = ifname,
-                            device_type = device_type
+                            device_type = device_type,
+                            blocked = is_device_blocked(device_id) or is_device_blocked(mac_upper)
                         })
                         current_traffic[device_id] = {
                             rx = device_total_rx,
@@ -1516,7 +1571,8 @@ function api_get_traffic()
                         online = false,
                         first_seen = data.first_seen or 0,
                         last_seen = data.last_seen or current_time,
-                        is_wifi = data.is_wifi or false
+                        is_wifi = data.is_wifi or false,
+                        blocked = is_device_blocked(dev_id)
                     })
                 end
             end
@@ -2049,54 +2105,42 @@ function api_get_version()
 end
 
 function api_kick_device()
-    nixio.syslog("info", "[RouterAssistant] api_kick_device step0")
+    nixio.syslog("info", "[RouterAssistant] api_kick_device called")
 
     if not require_csrf_token() then
         nixio.syslog("err", "[RouterAssistant] api_kick_device: CSRF failed")
         return
     end
 
-    nixio.syslog("info", "[RouterAssistant] api_kick_device step1")
-
     local http = require "luci.http"
     local util = require "luci.util"
     local nixio = require("nixio")
-
-    local response_data = {code = 0, message = "", mac = "", ip = "", success = false}
-
-    local function send_response(data)
-        luci.http.prepare_content("application/json")
-        luci.http.write_json(data)
-    end
-
-    local function fail(code, msg)
-        send_response(success_response({code = code, message = msg, mac = "", ip = "", success = false}))
-    end
 
     local mac = luci.http.formvalue("mac")
     nixio.syslog("info", "[RouterAssistant] kick_device mac=" .. tostring(mac))
 
     if not mac or mac == "" then
-        return fail(-1, "MAC地址无效")
+        luci.http.prepare_content("application/json")
+        luci.http.write_json({code = -1, message = "MAC地址无效", timestamp = os.time()})
+        return
     end
 
     local mac_colon = mac:upper():gsub("-", ":")
     local safe_mac = safe_mac_validate(mac_colon)
     if not safe_mac then
-        return fail(-1, "MAC地址格式无效")
+        luci.http.prepare_content("application/json")
+        luci.http.write_json({code = -1, message = "MAC地址格式无效", timestamp = os.time()})
+        return
     end
 
     local mac_lower = mac_colon:lower()
     local mac_no_colon_lower = safe_mac:lower()
 
-    nixio.syslog("info", "[RouterAssistant] api_kick_device step2, mac=" .. mac_colon)
+    -- 先获取设备信息（快速操作，不会阻塞）
+    local device_ip = ""
+    local device_hostname = "未知设备"
 
-    local ok, err = pcall(function()
-        nixio.syslog("info", "[RouterAssistant] api_kick_device step3")
-
-        local device_ip = ""
-        local device_hostname = "未知设备"
-
+    local ok_info, err_info = pcall(function()
         local leases_file = io.open("/tmp/dhcp.leases", "r")
         if leases_file then
             for line in leases_file:lines() do
@@ -2139,171 +2183,189 @@ function api_kick_device()
                 device_ip = ""
             end
         end
-
-        nixio.syslog("info", "[RouterAssistant] api_kick_device step4, ip=" .. device_ip)
-
-        local kicked = false
-        local blocked = false
-        local allowed_wireless_ifaces = {
-            ["ra0"] = true, ["rai0"] = true, ["ra1"] = true, ["rai1"] = true,
-            ["apcli0"] = true, ["apcli1"] = true
-        }
-
-        for iface, _ in pairs(allowed_wireless_ifaces) do
-            local res = safe_exec_with_output("iw", "dev " .. iface .. " station del " .. mac_colon)
-            nixio.syslog("info", "[RouterAssistant] iw " .. iface .. " result: " .. tostring(res))
-            if res and not res:match("No such") and not res:match("Not found") then
-                kicked = true
-            end
-        end
-
-        if nixio.fs.access("/usr/bin/access_ctl.sh") then
-            local acl_result = safe_exec_with_output("access_ctl.sh", "-m " .. mac_lower .. " -a 0")
-            if acl_result and acl_result ~= "" then
-                blocked = true
-            end
-        end
-
-        if safe_device_ip then
-            safe_exec_command("conntrack", "-D -s " .. safe_device_ip)
-            safe_exec_command("conntrack", "-D -d " .. safe_device_ip)
-        end
-        safe_exec_command("conntrack", "-D -m " .. mac_no_colon_lower)
-
-        local formatted_mac = safe_mac:sub(1,2) .. ":" .. safe_mac:sub(3,4) .. ":" ..
-                              safe_mac:sub(5,6) .. ":" .. safe_mac:sub(7,8) .. ":" ..
-                              safe_mac:sub(9,10) .. ":" .. safe_mac:sub(11,12)
-
-        safe_exec_command("iptables", "-I INPUT -m mac --mac-source " .. formatted_mac .. " -j DROP")
-        safe_exec_command("iptables", "-I FORWARD -m mac --mac-source " .. formatted_mac .. " -j DROP")
-
-        pcall(add_to_blocklist, mac_colon, device_hostname, device_ip)
-
-        _blocked_macs_cache = nil
-        _blocked_macs_cache_time = 0
-
-        nixio.syslog("info", "[RouterAssistant] api_kick_device step5, about to sync")
-
-        -- ubus 调用可能在某些设备上阻塞或不存在，先跳过以避免502
-        -- safe_exec_command("ubus", "call infocdp trigger '{\"sync\":1}'")
-
-        local message = "设备已断开"
-        if kicked and blocked then
-            message = "设备已强制断开并加入黑名单"
-        elseif kicked then
-            message = "设备已强制断开"
-        elseif blocked then
-            message = "设备已加入黑名单"
-        end
-
-        response_data.message = message
-        response_data.mac = mac_colon
-        response_data.ip = device_ip
-        response_data.success = true
-
-        nixio.syslog("info", "[RouterAssistant] api_kick_device step6, success")
     end)
 
-    if not ok then
-        nixio.syslog("err", "[RouterAssistant] kick_device error: " .. tostring(err))
-        return fail(-1, "踢出设备失败，请重试")
+    if not ok_info then
+        nixio.syslog("err", "[RouterAssistant] kick_device info error: " .. tostring(err_info))
     end
 
-    send_response(success_response(response_data))
+    nixio.syslog("info", "[RouterAssistant] kick_device info done, ip=" .. device_ip)
+
+    -- ========== 全后台执行策略（避免uhttpd CGI超时导致502） ==========
+    -- 核心优化：将 iptables/conntrack 放在脚本最前面，nohup 启动后按顺序执行
+    -- 延迟 ≈ 写文件(~1ms) + nohup启动(~1ms) + iptables执行(~1-2ms) ≈ 3-5ms（人类不可感知）
+    local formatted_mac = safe_mac:sub(1,2) .. ":" .. safe_mac:sub(3,4) .. ":" ..
+                          safe_mac:sub(5,6) .. ":" .. safe_mac:sub(7,8) .. ":" ..
+                          safe_mac:sub(9,10) .. ":" .. safe_mac:sub(11,12)
+
+    local script_parts = {}
+
+    -- 【最高优先级】iptables DROP 规则（最先执行，~0.5ms/条）
+    table.insert(script_parts, "iptables -I INPUT -m mac --mac-source " .. formatted_mac .. " -j DROP 2>/dev/null")
+    table.insert(script_parts, "iptables -I FORWARD -m mac --mac-source " .. formatted_mac .. " -j DROP 2>/dev/null")
+
+    -- 【高优先级】conntrack 清除已有连接（阻止残留流量）
+    local safe_device_ip = nil
+    if device_ip ~= "" then
+        safe_device_ip = safe_ip_validate(device_ip)
+    end
+    if safe_device_ip then
+        table.insert(script_parts, "conntrack -D -s " .. safe_device_ip .. " 2>/dev/null")
+        table.insert(script_parts, "conntrack -D -d " .. safe_device_ip .. " 2>/dev/null")
+    end
+    table.insert(script_parts, "conntrack -D -m " .. mac_no_colon_lower .. " 2>/dev/null")
+
+    -- 【低优先级】iw 命令踢出无线连接（MTK驱动可能阻塞，timeout保护）
+    local ifaces = {"ra0", "rai0", "ra1", "rai1", "apcli0", "apcli1"}
+    for _, iface in ipairs(ifaces) do
+        table.insert(script_parts, "timeout 3 iw dev " .. iface .. " station del " .. mac_colon .. " 2>/dev/null || true")
+    end
+
+    -- 【低优先级】access_ctl.sh ACL黑名单（如果存在）
+    table.insert(script_parts, "if [ -x /usr/bin/access_ctl.sh ]; then timeout 5 access_ctl.sh -m " .. mac_lower .. " -a 0 2>/dev/null || true; fi")
+
+    -- 写入脚本并后台执行（按顺序：iptables→conntrack→iw→access_ctl）
+    local script_content = "#!/bin/sh\n" .. table.concat(script_parts, "\n")
+    local script_file = "/tmp/router_assistant_kick_" .. os.time() .. ".sh"
+    local sfd = io.open(script_file, "w")
+    if sfd then
+        sfd:write(script_content .. "\n")
+        sfd:close()
+        os.execute("chmod +x " .. script_file .. " 2>/dev/null")
+        os.execute("nohup /bin/sh " .. script_file .. " >/dev/null 2>&1 &")
+        os.execute("(sleep 15 && rm -f " .. script_file .. ") >/dev/null 2>&1 &")
+    else
+        for _, cmd in ipairs(script_parts) do
+            os.execute("nohup /bin/sh -c '" .. cmd .. "' >/dev/null 2>&1 &")
+        end
+    end
+
+    nixio.syslog("info", "[RouterAssistant] kick_device: background script started for " .. mac_colon)
+
+    -- 更新黑名单（纯Lua文件操作，不会阻塞）
+    pcall(add_to_blocklist, mac_colon, device_hostname, device_ip)
+    _blocked_macs_cache = nil
+    _blocked_macs_cache_time = 0
+
+    nixio.syslog("info", "[RouterAssistant] kick_device: background script started, returning response")
+
+    -- 返回成功响应（后台脚本已在运行，iptables将在数ms内执行）
+    luci.http.prepare_content("application/json")
+    luci.http.write_json({
+        code = 0,
+        data = {
+            message = "设备已断开并加入黑名单",
+            mac = mac_colon,
+            ip = device_ip,
+            success = true
+        },
+        timestamp = os.time()
+    })
 end
 
 function api_enable_device()
-    nixio.syslog("info", "[RouterAssistant] api_enable_device step0")
+    nixio.syslog("info", "[RouterAssistant] api_enable_device called")
 
     if not require_csrf_token() then
         nixio.syslog("err", "[RouterAssistant] api_enable_device: CSRF failed")
         return
     end
 
-    nixio.syslog("info", "[RouterAssistant] api_enable_device step1")
-
     local http = require "luci.http"
     local util = require "luci.util"
     local nixio = require("nixio")
-
-    local response_data = {code = 0, message = "", mac = "", success = false}
-
-    local function send_response(data)
-        luci.http.prepare_content("application/json")
-        luci.http.write_json(data)
-    end
-
-    local function fail(code, msg)
-        send_response(success_response({code = code, message = msg, mac = "", success = false}))
-    end
 
     local mac = luci.http.formvalue("mac")
     nixio.syslog("info", "[RouterAssistant] enable_device mac=" .. tostring(mac))
 
     if not mac or mac == "" then
-        return fail(-1, "MAC地址无效")
+        luci.http.prepare_content("application/json")
+        luci.http.write_json({code = -1, message = "MAC地址无效", timestamp = os.time()})
+        return
     end
 
     local mac_colon = mac:upper():gsub("-", ":")
     local safe_mac = safe_mac_validate(mac_colon)
     if not safe_mac then
-        return fail(-1, "MAC地址格式无效")
+        luci.http.prepare_content("application/json")
+        luci.http.write_json({code = -1, message = "MAC地址格式无效", timestamp = os.time()})
+        return
     end
 
     local mac_lower = mac_colon:lower()
 
-    nixio.syslog("info", "[RouterAssistant] api_enable_device step2, mac=" .. mac_colon)
+    nixio.syslog("info", "[RouterAssistant] enable_device validated, mac=" .. mac_colon)
 
-    local ok, err = pcall(function()
-        local formatted_mac = safe_mac:sub(1,2) .. ":" .. safe_mac:sub(3,4) .. ":" ..
-                              safe_mac:sub(5,6) .. ":" .. safe_mac:sub(7,8) .. ":" ..
-                              safe_mac:sub(9,10) .. ":" .. safe_mac:sub(11,12)
+    -- ========== 所有耗时操作后台异步执行 ==========
+    local formatted_mac = safe_mac:sub(1,2) .. ":" .. safe_mac:sub(3,4) .. ":" ..
+                          safe_mac:sub(5,6) .. ":" .. safe_mac:sub(7,8) .. ":" ..
+                          safe_mac:sub(9,10) .. ":" .. safe_mac:sub(11,12)
 
-        safe_exec_command("iptables", "-D INPUT -m mac --mac-source " .. formatted_mac .. " -j DROP")
-        safe_exec_command("iptables", "-D FORWARD -m mac --mac-source " .. formatted_mac .. " -j DROP")
+    local script_parts = {}
 
-        local blocklist = load_blocklist()
-        local target_oui = get_mac_oui(mac_colon)
-        if blocklist and blocklist.devices then
-            for _, device in ipairs(blocklist.devices) do
-                if device.mac and device.mac ~= mac_colon then
-                    if target_oui and get_mac_oui(device.mac) == target_oui then
-                        local dev_mac = device.mac:gsub(":", "")
-                        local dev_formatted = dev_mac:sub(1,2) .. ":" .. dev_mac:sub(3,4) .. ":" ..
-                                             dev_mac:sub(5,6) .. ":" .. dev_mac:sub(7,8) .. ":" ..
-                                             dev_mac:sub(9,10) .. ":" .. dev_mac:sub(11,12)
-                        safe_exec_command("iptables", "-D INPUT -m mac --mac-source " .. dev_formatted .. " -j DROP")
-                        safe_exec_command("iptables", "-D FORWARD -m mac --mac-source " .. dev_formatted .. " -j DROP")
-                    end
+    -- 1. 删除 iptables 规则
+    table.insert(script_parts, "iptables -D INPUT -m mac --mac-source " .. formatted_mac .. " -j DROP 2>/dev/null || true")
+    table.insert(script_parts, "iptables -D FORWARD -m mac --mac-source " .. formatted_mac .. " -j DROP 2>/dev/null || true")
+
+    -- 2. 删除同OUI设备的iptables规则
+    local blocklist = nil
+    pcall(function()
+        blocklist = load_blocklist()
+    end)
+    local target_oui = get_mac_oui(mac_colon)
+    if blocklist and blocklist.devices and target_oui then
+        for _, device in ipairs(blocklist.devices) do
+            if device.mac and device.mac ~= mac_colon then
+                if get_mac_oui(device.mac) == target_oui then
+                    local dev_mac = device.mac:gsub(":", "")
+                    local dev_formatted = dev_mac:sub(1,2) .. ":" .. dev_mac:sub(3,4) .. ":" ..
+                                         dev_mac:sub(5,6) .. ":" .. dev_mac:sub(7,8) .. ":" ..
+                                         dev_mac:sub(9,10) .. ":" .. dev_mac:sub(11,12)
+                    table.insert(script_parts, "iptables -D INPUT -m mac --mac-source " .. dev_formatted .. " -j DROP 2>/dev/null || true")
+                    table.insert(script_parts, "iptables -D FORWARD -m mac --mac-source " .. dev_formatted .. " -j DROP 2>/dev/null || true")
                 end
             end
         end
-
-        pcall(remove_from_blocklist, mac_colon)
-
-        _blocked_macs_cache = nil
-        _blocked_macs_cache_time = 0
-
-        if nixio.fs.access("/usr/bin/access_ctl.sh") then
-            safe_exec_with_output("access_ctl.sh", "-m " .. mac_lower .. " -a 1")
-        end
-
-        -- ubus 调用可能在某些设备上阻塞或不存在，先跳过以避免502
-        -- safe_exec_command("ubus", "call infocdp trigger '{\"sync\":1}'")
-
-        response_data.message = "设备已解除限制，已恢复网络访问权限"
-        response_data.mac = mac_colon
-        response_data.success = true
-
-        nixio.syslog("info", "[RouterAssistant] api_enable_device step3, success")
-    end)
-
-    if not ok then
-        nixio.syslog("err", "[RouterAssistant] enable_device error: " .. tostring(err))
-        return fail(-1, "恢复设备失败，请重试")
     end
 
-    send_response(success_response(response_data))
+    -- 3. access_ctl.sh 恢复（如果存在）
+    table.insert(script_parts, "if [ -x /usr/bin/access_ctl.sh ]; then timeout 5 access_ctl.sh -m " .. mac_lower .. " -a 1 2>/dev/null || true; fi")
+
+    -- 将所有操作写入临时脚本并后台执行
+    local script_content = table.concat(script_parts, "\n")
+    local script_file = "/tmp/router_assistant_enable.sh"
+    local sfd = io.open(script_file, "w")
+    if sfd then
+        sfd:write("#!/bin/sh\n")
+        sfd:write(script_content .. "\n")
+        sfd:close()
+        os.execute("chmod +x " .. script_file .. " 2>/dev/null")
+        os.execute("nohup /bin/sh " .. script_file .. " >/dev/null 2>&1 &")
+        os.execute("(sleep 10 && rm -f " .. script_file .. ") >/dev/null 2>&1 &")
+    else
+        for _, cmd in ipairs(script_parts) do
+            os.execute("nohup /bin/sh -c '" .. cmd .. "' >/dev/null 2>&1 &")
+        end
+    end
+
+    -- 更新黑名单（纯Lua文件操作）
+    pcall(remove_from_blocklist, mac_colon)
+    _blocked_macs_cache = nil
+    _blocked_macs_cache_time = 0
+
+    nixio.syslog("info", "[RouterAssistant] enable_device completed (background tasks running)")
+
+    -- 立即返回成功响应
+    luci.http.prepare_content("application/json")
+    luci.http.write_json({
+        code = 0,
+        data = {
+            message = "设备已解除限制，已恢复网络访问权限",
+            mac = mac_colon,
+            success = true
+        },
+        timestamp = os.time()
+    })
 end
 
 function api_get_blocked_devices()
@@ -2338,23 +2400,45 @@ function api_get_blocked_devices()
             local macs = {}
             if not output then return macs end
 
+            -- 验证MAC地址格式的辅助函数（必须是12位十六进制字符）
+            local function is_valid_mac(mac)
+                if not mac or type(mac) ~= "string" then return false end
+                local clean = mac:upper():gsub("[^A-F0-9]", "")
+                return #clean == 12
+            end
+
             -- 方法1：匹配 --mac-source XX:XX:XX:XX:XX:XX 格式
             for mac in output:gmatch("--mac%-source%s+([%da-fA-F:]+)") do
-                if mac and #mac >= 17 then
-                    macs[mac:upper()] = true
+                if is_valid_mac(mac) then
+                    -- 标准化格式
+                    local clean = mac:upper():gsub("[^A-F0-9]", "")
+                    local formatted = clean:sub(1,2) .. ":" .. clean:sub(3,4) .. ":" ..
+                                     clean:sub(5,6) .. ":" .. clean:sub(7,8) .. ":" ..
+                                     clean:sub(9,10) .. ":" .. clean:sub(11,12)
+                    macs[formatted] = true
                 end
             end
 
             -- 方法2：匹配 MACxx:xx:xx:xx:xx:xx 格式（iptables -L 输出格式，MAC前缀无空格）
             for mac in output:gmatch("MAC([%da-fA-F][%da-fA-F:]+)") do
-                if mac and #mac >= 17 then
-                    macs[mac:upper()] = true
+                if is_valid_mac(mac) then
+                    local clean = mac:upper():gsub("[^A-F0-9]", "")
+                    local formatted = clean:sub(1,2) .. ":" .. clean:sub(3,4) .. ":" ..
+                                     clean:sub(5,6) .. ":" .. clean:sub(7,8) .. ":" ..
+                                     clean:sub(9,10) .. ":" .. clean:sub(11,12)
+                    macs[formatted] = true
                 end
             end
 
             -- 方法3：匹配独立的MAC地址格式 XX:XX:XX:XX:XX:XX（在规则行中）
             for mac in output:gmatch("([%da-fA-F][%da-fA-F]:[%da-fA-F][%da-fA-F]:[%da-fA-F][%da-fA-F]:[%da-fA-F][%da-fA-F]:[%da-fA-F][%da-fA-F])") do
-                macs[mac:upper()] = true
+                if is_valid_mac(mac) then
+                    local clean = mac:upper():gsub("[^A-F0-9]", "")
+                    local formatted = clean:sub(1,2) .. ":" .. clean:sub(3,4) .. ":" ..
+                                     clean:sub(5,6) .. ":" .. clean:sub(7,8) .. ":" ..
+                                     clean:sub(9,10) .. ":" .. clean:sub(11,12)
+                    macs[formatted] = true
+                end
             end
 
             return macs

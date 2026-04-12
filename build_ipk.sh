@@ -30,6 +30,12 @@ chmod +x /etc/init.d/traffic-stats 2>/dev/null
 /etc/init.d/traffic-stats start 2>/dev/null
 rm -rf /tmp/luci-indexcache /tmp/luci-modulecache
 
+# ========== 重启 uhttpd 使新代码生效 ==========
+echo "正在重启 uhttpd 服务..."
+if command -v uhttpd >/dev/null 2>&1; then
+    /etc/init.d/uhttpd restart 2>/dev/null && echo "uhttpd 已重启" || echo "uhttpd 重启失败，将在新系统启动时生效"
+fi
+
 # ========== 设置 Homebox 测速工具 ==========
 echo "正在配置 Homebox 测速工具..."
 

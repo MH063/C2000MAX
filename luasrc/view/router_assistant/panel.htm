@@ -2262,7 +2262,8 @@ function saveNote() {
                 showToast('设备信息已保存', 'success');
                 deviceNotes[mac] = {note: note, device_type: deviceType, updated: Date.now() / 1000};
                 closeNoteModal();
-                loadDevices();
+                // 刷新所有视图（设备列表 + 流量统计等），确保编辑立即生效
+                refreshAll();
             } else {
                 showToast('保存失败：' + res.message, 'error');
             }
@@ -2284,7 +2285,8 @@ function deleteNote() {
                 showToast('备注已删除', 'success');
                 delete deviceNotes[mac];
                 closeNoteModal();
-                loadDevices();
+                // 刷新所有视图，确保删除立即生效
+                refreshAll();
             } else {
                 showToast('删除失败：' + res.message, 'error');
             }
@@ -2398,8 +2400,8 @@ function kickDevice(mac, device) {
                     totalEl.textContent = Math.max(0, currentTotal - 1);
                 }
 
-                // 后台刷新完整数据
-                loadDevices();
+                // 后台刷新完整数据（所有视图）
+                refreshAll();
                 loadBlockedDevices();
             } else {
                 var errData = extractData(res) || res;
@@ -2438,8 +2440,8 @@ function enableDevice(mac) {
 
                 renderBlockedDevices(localBlockedDevices);
 
-                // 后台刷新完整数据
-                loadDevices();
+                // 后台刷新完整数据（所有视图）
+                refreshAll();
                 loadBlockedDevices();
             } else {
                 var errData = extractData(res) || res;
@@ -2744,10 +2746,13 @@ function renderTraffic(data) {
             rankHtml = '<span class="rm-rank-num">' + rank + '</span>';
         }
 
+        // 已屏蔽标签
+        var blockedBadge = dev.blocked ? ' <span class="rm-badge" style="background:var(--color-danger);color:#fff;font-size:10px;padding:1px 6px;border-radius:3px;">已屏蔽</span>' : '';
+
         onlineHtml += '<tr>' +
             '<td style="text-align:center;">' + rankHtml + '</td>' +
             '<td>' +
-                '<div class="rm-device-name"><span style="display:inline-flex;align-items:center;gap:6px;">' + getDeviceIcon(dev.device_type, isWifi) + ' ' + displayName + '</span></div>' +
+                '<div class="rm-device-name"><span style="display:inline-flex;align-items:center;gap:6px;">' + getDeviceIcon(dev.device_type, isWifi) + ' ' + displayName + blockedBadge + '</span></div>' +
                 formatDeviceIp(dev.ip) +
                 onlineDuration +
             '</td>' +
@@ -2819,9 +2824,12 @@ function renderTraffic(data) {
                 displayName = escapeHtml(hostname);
             }
 
+            // 已屏蔽标签
+            var blockedBadge = dev.blocked ? ' <span class="rm-badge" style="background:var(--color-danger);color:#fff;font-size:10px;padding:1px 6px;border-radius:3px;">已屏蔽</span>' : '';
+
             offlineHtml += '<tr class="rm-offline">' +
                 '<td>' +
-                    '<div class="rm-device-name"><span style="display:inline-flex;align-items:center;gap:6px;">' + getDeviceIcon(dev.device_type, false) + ' ' + displayName + '</span> <span class="rm-badge rm-badge-offline">离线</span></div>' +
+                    '<div class="rm-device-name"><span style="display:inline-flex;align-items:center;gap:6px;">' + getDeviceIcon(dev.device_type, false) + ' ' + displayName + '</span> <span class="rm-badge rm-badge-offline">离线</span>' + blockedBadge + '</div>' +
                     formatDeviceIp(dev.ip) +
                     lastSeen +
                 '</td>' +

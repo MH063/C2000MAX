@@ -4,18 +4,62 @@ local fs = require "nixio.fs"
 local util = require "luci.util"
 local json = require "json"
 
-local DATA_DIR = "/tmp/traffic_stats"
-local DATA_FILE = DATA_DIR .. "/current.json"
-local DAILY_DIR = DATA_DIR .. "/daily"
-local WEEKLY_DIR = DATA_DIR .. "/weekly"
-local MONTHLY_DIR = DATA_DIR .. "/monthly"
-local BACKUP_DIR = DATA_DIR .. "/backup"
+-- ========== 存储路径配置（与 router_assistant.lua 保持一致） ==========
+-- 数据目录名
+local DATA_DIR_NAME = "router_assistant"
 
-local IPSET_RX = "traffic_stats_rx"
-local IPSET_TX = "traffic_stats_tx"
+-- 存储路径优先级：TF卡优先，其次内存
+local STORAGE_BASE_PATHS = {
+    "/tmp/storage/mmcblk0p1",
+    "/mnt/mmcblk0p1",
+    "/mnt/sdcard",
+    "/tmp/mnt/mmcblk0p1",
+    "/overlay"
+}
+
+-- 缓存
+local _cached_storage_path = nil
+local _storage_path_cache_time = 0
+local STORAGE_CACHE_TTL = 3600  -- 1小时
 
 local function log(msg)
     os.execute("logger -t traffic-collect '" .. msg .. "' 2>/dev/null")
+end
+
+-- 获取可写的存储路径（与主控制器逻辑一致）
+local function get_data_dir()
+    local current_time = os.time()
+
+    -- 使用缓存
+    if _cached_storage_path and (current_time - _storage_path_cache_time) < STORAGE_CACHE_TTL then
+        return _cached_storage_path
+    end
+
+    -- 检查每个候选路径
+    for _, base_path in ipairs(STORAGE_BASE_PATHS) do
+        local data_dir = base_path .. "/" .. DATA_DIR_NAME
+        -- 确保目录存在
+        os.execute("mkdir -p '" .. data_dir .. "' 2>/dev/null")
+        -- 测试写入权限
+        local test_file = data_dir .. "/.write_test"
+        local fd = io.open(test_file, "w")
+        if fd then
+            fd:close()
+            os.remove(test_file)
+            _cached_storage_path = data_dir
+            _storage_path_cache_time = current_time
+            log("Storage path: " .. data_dir .. " (persistent)")
+            return data_dir
+        end
+    end
+
+    -- 回退到内存目录
+    local fallback_dir = "/tmp/" .. DATA_DIR_NAME
+    os.execute("mkdir -p '" .. fallback_dir .. "' 2>/dev/null")
+    _cached_storage_path = fallback_dir
+    _storage_path_cache_time = current_time
+    log("Storage path: " .. fallback_dir .. " (memory, volatile)")
+    return fallback_dir
 end
 
 local function getDate()
@@ -90,7 +134,7 @@ local function getIpsetStats(ipset_name)
     return stats
 end
 
-local function saveToFile(dir, key, data)
+local function saveToFile(dir, key, data, backup_dir)
     mkdir(dir)
     local file = dir .. "/" .. key .. ".json"
     local existing = loadJson(file) or {}
@@ -104,9 +148,11 @@ local function saveToFile(dir, key, data)
     end
     saveJson(file, existing)
 
-    local backup_file = BACKUP_DIR .. "/" .. key .. ".json.bak"
-    mkdir(BACKUP_DIR)
-    saveJson(backup_file, existing)
+    if backup_dir then
+        local backup_file = backup_dir .. "/" .. key .. ".json.bak"
+        mkdir(backup_dir)
+        saveJson(backup_file, existing)
+    end
 end
 
 local function loadDeviceNames()
@@ -133,19 +179,30 @@ local function loadDeviceNames()
     return names
 end
 
+local IPSET_RX = "traffic_stats_rx"
+local IPSET_TX = "traffic_stats_tx"
+
 local function collectTraffic()
     log("Starting traffic collection...")
 
-    mkdir(DATA_DIR)
-    mkdir(DAILY_DIR)
-    mkdir(WEEKLY_DIR)
-    mkdir(MONTHLY_DIR)
-    mkdir(BACKUP_DIR)
+    -- 动态获取存储目录
+    local base_dir = get_data_dir()
+    local data_file = base_dir .. "/current.json"
+    local daily_dir = base_dir .. "/daily"
+    local weekly_dir = base_dir .. "/weekly"
+    local monthly_dir = base_dir .. "/monthly"
+    local backup_dir = base_dir .. "/backup"
+
+    mkdir(base_dir)
+    mkdir(daily_dir)
+    mkdir(weekly_dir)
+    mkdir(monthly_dir)
+    mkdir(backup_dir)
 
     local rx_stats = getIpsetStats(IPSET_RX)
     local tx_stats = getIpsetStats(IPSET_TX)
 
-    local current = loadJson(DATA_FILE) or {}
+    local current = loadJson(data_file) or {}
     local names = loadDeviceNames()
 
     local combined = {}
@@ -164,13 +221,13 @@ local function collectTraffic()
         local delta_tx = math.max(0, stats.tx - prev.tx)
 
         if delta_rx > 0 or delta_tx > 0 then
-            saveToFile(DAILY_DIR, getDate(), {[mac] = {rx = delta_rx, tx = delta_tx}})
-            saveToFile(WEEKLY_DIR, getWeek(), {[mac] = {rx = delta_rx, tx = delta_tx}})
-            saveToFile(MONTHLY_DIR, getMonth(), {[mac] = {rx = delta_rx, tx = delta_tx}})
+            saveToFile(daily_dir, getDate(), {[mac] = {rx = delta_rx, tx = delta_tx}}, backup_dir)
+            saveToFile(weekly_dir, getWeek(), {[mac] = {rx = delta_rx, tx = delta_tx}}, backup_dir)
+            saveToFile(monthly_dir, getMonth(), {[mac] = {rx = delta_rx, tx = delta_tx}}, backup_dir)
         end
     end
 
-    saveJson(DATA_FILE, combined)
+    saveJson(data_file, combined)
 
     local total_rx, total_tx = 0, 0
     for mac, stats in pairs(combined) do
@@ -193,9 +250,10 @@ local function resetCounters()
 end
 
 local function getHistory(period, limit)
-    local dir = DAILY_DIR
-    if period == "weekly" then dir = WEEKLY_DIR
-    elseif period == "monthly" then dir = MONTHLY_DIR end
+    local base_dir = get_data_dir()
+    local dir = base_dir .. "/daily"
+    if period == "weekly" then dir = base_dir .. "/weekly"
+    elseif period == "monthly" then dir = base_dir .. "/monthly" end
 
     local files = {}
     local handle = io.popen("ls -t " .. dir .. "/*.json 2>/dev/null | head -" .. (limit or 30))
@@ -212,9 +270,10 @@ local function getHistory(period, limit)
 end
 
 local function getStatsForPeriod(period, key)
-    local dir = DAILY_DIR
-    if period == "weekly" then dir = WEEKLY_DIR
-    elseif period == "monthly" then dir = MONTHLY_DIR end
+    local base_dir = get_data_dir()
+    local dir = base_dir .. "/daily"
+    if period == "weekly" then dir = base_dir .. "/weekly"
+    elseif period == "monthly" then dir = base_dir .. "/monthly" end
 
     local file = dir .. "/" .. key .. ".json"
     local data = loadJson(file)
@@ -238,10 +297,11 @@ end
 
 local function cleanOld(keep_days)
     keep_days = keep_days or 90
+    local base_dir = get_data_dir()
     log("Cleaning data older than " .. keep_days .. " days...")
-    os.execute("find " .. DAILY_DIR .. " -name '*.json' -mtime +" .. keep_days .. " -delete 2>/dev/null")
-    os.execute("find " .. WEEKLY_DIR .. " -name '*.json' -mtime +" .. (keep_days * 4) .. " -delete 2>/dev/null")
-    os.execute("find " .. MONTHLY_DIR .. " -name '*.json' -mtime +365 -delete 2>/dev/null")
+    os.execute("find " .. base_dir .. "/daily -name '*.json' -mtime +" .. keep_days .. " -delete 2>/dev/null")
+    os.execute("find " .. base_dir .. "/weekly -name '*.json' -mtime +" .. (keep_days * 4) .. " -delete 2>/dev/null")
+    os.execute("find " .. base_dir .. "/monthly -name '*.json' -mtime +365 -delete 2>/dev/null")
 end
 
 local function showHelp()
