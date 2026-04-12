@@ -13,82 +13,101 @@ DATA_DIR="/tmp/traffic_stats"
 STATS_FILE="${DATA_DIR}/device_stats.json"
 BLOCKLIST_FILE=""
 
-clear_blocklist_rules() {
-    echo "traffic-stats: Clearing blocklist iptables rules..."
-    
-    local mac_list=$(iptables -L INPUT -n 2>/dev/null | grep -oE "MAC[a-fA-F0-9:]+" | sed 's/MAC//' | sort -u)
-    
-    echo "traffic-stats: Found MAC list from iptables: ${mac_list}"
-    
-    for mac in ${mac_list}; do
-        if [ -n "${mac}" ]; then
-            local lower_mac=$(echo "${mac}" | tr '[:upper:]' '[:lower:]')
-            echo "traffic-stats: Removing iptables rule for MAC: ${mac}"
-            iptables -D INPUT -m mac --mac-source "${lower_mac}" -j DROP 2>/dev/null
-            iptables -D FORWARD -m mac --mac-source "${lower_mac}" -j DROP 2>/dev/null
-        fi
-    done
+# 黑名单文件搜索路径（与 router_assistant.lua 和 postinst 保持一致）
+BLOCKLIST_SEARCH_PATHS="/tmp/storage/mmcblk0p1 /mnt/mmcblk0p1 /mnt/sdcard /tmp/mnt/mmcblk0p1 /overlay /tmp"
 
-    echo "traffic-stats: Clearing access_ctl blacklist..."
-
-    find_blocklist_file
-    if [ -f "${BLOCKLIST_FILE}" ]; then
-        local blocked_macs=$(grep -oE '"mac"[[:space:]]*:[[:space:]]*"[0-9A-Fa-f:]+"' "${BLOCKLIST_FILE}" 2>/dev/null | sed 's/.*"mac"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
-        
-        for mac in ${blocked_macs}; do
-            if [ -n "${mac}" ]; then
-                local lower_mac=$(echo "${mac}" | tr '[:upper:]' '[:lower:]')
-                echo "traffic-stats: Removing access_ctl block for MAC: ${mac}"
-                access_ctl.sh -m "${lower_mac}" -a 1 2>/dev/null
-            fi
-        done
-
-        echo "traffic-stats: Access_ctl blacklist cleared"
-    else
-        echo "traffic-stats: No blocklist file found, skipping access_ctl cleanup"
-    fi
-
-    echo "traffic-stats: All blocklist rules cleared"
-}
-
+# 查找黑名单文件
 find_blocklist_file() {
-    local search_paths="/mnt/mmcblk0p1 /mnt/sdcard /tmp/mnt/mmcblk0p1 /overlay /tmp"
-    for base_path in ${search_paths}; do
+    local base_path
+    for base_path in ${BLOCKLIST_SEARCH_PATHS}; do
         local file_path="${base_path}/router_assistant/mac_blocklist.json"
         if [ -f "${file_path}" ]; then
             BLOCKLIST_FILE="${file_path}"
-            echo "traffic-stats: Found blocklist file: ${BLOCKLIST_FILE}"
+            echo "traffic-stats: 找到黑名单文件: ${BLOCKLIST_FILE}"
             return 0
         fi
     done
-    echo "traffic-stats: No blocklist file found"
+    BLOCKLIST_FILE=""
+    echo "traffic-stats: 未找到黑名单文件"
     return 1
 }
 
+# 从 iptables 中提取被屏蔽的 MAC 地址列表
+extract_blocked_macs_from_iptables() {
+    local chain="${1:-INPUT}"
+    iptables -L "${chain}" -n 2>/dev/null | grep -oE "MAC[a-fA-F0-9:]+" | sed 's/MAC//' | sort -u
+}
+
+# 清除所有屏蔽规则（设备卸载或服务停止时调用）
+clear_blocklist_rules() {
+    echo "traffic-stats: 正在清除屏蔽规则..."
+
+    # 方法1：从 iptables INPUT/FORWARD 链中提取并删除 DROP 规则
+    local mac_list=$(extract_blocked_macs_from_iptables "INPUT")
+    mac_list="${mac_list} $(extract_blocked_macs_from_iptables "FORWARD")"
+    mac_list="${mac_list} $(extract_blocked_macs_from_iptables "internet_access" 2>/dev/null)"
+
+    if [ -z "${mac_list}" ]; then
+        echo "traffic-stats: 未发现屏蔽规则"
+    else
+        local seen_macs=""
+        for mac in ${mac_list}; do
+            if [ -n "${mac}" ]; then
+                # 去重处理
+                case " ${seen_macs} " in
+                    *" ${mac} "*) continue ;;
+                esac
+                seen_macs="${seen_macs} ${mac}"
+
+                local lower_mac=$(echo "${mac}" | tr '[:upper:]' '[:lower:]')
+                echo "traffic-stats: 删除屏蔽规则 MAC: ${mac}"
+                iptables -D INPUT -m mac --mac-source "${lower_mac}" -j DROP 2>/dev/null
+                iptables -D FORWARD -m mac --mac-source "${lower_mac}" -j DROP 2>/dev/null
+            fi
+        done
+    fi
+
+    # 方法2：从黑名单文件中恢复 ACL 访问权限
+    find_blocklist_file
+    if [ -n "${BLOCKLIST_FILE}" ] && [ -f "${BLOCKLIST_FILE}" ]; then
+        local blocked_macs=$(grep -oE '"mac"[[:space:]]*:[[:space:]]*"[0-9A-Fa-f:]+"' "${BLOCKLIST_FILE}" 2>/dev/null | sed 's/.*"mac"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
+
+        for mac in ${blocked_macs}; do
+            if [ -n "${mac}" ]; then
+                local lower_mac=$(echo "${mac}" | tr '[:upper:]' '[:lower:]')
+                echo "traffic-stats: 恢复 ACL 访问权限 MAC: ${mac}"
+                access_ctl.sh -m "${lower_mac}" -a 1 2>/dev/null
+            fi
+        done
+    fi
+
+    echo "traffic-stats: 所有屏蔽规则已清除"
+}
+
+# 从黑名单文件恢复屏蔽规则（路由器启动时调用）
 restore_blocklist() {
     if ! find_blocklist_file; then
+        echo "traffic-stats: 无黑名单文件，跳过恢复"
         return 0
     fi
-
     if [ ! -f "${BLOCKLIST_FILE}" ]; then
-        echo "traffic-stats: Blocklist file not found"
+        echo "traffic-stats: 黑名单文件不存在"
         return 1
     fi
-
     local count=0
     local mac_list=$(grep -oE '"mac"[[:space:]]*:[[:space:]]*"[0-9A-Fa-f:]+"' "${BLOCKLIST_FILE}" 2>/dev/null | sed 's/.*"mac"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
-    
+
     for mac in ${mac_list}; do
-        if [ -n "${mac}" ]; then
+        if [ -n "${mac}" ] && [ "${mac}" != "00:00:00:00:00:00" ] && [ "${mac}" != "FF:FF:FF:FF:FF:FF" ]; then
             local lower_mac=$(echo "${mac}" | tr '[:upper:]' '[:lower:]')
+            # 添加 iptables 规则（忽略重复错误）
             iptables -I INPUT -m mac --mac-source "${lower_mac}" -j DROP 2>/dev/null
             iptables -I FORWARD -m mac --mac-source "${lower_mac}" -j DROP 2>/dev/null
             count=$((count + 1))
-            echo "traffic-stats: Restored block rule for MAC: ${mac}"
+            echo "traffic-stats: 已恢复屏蔽规则 MAC: ${mac}"
         fi
     done
-
-    echo "traffic-stats: Restored ${count} blocked devices from blocklist"
+    echo "traffic-stats: 共恢复 ${count} 条屏蔽规则"
 }
 
 check_ipset() {
@@ -96,33 +115,30 @@ check_ipset() {
 }
 
 init_ipset() {
-    echo "traffic-stats: Initializing ipset..."
+    echo "traffic-stats: 正在初始化 ipset..."
 
     ipset create ${IPSET_RX} hash:mac counters 2>/dev/null
     ipset create ${IPSET_TX} hash:mac counters 2>/dev/null
-
     local existing_rx=$(ipset list ${IPSET_RX} 2>/dev/null | grep -c "^[0-9a-fA-F][0-9a-fA-F]:")
     local existing_tx=$(ipset list ${IPSET_TX} 2>/dev/null | grep -c "^[0-9a-fA-F][0-9a-fA-F]:")
 
-    echo "traffic-stats: ipset ${IPSET_RX}: ${existing_rx} entries, ${IPSET_TX}: ${existing_tx} entries"
+    echo "traffic-stats: ipset ${IPSET_RX}: ${existing_rx} 条记录, ${IPSET_TX}: ${existing_tx} 条记录"
 }
 
 init_iptables() {
-    echo "traffic-stats: Initializing iptables rules..."
+    echo "traffic-stats: 正在初始化 iptables 规则..."
 
     iptables -t mangle -N ${CHAIN_RX} 2>/dev/null
     iptables -t mangle -F ${CHAIN_RX}
     iptables -t mangle -A ${CHAIN_RX} -j RETURN
     iptables -t mangle -D FORWARD -j ${CHAIN_RX} 2>/dev/null
     iptables -t mangle -I FORWARD -j ${CHAIN_RX}
-
     iptables -t mangle -N ${CHAIN_TX} 2>/dev/null
     iptables -t mangle -F ${CHAIN_TX}
     iptables -t mangle -A ${CHAIN_TX} -j RETURN
     iptables -t mangle -D FORWARD -j ${CHAIN_TX} 2>/dev/null
     iptables -t mangle -I FORWARD -j ${CHAIN_TX}
-
-    echo "traffic-stats: iptables rules initialized"
+    echo "traffic-stats: iptables 规则初始化完成"
 }
 
 restore_devices() {
@@ -139,16 +155,14 @@ restore_devices() {
             fi
         done < "${lease_file}"
     fi
-
-    echo "traffic-stats: Restored ${count} devices from dhcp.leases"
+    echo "traffic-stats: 从 dhcp.leases 恢复了 ${count} 个设备"
 }
 
 restore_from_stats() {
     if [ ! -f "${STATS_FILE}" ]; then
-        echo "traffic-stats: No stats file found, skipping restore"
+        echo "traffic-stats: 未找到统计文件，跳过恢复"
         return
     fi
-
     local count=0
     local macs=$(grep -oE '([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}' "${STATS_FILE}" 2>/dev/null | sort -u)
     for mac in ${macs}; do
@@ -157,29 +171,7 @@ restore_from_stats() {
         ipset -q add ${IPSET_TX} ${upper_mac}
         count=$((count + 1))
     done
-
-    echo "traffic-stats: Restored ${count} devices from previous stats"
-}
-
-start() {
-    if ! check_ipset; then
-        echo "traffic-stats: ipset not found, skipping..."
-        return 1
-    fi
-
-    echo "traffic-stats: Starting traffic statistics service..."
-
-    init_ipset
-    init_iptables
-    restore_devices
-    restore_from_stats
-
-    echo "traffic-stats: Restoring MAC blocklist..."
-    restore_blocklist
-
-    setup_cron
-
-    echo "traffic-stats: Traffic statistics service started"
+    echo "traffic-stats: 从历史统计恢复了 ${count} 个设备"
 }
 
 setup_cron() {
@@ -189,36 +181,17 @@ setup_cron() {
 
     if [ -f "${cron_file}" ]; then
         if grep -q "collect_traffic" "${cron_file}" 2>/dev/null; then
-            echo "traffic-stats: Cron job already exists"
+            echo "traffic-stats: Cron 任务已存在"
         else
             echo "${cron_entry}" >> "${cron_file}"
             /etc/init.d/cron restart 2>/dev/null
-            echo "traffic-stats: Cron job added (hourly traffic collection)"
+            echo "traffic-stats: 已添加 Cron 任务（每小时流量采集）"
         fi
     else
         echo "${cron_entry}" > "${cron_file}"
         /etc/init.d/cron restart 2>/dev/null
-        echo "traffic-stats: Cron file created with hourly traffic collection"
+        echo "traffic-stats: 已创建 Cron 文件并添加每小时流量采集任务"
     fi
-}
-
-stop() {
-    echo "traffic-stats: Stopping traffic statistics service..."
-
-    remove_cron
-
-    iptables -t mangle -D FORWARD -j ${CHAIN_RX} 2>/dev/null
-    iptables -t mangle -D FORWARD -j ${CHAIN_TX} 2>/dev/null
-    iptables -t mangle -F ${CHAIN_RX} 2>/dev/null
-    iptables -t mangle -F ${CHAIN_TX} 2>/dev/null
-    iptables -t mangle -X ${CHAIN_RX} 2>/dev/null
-    iptables -t mangle -X ${CHAIN_TX} 2>/dev/null
-
-    echo "traffic-stats: Calling clear_blocklist_rules..."
-    clear_blocklist_rules
-    echo "traffic-stats: clear_blocklist_rules returned"
-
-    echo "traffic-stats: Traffic statistics service stopped"
 }
 
 remove_cron() {
@@ -226,25 +199,88 @@ remove_cron() {
     if [ -f "${cron_file}" ]; then
         sed -i '/collect_traffic/d' "${cron_file}" 2>/dev/null
         /etc/init.d/cron restart 2>/dev/null
-        echo "traffic-stats: Cron job removed"
+        echo "traffic-stats: Cron 任务已移除"
     fi
 }
 
+start() {
+    echo "traffic-stats: 正在启动路由助手守护服务..."
+
+    # 始终恢复 MAC 黑名单（不依赖 ipset）
+    echo "traffic-stats: 正在恢复 MAC 黑名单..."
+    restore_blocklist
+
+    # ipset 流量统计功能（可选，需要 ipset 支持）
+    if check_ipset; then
+        echo "traffic-stats: ipset 可用，启动流量统计功能..."
+        init_ipset
+        init_iptables
+        restore_devices
+        restore_from_stats
+        setup_cron
+        echo "traffic-stats: 流量统计功能已启动"
+    else
+        echo "traffic-stats: ipset 未安装，跳过流量统计功能（黑名单功能正常）"
+    fi
+
+    echo "traffic-stats: 服务已启动"
+}
+
+stop() {
+    echo "traffic-stats: 正在停止流量统计服务..."
+
+    # 移除 cron 任务
+    remove_cron
+
+    # 清除 iptables mangle 规则（如果存在）
+    iptables -t mangle -D FORWARD -j ${CHAIN_RX} 2>/dev/null
+    iptables -t mangle -D FORWARD -j ${CHAIN_TX} 2>/dev/null
+    iptables -t mangle -F ${CHAIN_RX} 2>/dev/null
+    iptables -t mangle -F ${CHAIN_TX} 2>/dev/null
+    iptables -t mangle -X ${CHAIN_RX} 2>/dev/null
+    iptables -t mangle -X ${CHAIN_TX} 2>/dev/null
+
+    # 始终清除黑名单规则
+    echo "traffic-stats: 正在调用 clear_blocklist_rules..."
+    clear_blocklist_rules
+
+    echo "traffic-stats: 服务已停止"
+}
+
 reload() {
-    restore_devices
-    restore_from_stats
+    if check_ipset; then
+        restore_devices
+        restore_from_stats
+    fi
+    restore_blocklist
 }
 
 status() {
-    echo "=== Traffic Stats Status ==="
+    echo "=== 流量统计服务状态 ==="
     echo ""
-    echo "ipset ${IPSET_RX} entries:"
-    ipset list ${IPSET_RX} 2>/dev/null | head -20
+
+    if check_ipset; then
+        echo "ipset ${IPSET_RX} 记录:"
+        ipset list ${IPSET_RX} 2>/dev/null | head -20
+        echo ""
+        echo "ipset ${IPSET_TX} 记录:"
+        ipset list ${IPSET_TX} 2>/dev/null | head -20
+        echo ""
+        echo "iptables mangle 规则:"
+        iptables -t mangle -L ${CHAIN_RX} -n 2>/dev/null
+        iptables -t mangle -L ${CHAIN_TX} -n 2>/dev/null
+    else
+        echo "ipset 未安装，流量统计功能未启用"
+    fi
+
     echo ""
-    echo "ipset ${IPSET_TX} entries:"
-    ipset list ${IPSET_TX} 2>/dev/null | head -20
+    echo "当前 iptables 屏蔽规则:"
+    echo "--- INPUT 链 ---"
+    iptables -L INPUT -n 2>/dev/null | grep -i "MAC\|mac-source" || echo "(无)"
     echo ""
-    echo "iptables mangle rules:"
-    iptables -t mangle -L ${CHAIN_RX} -n 2>/dev/null
-    iptables -t mangle -L ${CHAIN_TX} -n 2>/dev/null
+    echo "--- FORWARD 链 ---"
+    iptables -L FORWARD -n 2>/dev/null | grep -i "MAC\|mac-source" || echo "(无)"
+    echo ""
+    echo "黑名单文件位置:"
+    find_blocklist_file
 }

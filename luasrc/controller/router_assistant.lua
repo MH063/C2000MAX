@@ -1,21 +1,330 @@
 module("luci.controller.router_assistant", package.seeall)
 
--- 统一错误响应格式
+-- ========== 常量定义 ==========
+-- 数据文件名
+DATA_DIR_NAME = "router_assistant"
+DATA_FILE_NAME = "traffic_stats.json"
+NOTES_FILE_NAME = "device_notes.json"
+HISTORY_FILE_NAME = "traffic_history.json"
+ALERTS_FILE_NAME = "traffic_alerts.json"
+BLOCKLIST_FILE_NAME = "mac_blocklist.json"
+
+-- 时间常量（秒）
+SECONDS_PER_MINUTE = 60
+SECONDS_PER_HOUR = 3600
+SECONDS_PER_DAY = 86400
+SECONDS_PER_WEEK = 604800
+
+-- 缓存常量
+STORAGE_CACHE_TTL = SECONDS_PER_HOUR
+BLOCKED_MACS_CACHE_TTL = 30
+
+-- 历史记录保留常量
+MAX_HOURLY_RECORDS = 168
+MAX_DAILY_RECORDS = 30
+
+-- Homebox 配置
+HOMEBOX_BIN = "/usr/bin/homebox"
+HOMEBOX_PORT = 3300
+HOMEBOX_PID_FILE = "/var/run/homebox.pid"
+HOMEBOX_LOG_FILE = "/tmp/homebox.log"
+HOMEBOX_START_TIMEOUT = 3
+
+-- 缓存变量
+_cached_storage_path = nil
+_storage_path_cache_time = 0
+_last_storage_type = nil
+
+-- 黑名单缓存（带简单锁机制）
+_blocked_macs_cache = nil
+_blocked_macs_cache_time = 0
+_blocked_macs_cache_lock = false
+
+-- 缓存锁函数
+local function cache_lock_acquire()
+    local max_wait = 100
+    local waited = 0
+    while _blocked_macs_cache_lock do
+        if waited >= max_wait then
+            return false
+        end
+        os.execute("sleep 0.01 2>/dev/null || sleep 1")
+        waited = waited + 1
+    end
+    _blocked_macs_cache_lock = true
+    return true
+end
+
+local function cache_lock_release()
+    _blocked_macs_cache_lock = false
+end
+
+local function is_valid_number(n)
+    return n and type(n) == "number" and n == n and n >= 0
+end
+
+-- 基础工具函数（必须在其他函数之前定义）
+function safe_path(path)
+    if not path or type(path) ~= "string" then
+        return nil
+    end
+    if path:match("%.%.") then
+        return nil
+    end
+    if path:match("[`;|$%[%]%*%?<>]") then
+        return nil
+    end
+    if not path:match("^/[%w%d_/%-%.]+$") then
+        return nil
+    end
+    return path
+end
+
+function get_storage_type(path)
+    if path:find("mmcblk0") or path:find("sdcard") or path:find("storage") then
+        return "tf_card"
+    end
+    return "memory"
+end
+
+function ensure_directory(path)
+    local dir = path:match("^(.+)/[^/]+$")
+    if dir and dir ~= "" then
+        local safe_dir = safe_path(dir)
+        if not safe_dir then
+            return false
+        end
+        local check_fd = io.open(safe_dir, "r")
+        if not check_fd then
+            os.execute("mkdir -p '" .. safe_dir:gsub("'", "'\\''") .. "' 2>/dev/null")
+        else
+            check_fd:close()
+        end
+    end
+    return true
+end
+
+function save_data_atomic(file_path, data)
+    local temp_file = file_path .. ".tmp." .. os.time()
+    local fd = io.open(temp_file, "w")
+    if not fd then
+        return false, "Cannot create temp file"
+    end
+    
+    local ok, err = pcall(function()
+        fd:write(data)
+        fd:close()
+    end)
+    
+    if not ok then
+        os.remove(temp_file)
+        return false, err or "Write failed"
+    end
+    
+    local rename_ok = os.rename(temp_file, file_path)
+    if not rename_ok then
+        os.remove(temp_file)
+        return false, "Rename failed"
+    end
+    
+    return true
+end
+
+function save_with_fallback(file_path, data)
+    local ok, err = save_data_atomic(file_path, data)
+    if ok then
+        _last_storage_type = get_storage_type(file_path)
+        return true, file_path
+    end
+    
+    _cached_storage_path = nil
+    _storage_path_cache_time = 0
+    
+    if file_path ~= "/tmp/router_assistant/traffic_stats.json" then
+        local fallback_path = "/tmp/router_assistant/traffic_stats.json"
+        ensure_directory(fallback_path)
+        ok, err = save_data_atomic(fallback_path, data)
+        if ok then
+            _cached_storage_path = fallback_path
+            _last_storage_type = "memory"
+            return true, fallback_path
+        end
+    end
+    
+    return false, err
+end
+
+-- ========== 安全命令执行函数 ==========
+-- 安全的 shell 参数转义
+local function shell_escape(arg)
+    if not arg or type(arg) ~= "string" then
+        return ""
+    end
+    return "'" .. arg:gsub("'", "'\\''") .. "'"
+end
+
+-- 安全的 MAC 地址验证（严格格式）
+local function safe_mac_validate(mac)
+    if not mac or type(mac) ~= "string" then
+        return nil
+    end
+    local clean_mac = mac:upper():gsub("[^A-F0-9]", "")
+    if #clean_mac ~= 12 then
+        return nil
+    end
+    if not clean_mac:match("^[A-F0-9]+$") then
+        return nil
+    end
+    if clean_mac == "000000000000" or clean_mac == "FFFFFFFFFFFF" then
+        return nil
+    end
+    return clean_mac
+end
+
+-- 安全的 IP 地址验证（严格格式）
+local function safe_ip_validate(ip)
+    if not ip or type(ip) ~= "string" then
+        return nil
+    end
+    if #ip > 15 or #ip < 7 then
+        return nil
+    end
+    if ip:match("[^%d%.]") then
+        return nil
+    end
+    local parts = {}
+    for part in ip:gmatch("[^%.]+") do
+        if #part > 1 and part:sub(1,1) == "0" then
+            return nil
+        end
+        local num = tonumber(part)
+        if not num or num < 0 or num > 255 then
+            return nil
+        end
+        table.insert(parts, num)
+    end
+    if #parts ~= 4 then
+        return nil
+    end
+    return ip
+end
+
+-- 安全执行 shell 命令（带白名单和超时）
+local ALLOWED_COMMANDS = {
+    ["conntrack"] = true,
+    ["iptables"] = true,
+    ["iw"] = true,
+    ["iwinfo"] = true,
+    ["mkdir"] = true,
+    ["killall"] = true,
+    ["chmod"] = true,
+    ["pgrep"] = true,
+    ["cat"] = true,
+    ["df"] = true,
+    ["ps"] = true,
+    ["netstat"] = true,
+    ["ip"] = true,
+    ["ubus"] = true,
+    ["access_ctl.sh"] = true
+}
+
+-- 默认命令超时（秒），防止命令阻塞导致502
+local CMD_TIMEOUT = 5
+
+-- 检测timeout命令是否可用（BusyBox通常包含，某些精简固件可能没有）
+local _has_timeout = nil
+local function has_timeout_cmd()
+    if _has_timeout == nil then
+        _has_timeout = (os.execute("which timeout >/dev/null 2>&1") == 0)
+    end
+    return _has_timeout
+end
+
+local function safe_exec_command(cmd_name, args, timeout)
+    if not cmd_name or not ALLOWED_COMMANDS[cmd_name] then
+        return false, "Command not allowed: " .. tostring(cmd_name)
+    end
+    
+    local full_cmd
+    if has_timeout_cmd() then
+        local t = timeout or CMD_TIMEOUT
+        full_cmd = "timeout " .. t .. " " .. cmd_name .. " " .. (args or "") .. " 2>/dev/null"
+    else
+        full_cmd = cmd_name .. " " .. (args or "") .. " 2>/dev/null"
+    end
+    return os.execute(full_cmd)
+end
+
+local function safe_exec_with_output(cmd_name, args, timeout)
+    if not cmd_name or not ALLOWED_COMMANDS[cmd_name] then
+        return nil, "Command not allowed: " .. tostring(cmd_name)
+    end
+    
+    local full_cmd
+    if has_timeout_cmd() then
+        local t = timeout or CMD_TIMEOUT
+        full_cmd = "timeout " .. t .. " " .. cmd_name .. " " .. (args or "") .. " 2>/dev/null"
+    else
+        full_cmd = cmd_name .. " " .. (args or "") .. " 2>/dev/null"
+    end
+    local fd = io.popen(full_cmd, "r")
+    if not fd then
+        return nil, "Failed to execute command"
+    end
+    local output = fd:read("*all")
+    fd:close()
+    return output
+end
+
+-- 统一错误响应格式（不暴露敏感信息）
+local DEBUG_MODE = false
 local function error_response(code, message, details)
+    local safe_details = ""
+    if details and details ~= "" then
+        if DEBUG_MODE then
+            safe_details = details
+        else
+            local nixio = require("nixio")
+            nixio.syslog("err", "[RouterAssistant] Error " .. tostring(code) .. ": " .. tostring(message) .. " - " .. tostring(details))
+        end
+    end
     return {
         code = code,
         message = message,
-        details = details or "",
+        details = safe_details,
         timestamp = os.time()
     }
+end
+
+local function validate_csrf_token()
+    local token = luci.http.formvalue("token")
+    if not token or token == "" then
+        return false
+    end
+    local session_token = luci.dispatcher.context.token
+    if not session_token or session_token == "" then
+        return true
+    end
+    return token == session_token
+end
+
+local function require_csrf_token()
+    if not validate_csrf_token() then
+        luci.http.prepare_content("application/json")
+        luci.http.write_json(error_response(-403, "安全验证失败，请刷新页面重试"))
+        return false
+    end
+    return true
 end
 
 -- 统一成功响应格式
 local function success_response(data)
     data = data or {}
-    data.code = 0
-    data.timestamp = os.time()
-    return data
+    return {
+        code = 0,
+        data = data,
+        timestamp = os.time()
+    }
 end
 
 function index()
@@ -254,7 +563,7 @@ local function load_dhcp_leases()
                     local mac = parts[2]:upper()
                     local ip = parts[3]
                     local name = parts[4]
-                    if validate_mac(mac) and validate_ip(ip) then
+                    if safe_mac_validate(mac) and safe_ip_validate(ip) then
                         if name and name ~= "" and name ~= "*" and #name <= 64 then
                             leases[mac] = {ip = ip, name = name}
                         end
@@ -291,45 +600,45 @@ local function load_ipv6_neighbors()
     end
     return neighbors
 end
-local _blocked_macs_cache = nil
-local _blocked_macs_cache_time = 0
 
 local function is_device_blocked(mac)
     if not mac or mac == "" then return false end
     local mac_upper = mac:upper()
 
-    -- 缓存黑名单列表，5秒内有效
     local current_time = os.time()
-    if _blocked_macs_cache and (current_time - _blocked_macs_cache_time) < 5 then
+    
+    if _blocked_macs_cache and (current_time - _blocked_macs_cache_time) < BLOCKED_MACS_CACHE_TTL then
         return _blocked_macs_cache[mac_upper] == true
     end
 
-    -- 重新加载黑名单
+    if not cache_lock_acquire() then
+        if _blocked_macs_cache then
+            return _blocked_macs_cache[mac_upper] == true
+        end
+        return false
+    end
+
     _blocked_macs_cache = {}
     _blocked_macs_cache_time = current_time
 
     local util = require("luci.util")
 
-    -- 从iptables输出中提取MAC地址的通用函数
     local function extract_macs_from_iptables(output)
         local macs = {}
         if not output then return macs end
 
-        -- 方法1：匹配 --mac-source XX:XX:XX:XX:XX:XX 格式
         for mac in output:gmatch("--mac%-source%s+([%da-fA-F:]+)") do
             if mac and #mac >= 17 then
                 macs[mac:upper()] = true
             end
         end
 
-        -- 方法2：匹配 MACxx:xx:xx:xx:xx:xx 格式（iptables -L 输出格式，MAC前缀无空格）
         for mac in output:gmatch("MAC([%da-fA-F][%da-fA-F:]+)") do
             if mac and #mac >= 17 then
                 macs[mac:upper()] = true
             end
         end
 
-        -- 方法3：匹配独立的MAC地址格式 XX:XX:XX:XX:XX:XX（在规则行中）
         for mac in output:gmatch("([%da-fA-F][%da-fA-F]:[%da-fA-F][%da-fA-F]:[%da-fA-F][%da-fA-F]:[%da-fA-F][%da-fA-F]:[%da-fA-F][%da-fA-F])") do
             macs[mac:upper()] = true
         end
@@ -337,7 +646,6 @@ local function is_device_blocked(mac)
         return macs
     end
 
-    -- 检查INPUT链中的DROP规则
     local input_output = util.exec("iptables -L INPUT -n --line-numbers 2>/dev/null")
     if input_output then
         local input_macs = extract_macs_from_iptables(input_output)
@@ -346,7 +654,6 @@ local function is_device_blocked(mac)
         end
     end
 
-    -- 检查FORWARD链中的DROP规则
     local forward_output = util.exec("iptables -L FORWARD -n --line-numbers 2>/dev/null")
     if forward_output then
         local forward_macs = extract_macs_from_iptables(forward_output)
@@ -355,7 +662,6 @@ local function is_device_blocked(mac)
         end
     end
 
-    -- 检查internet_access链
     local access_output = util.exec("iptables -L internet_access -n --line-numbers 2>/dev/null")
     if access_output then
         local access_macs = extract_macs_from_iptables(access_output)
@@ -364,14 +670,82 @@ local function is_device_blocked(mac)
         end
     end
 
-    return _blocked_macs_cache[mac_upper] == true
+    local result = _blocked_macs_cache[mac_upper] == true
+    cache_lock_release()
+    return result
 end
+
+local function get_storage_path()
+    local current_time = os.time()
+    if _cached_storage_path and (current_time - _storage_path_cache_time) < STORAGE_CACHE_TTL then
+        return _cached_storage_path
+    end
+
+    local storage_base_paths = {
+        "/tmp/storage/mmcblk0p1",
+        "/mnt/mmcblk0p1",
+        "/mnt/sdcard",
+        "/tmp/mnt/mmcblk0p1",
+        "/overlay"
+    }
+
+    for _, base_path in ipairs(storage_base_paths) do
+        local data_dir = base_path .. "/" .. DATA_DIR_NAME
+        ensure_directory(data_dir)
+        local test_file = data_dir .. "/.write_test"
+        local fd = io.open(test_file, "w")
+        if fd then
+            fd:close()
+            os.remove(test_file)
+            _cached_storage_path = data_dir .. "/" .. DATA_FILE_NAME
+            _storage_path_cache_time = current_time
+            return _cached_storage_path
+        end
+    end
+
+    local fallback_dir = "/tmp/" .. DATA_DIR_NAME
+    ensure_directory(fallback_dir)
+    _cached_storage_path = fallback_dir .. "/" .. DATA_FILE_NAME
+    _storage_path_cache_time = current_time
+    return _cached_storage_path
+end
+
+function get_data_dir()
+    local storage_path = get_storage_path()
+    return storage_path:match("^(.+)/[^/]+$") or "/tmp/router_assistant"
+end
+
+local function load_json_file(filename)
+    local dir = get_data_dir()
+    local filepath = dir .. "/" .. filename
+    local fd = io.open(filepath, "r")
+    if not fd then return nil end
+    local content = fd:read("*all")
+    fd:close()
+    if not content or content == "" then return nil end
+    local json = require("luci.jsonc")
+    local ok, data = pcall(json.parse, content)
+    if ok and data then return data end
+    return nil
+end
+
+local function save_json_file(filename, data)
+    local dir = get_data_dir()
+    ensure_directory(dir)
+    local filepath = dir .. "/" .. filename
+    local json = require("luci.jsonc")
+    local json_str = json.stringify(data) or "{}"
+    return save_data_atomic(filepath, json_str)
+end
+
+
 
 function api_get_devices()
     local response_data = nil
 
     local ok, err = pcall(function()
         local util = require("luci.util")
+        local nixio = require("nixio")
 
         local cmd = "ubus call infocd terminal 2>/dev/null"
         local output = util.exec(cmd)
@@ -396,9 +770,15 @@ function api_get_devices()
         end
 
         if data.client then
+            local client_count = 0
+            local added_count = 0
+            local filtered_count = 0
             local dhcp_leases = load_dhcp_leases()
+            local device_notes = load_json_file(NOTES_FILE_NAME) or {}
             local ipv6_neighbors = load_ipv6_neighbors()
+
             for mac, client in pairs(data.client) do
+                client_count = client_count + 1
                 local mac_str = ""
                 if mac and type(mac) == "string" then
                     mac_str = mac
@@ -439,6 +819,12 @@ function api_get_devices()
 
                 local is_upstream = (ifname == "eth1" or ifname == "eth3")
                 local device_type = get_device_type(hostname, mac_upper, is_wifi)
+
+                local note_data = device_notes[mac_upper]
+                if note_data and note_data.device_type and note_data.device_type ~= "" then
+                    device_type = note_data.device_type
+                end
+
                 if not is_upstream and not is_device_blocked(mac_upper) then
                     table.insert(devices_list, {
                         ip = ip,
@@ -451,6 +837,9 @@ function api_get_devices()
                         iface = ifname,
                         device_type = device_type
                     })
+                    added_count = added_count + 1
+                else
+                    filtered_count = filtered_count + 1
                 end
             end
         end
@@ -466,131 +855,6 @@ function api_get_devices()
     luci.http.write_json(response_data)
 end
 
-local _cached_storage_path = nil
-local _storage_path_cache_time = 0
-local _last_storage_type = nil
-local STORAGE_CACHE_TTL = 3600
-local DATA_DIR_NAME = "router_assistant"
-local DATA_FILE_NAME = "traffic_stats.json"
-local NOTES_FILE_NAME = "device_notes.json"
-local HISTORY_FILE_NAME = "traffic_history.json"
-local ALERTS_FILE_NAME = "traffic_alerts.json"
-local BLOCKLIST_FILE_NAME = "mac_blocklist.json"
-
-local function get_storage_type(path)
-    if path:find("mmcblk0") or path:find("sdcard") or path:find("storage") then
-        return "tf_card"
-    end
-    return "memory"
-end
-
-local function ensure_directory(path)
-    local dir = path:match("^(.+)/[^/]+$")
-    if dir and dir ~= "" then
-        local safe_dir = safe_path(dir)
-        if not safe_dir then
-            return false
-        end
-        local check_fd = io.open(safe_dir, "r")
-        if not check_fd then
-            os.execute("mkdir -p '" .. safe_dir:gsub("'", "'\\''") .. "' 2>/dev/null")
-        else
-            check_fd:close()
-        end
-    end
-    return true
-end
-
-local function get_storage_path()
-    local current_time = os.time()
-    if _cached_storage_path and (current_time - _storage_path_cache_time) < STORAGE_CACHE_TTL then
-        return _cached_storage_path
-    end
-
-    local storage_base_paths = {
-        "/tmp/storage/mmcblk0p1",
-        "/mnt/mmcblk0p1",
-        "/mnt/sdcard",
-        "/tmp/mnt/mmcblk0p1",
-        "/overlay"
-    }
-    
-    for _, base_path in ipairs(storage_base_paths) do
-        local data_dir = base_path .. "/" .. DATA_DIR_NAME
-        ensure_directory(data_dir)
-        local test_file = data_dir .. "/.write_test"
-        local fd = io.open(test_file, "w")
-        if fd then
-            fd:close()
-            os.remove(test_file)
-            _cached_storage_path = data_dir .. "/" .. DATA_FILE_NAME
-            _storage_path_cache_time = current_time
-            return _cached_storage_path
-        end
-    end
-    
-    local fallback_dir = "/tmp/" .. DATA_DIR_NAME
-    ensure_directory(fallback_dir)
-    _cached_storage_path = fallback_dir .. "/" .. DATA_FILE_NAME
-    _storage_path_cache_time = current_time
-    return _cached_storage_path
-end
-
-local function save_data_atomic(file_path, data)
-    local temp_file = file_path .. ".tmp." .. os.time()
-    local fd = io.open(temp_file, "w")
-    if not fd then
-        return false, "Cannot create temp file"
-    end
-    
-    local ok, err = pcall(function()
-        fd:write(data)
-        fd:close()
-    end)
-    
-    if not ok then
-        os.remove(temp_file)
-        return false, err or "Write failed"
-    end
-    
-    local rename_ok = os.rename(temp_file, file_path)
-    if not rename_ok then
-        os.remove(temp_file)
-        return false, "Rename failed"
-    end
-    
-    return true
-end
-
-local function save_with_fallback(file_path, data)
-    local ok, err = save_data_atomic(file_path, data)
-    if ok then
-        _last_storage_type = get_storage_type(file_path)
-        return true, file_path
-    end
-    
-    _cached_storage_path = nil
-    _storage_path_cache_time = 0
-    
-    if file_path ~= "/tmp/router_assistant/traffic_stats.json" then
-        local fallback_path = "/tmp/router_assistant/traffic_stats.json"
-        ensure_directory(fallback_path)
-        ok, err = save_data_atomic(fallback_path, data)
-        if ok then
-            _cached_storage_path = fallback_path
-            _last_storage_type = "memory"
-            return true, fallback_path
-        end
-    end
-    
-    return false, err
-end
-
-local function get_data_dir()
-    local storage_path = get_storage_path()
-    return storage_path:match("^(.+)/[^/]+$") or "/tmp/router_assistant"
-end
-
 local function sanitize_input(str)
     if not str or type(str) ~= "string" then return "" end
     str = str:gsub("<", "&lt;")
@@ -600,29 +864,6 @@ local function sanitize_input(str)
     str = str:gsub("&", "&amp;")
     str = str:sub(1, 64)
     return str
-end
-
-local function load_json_file(filename)
-    local dir = get_data_dir()
-    local filepath = dir .. "/" .. filename
-    local fd = io.open(filepath, "r")
-    if not fd then return nil end
-    local content = fd:read("*all")
-    fd:close()
-    if not content or content == "" then return nil end
-    local json = require("luci.jsonc")
-    local ok, data = pcall(json.parse, content)
-    if ok and data then return data end
-    return nil
-end
-
-local function save_json_file(filename, data)
-    local dir = get_data_dir()
-    ensure_directory(dir)
-    local filepath = dir .. "/" .. filename
-    local json = require("luci.jsonc")
-    local json_str = json.stringify(data) or "{}"
-    return save_data_atomic(filepath, json_str)
 end
 
 -- ========== MAC屏蔽列表持久化管理 ==========
@@ -659,10 +900,41 @@ local function save_blocklist(blocklist)
     return save_data_atomic(filepath, json_str)
 end
 
+local function get_mac_oui(mac)
+    if not mac or type(mac) ~= "string" then return nil end
+    local clean = mac:upper():gsub("[^A-F0-9]", "")
+    if #clean < 6 then return nil end
+    return clean:sub(1, 6)
+end
+
+local function find_device_by_oui_or_name(blocklist, mac, name)
+    if not blocklist or not blocklist.devices then return nil end
+    local target_oui = get_mac_oui(mac)
+    for _, device in ipairs(blocklist.devices) do
+        local device_oui = get_mac_oui(device.mac)
+        if device_oui and target_oui and device_oui == target_oui then
+            return device
+        end
+        if name and name ~= "" and name ~= "未知设备" and 
+           device.name and device.name ~= "未知设备" and
+           device.name == name then
+            return device
+        end
+    end
+    return nil
+end
+
 local function add_to_blocklist(mac, name, ip)
     if not mac or mac == "" then return false end
     local mac_upper = mac:upper()
     local blocklist = load_blocklist()
+    if not blocklist then
+        blocklist = {devices = {}}
+    end
+    if not blocklist.devices then
+        blocklist.devices = {}
+    end
+    
     for _, device in ipairs(blocklist.devices) do
         if device.mac == mac_upper then
             return true
@@ -681,9 +953,38 @@ local function remove_from_blocklist(mac)
     if not mac or mac == "" then return false end
     local mac_upper = mac:upper()
     local blocklist = load_blocklist()
+    if not blocklist or not blocklist.devices then
+        return true
+    end
+    local target_oui = get_mac_oui(mac_upper)
+    local related_macs = {}
+    
+    for _, device in ipairs(blocklist.devices) do
+        if device.mac == mac_upper then
+            if device.related_mac then
+                table.insert(related_macs, device.related_mac:upper())
+            end
+        end
+        if device.related_mac and device.related_mac:upper() == mac_upper then
+            table.insert(related_macs, device.mac:upper())
+        end
+    end
+    
     local new_devices = {}
     for _, device in ipairs(blocklist.devices) do
-        if device.mac ~= mac_upper then
+        local should_remove = (device.mac == mac_upper)
+        for _, rm in ipairs(related_macs) do
+            if device.mac == rm then
+                should_remove = true
+                break
+            end
+        end
+        
+        if target_oui and get_mac_oui(device.mac) == target_oui then
+            should_remove = true
+        end
+        
+        if not should_remove then
             table.insert(new_devices, device)
         end
     end
@@ -693,25 +994,27 @@ end
 
 local function apply_iptables_block(mac)
     if not mac or mac == "" then return false end
-    if not validate_mac(mac) then return false end
-    local mac_lower = mac:lower():gsub("[:%-]", "")
-    local formatted_mac = mac_lower:sub(1,2) .. ":" .. mac_lower:sub(3,4) .. ":" .. 
-                          mac_lower:sub(5,6) .. ":" .. mac_lower:sub(7,8) .. ":" ..
-                          mac_lower:sub(9,10) .. ":" .. mac_lower:sub(11,12)
-    os.execute("iptables -I INPUT -m mac --mac-source " .. formatted_mac .. " -j DROP 2>/dev/null")
-    os.execute("iptables -I FORWARD -m mac --mac-source " .. formatted_mac .. " -j DROP 2>/dev/null")
+    local safe_mac = safe_mac_validate(mac)
+    if not safe_mac then return false end
+    
+    local formatted_mac = safe_mac:sub(1,2) .. ":" .. safe_mac:sub(3,4) .. ":" .. 
+                          safe_mac:sub(5,6) .. ":" .. safe_mac:sub(7,8) .. ":" ..
+                          safe_mac:sub(9,10) .. ":" .. safe_mac:sub(11,12)
+    safe_exec_command("iptables", "-I INPUT -m mac --mac-source " .. formatted_mac .. " -j DROP")
+    safe_exec_command("iptables", "-I FORWARD -m mac --mac-source " .. formatted_mac .. " -j DROP")
     return true
 end
 
 local function remove_iptables_block(mac)
     if not mac or mac == "" then return false end
-    if not validate_mac(mac) then return false end
-    local mac_lower = mac:lower():gsub("[:%-]", "")
-    local formatted_mac = mac_lower:sub(1,2) .. ":" .. mac_lower:sub(3,4) .. ":" .. 
-                          mac_lower:sub(5,6) .. ":" .. mac_lower:sub(7,8) .. ":" ..
-                          mac_lower:sub(9,10) .. ":" .. mac_lower:sub(11,12)
-    os.execute("iptables -D INPUT -m mac --mac-source " .. formatted_mac .. " -j DROP 2>/dev/null")
-    os.execute("iptables -D FORWARD -m mac --mac-source " .. formatted_mac .. " -j DROP 2>/dev/null")
+    local safe_mac = safe_mac_validate(mac)
+    if not safe_mac then return false end
+    
+    local formatted_mac = safe_mac:sub(1,2) .. ":" .. safe_mac:sub(3,4) .. ":" .. 
+                          safe_mac:sub(5,6) .. ":" .. safe_mac:sub(7,8) .. ":" ..
+                          safe_mac:sub(9,10) .. ":" .. safe_mac:sub(11,12)
+    safe_exec_command("iptables", "-D INPUT -m mac --mac-source " .. formatted_mac .. " -j DROP")
+    safe_exec_command("iptables", "-D FORWARD -m mac --mac-source " .. formatted_mac .. " -j DROP")
     return true
 end
 
@@ -820,7 +1123,7 @@ local function aggregate_traffic_history()
             table.insert(hour_keys, k)
         end
         table.sort(hour_keys)
-        while #hour_keys > 168 do
+        while #hour_keys > MAX_HOURLY_RECORDS do
             local oldest = table.remove(hour_keys, 1)
             history.hourly[oldest] = nil
         end
@@ -1023,6 +1326,7 @@ function api_get_traffic()
         local online_count = 0
         local offline_count = 0
         local dhcp_leases = load_dhcp_leases()
+        local device_notes = load_json_file(NOTES_FILE_NAME) or {}
 
         local cmd = "ubus call infocd terminal 2>/dev/null"
         local output = util.exec(cmd)
@@ -1061,10 +1365,9 @@ function api_get_traffic()
                         local matched_devices = {}
                         for hist_mac, hist_data in pairs(history) do
                             local hist_prefix = string.sub(hist_mac, 1, 8):upper()
-                            -- 匹配条件：相同hostname + 相同MAC前缀(OUI) + 7天内活跃
                             if hist_data.hostname == hostname and hist_prefix == mac_prefix then
                                 local age = current_time - ((hist_data.last_seen) or 0)
-                                if age < 604800 then
+                                if age < SECONDS_PER_WEEK then
                                     matched_devices[hist_mac] = hist_data
                                 end
                             end
@@ -1089,11 +1392,10 @@ function api_get_traffic()
                             end
                             -- 如果没有IP匹配的，创建新记录（不复用任何历史）
                         else
-                            -- 没有hostname+OUI匹配的，补充判断：hostname + IP相同
                             for hist_mac, hist_data in pairs(history) do
                                 if hist_data.hostname == hostname and hist_data.ip == ip then
                                     local age = current_time - ((hist_data.last_seen) or 0)
-                                    if age < 604800 then
+                                    if age < SECONDS_PER_WEEK then
                                         device_id = hist_mac
                                         break
                                     end
@@ -1135,8 +1437,8 @@ function api_get_traffic()
                             device_total_tx = last_tx + (router_rx_bytes - last_raw_tx)
                         end
                         
-                        device_total_rx = (device_total_rx and device_total_rx == device_total_rx) and device_total_rx or 0
-                        device_total_tx = (device_total_tx and device_total_tx == device_total_tx) and device_total_tx or 0
+                        device_total_rx = is_valid_number(device_total_rx) and device_total_rx or 0
+                        device_total_tx = is_valid_number(device_total_tx) and device_total_tx or 0
                         if device_total_rx < 0 then device_total_rx = last_rx end
                         if device_total_tx < 0 then device_total_tx = last_tx end
                         
@@ -1147,6 +1449,11 @@ function api_get_traffic()
 
                         local is_wifi = is_wifi_device(client)
                         local device_type = get_device_type(hostname, mac_upper, is_wifi)
+
+                        local note_data = device_notes[device_id] or device_notes[mac_upper]
+                        if note_data and note_data.device_type and note_data.device_type ~= "" then
+                            device_type = note_data.device_type
+                        end
 
                         table.insert(online_devices, {
                             mac = device_id,
@@ -1190,7 +1497,7 @@ function api_get_traffic()
         for dev_id, data in pairs(history) do
             if not current_traffic[dev_id] then
                 local age = current_time - ((data and data.last_seen) or 0)
-                if age < 604800 then
+                if age < SECONDS_PER_WEEK then
                     current_traffic[dev_id] = data
                     local device_total = (data.tx or 0) + (data.rx or 0)
                     offline_count = offline_count + 1
@@ -1383,10 +1690,12 @@ function api_get_device_notes()
 end
 
 function api_save_device_note()
+    if not require_csrf_token() then return end
     local result = {code = 0, message = ""}
     local ok, err = pcall(function()
         local mac = luci.http.formvalue("mac")
         local note = luci.http.formvalue("note")
+        local device_type = luci.http.formvalue("device_type")
         if not mac or mac == "" then
             result.code = -1
             result.message = "MAC地址无效"
@@ -1400,9 +1709,12 @@ function api_save_device_note()
         end
         local mac_formatted = mac_clean:sub(1,2) .. ":" .. mac_clean:sub(3,4) .. ":" .. mac_clean:sub(5,6) .. ":" .. mac_clean:sub(7,8) .. ":" .. mac_clean:sub(9,10) .. ":" .. mac_clean:sub(11,12)
         local safe_note = sanitize_input(note or "")
+        local safe_device_type = sanitize_input(device_type or "")
         local notes = load_json_file(NOTES_FILE_NAME) or {}
+        local existing = notes[mac_formatted] or {}
         notes[mac_formatted] = {
             note = safe_note,
+            device_type = safe_device_type,
             updated = os.time()
         }
         local save_ok = save_json_file(NOTES_FILE_NAME, notes)
@@ -1410,7 +1722,7 @@ function api_save_device_note()
             result = error_response(-1, "保存失败")
             return
         end
-        result.message = "备注已保存"
+        result.message = "设备信息已保存"
     end)
     if not ok then
         result = error_response(-1, "保存设备备注失败", tostring(err))
@@ -1422,6 +1734,7 @@ function api_save_device_note()
 end
 
 function api_delete_device_note()
+    if not require_csrf_token() then return end
     local result = {code = 0, message = ""}
     local ok, err = pcall(function()
         local mac = luci.http.formvalue("mac")
@@ -1452,6 +1765,7 @@ function api_delete_device_note()
 end
 
 function api_collect_traffic()
+    if not require_csrf_token() then return end
     local result = {code = 0, message = "流量采集完成"}
     local ok, err = pcall(function()
         aggregate_traffic_history()
@@ -1519,6 +1833,7 @@ function api_get_alerts()
 end
 
 function api_save_alert()
+    if not require_csrf_token() then return end
     local result = {code = 0, message = ""}
     local ok, err = pcall(function()
         local threshold = luci.http.formvalue("threshold")
@@ -1560,6 +1875,7 @@ function api_save_alert()
 end
 
 function api_delete_alert()
+    if not require_csrf_token() then return end
     local result = {code = 0, message = ""}
     local ok, err = pcall(function()
         local alerts = {global_threshold = 0, color_levels = {warning = 50, danger = 80, critical = 100}}
@@ -1733,30 +2049,54 @@ function api_get_version()
 end
 
 function api_kick_device()
+    nixio.syslog("info", "[RouterAssistant] api_kick_device step0")
+
+    if not require_csrf_token() then
+        nixio.syslog("err", "[RouterAssistant] api_kick_device: CSRF failed")
+        return
+    end
+
+    nixio.syslog("info", "[RouterAssistant] api_kick_device step1")
+
     local http = require "luci.http"
     local util = require "luci.util"
-    local os = require "os"
+    local nixio = require("nixio")
 
     local response_data = {code = 0, message = "", mac = "", ip = "", success = false}
 
+    local function send_response(data)
+        luci.http.prepare_content("application/json")
+        luci.http.write_json(data)
+    end
+
+    local function fail(code, msg)
+        send_response(success_response({code = code, message = msg, mac = "", ip = "", success = false}))
+    end
+
+    local mac = luci.http.formvalue("mac")
+    nixio.syslog("info", "[RouterAssistant] kick_device mac=" .. tostring(mac))
+
+    if not mac or mac == "" then
+        return fail(-1, "MAC地址无效")
+    end
+
+    local mac_colon = mac:upper():gsub("-", ":")
+    local safe_mac = safe_mac_validate(mac_colon)
+    if not safe_mac then
+        return fail(-1, "MAC地址格式无效")
+    end
+
+    local mac_lower = mac_colon:lower()
+    local mac_no_colon_lower = safe_mac:lower()
+
+    nixio.syslog("info", "[RouterAssistant] api_kick_device step2, mac=" .. mac_colon)
+
     local ok, err = pcall(function()
-        local mac = luci.http.formvalue("mac")
-
-        if not mac or mac == "" then
-            response_data.code = -1
-            response_data.message = "MAC地址无效"
-            return
-        end
-
-        local mac_colon = mac:upper():gsub("-", ":")
-        if not validate_mac(mac_colon) then
-            response_data.code = -1
-            response_data.message = "MAC地址格式无效"
-            return
-        end
-        local mac_lower = mac_colon:lower()
+        nixio.syslog("info", "[RouterAssistant] api_kick_device step3")
 
         local device_ip = ""
+        local device_hostname = "未知设备"
+
         local leases_file = io.open("/tmp/dhcp.leases", "r")
         if leases_file then
             for line in leases_file:lines() do
@@ -1766,6 +2106,13 @@ function api_kick_device()
                 end
                 if ip then
                     device_ip = ip
+                    local parts = {}
+                    for part in line:gmatch("%S+") do
+                        table.insert(parts, part)
+                    end
+                    if #parts >= 4 and parts[4] and parts[4] ~= "*" then
+                        device_hostname = parts[4]
+                    end
                     break
                 end
             end
@@ -1785,50 +2132,60 @@ function api_kick_device()
             end
         end
 
-        if device_ip ~= "" and not validate_ip(device_ip) then
-            device_ip = ""
+        local safe_device_ip = nil
+        if device_ip ~= "" then
+            safe_device_ip = safe_ip_validate(device_ip)
+            if not safe_device_ip then
+                device_ip = ""
+            end
         end
+
+        nixio.syslog("info", "[RouterAssistant] api_kick_device step4, ip=" .. device_ip)
 
         local kicked = false
         local blocked = false
-        local wireless_ifaces = {"ra0", "rai0", "ra1", "rai1", "apcli0", "apcli1"}
+        local allowed_wireless_ifaces = {
+            ["ra0"] = true, ["rai0"] = true, ["ra1"] = true, ["rai1"] = true,
+            ["apcli0"] = true, ["apcli1"] = true
+        }
 
-        for _, iface in ipairs(wireless_ifaces) do
-            local cmd = "iw dev " .. iface .. " station del " .. mac_colon .. " 2>&1"
-            local res = util.exec(cmd)
+        for iface, _ in pairs(allowed_wireless_ifaces) do
+            local res = safe_exec_with_output("iw", "dev " .. iface .. " station del " .. mac_colon)
+            nixio.syslog("info", "[RouterAssistant] iw " .. iface .. " result: " .. tostring(res))
             if res and not res:match("No such") and not res:match("Not found") then
                 kicked = true
             end
         end
 
-        local acl_cmd = "access_ctl.sh -m " .. mac_lower .. " -a 0 2>&1"
-        local acl_result = util.exec(acl_cmd)
-        if acl_result and acl_result ~= "" then
-            blocked = true
+        if nixio.fs.access("/usr/bin/access_ctl.sh") then
+            local acl_result = safe_exec_with_output("access_ctl.sh", "-m " .. mac_lower .. " -a 0")
+            if acl_result and acl_result ~= "" then
+                blocked = true
+            end
         end
 
-        if device_ip ~= "" then
-            os.execute("conntrack -D -s " .. device_ip .. " 2>/dev/null")
-            os.execute("conntrack -D -d " .. device_ip .. " 2>/dev/null")
+        if safe_device_ip then
+            safe_exec_command("conntrack", "-D -s " .. safe_device_ip)
+            safe_exec_command("conntrack", "-D -d " .. safe_device_ip)
         end
-        os.execute("conntrack -D -m " .. mac_lower .. " 2>/dev/null")
+        safe_exec_command("conntrack", "-D -m " .. mac_no_colon_lower)
 
-        local formatted_mac = mac_lower:gsub("[:%-]", "")
-        formatted_mac = formatted_mac:sub(1,2) .. ":" .. formatted_mac:sub(3,4) .. ":" .. 
-                        formatted_mac:sub(5,6) .. ":" .. formatted_mac:sub(7,8) .. ":" ..
-                        formatted_mac:sub(9,10) .. ":" .. formatted_mac:sub(11,12)
+        local formatted_mac = safe_mac:sub(1,2) .. ":" .. safe_mac:sub(3,4) .. ":" ..
+                              safe_mac:sub(5,6) .. ":" .. safe_mac:sub(7,8) .. ":" ..
+                              safe_mac:sub(9,10) .. ":" .. safe_mac:sub(11,12)
 
-        os.execute("iptables -I INPUT -m mac --mac-source " .. formatted_mac .. " -j DROP 2>/dev/null")
-        os.execute("iptables -I FORWARD -m mac --mac-source " .. formatted_mac .. " -j DROP 2>/dev/null")
+        safe_exec_command("iptables", "-I INPUT -m mac --mac-source " .. formatted_mac .. " -j DROP")
+        safe_exec_command("iptables", "-I FORWARD -m mac --mac-source " .. formatted_mac .. " -j DROP")
 
-        -- 保存到持久化配置文件
-        add_to_blocklist(mac_colon, hostname or "未知设备", device_ip)
+        pcall(add_to_blocklist, mac_colon, device_hostname, device_ip)
 
-        -- 清除黑名单缓存，使更改立即生效
         _blocked_macs_cache = nil
         _blocked_macs_cache_time = 0
 
-        os.execute("ubus call infocdp trigger \"{'sync':1}\" >/dev/null")
+        nixio.syslog("info", "[RouterAssistant] api_kick_device step5, about to sync")
+
+        -- ubus 调用可能在某些设备上阻塞或不存在，先跳过以避免502
+        -- safe_exec_command("ubus", "call infocdp trigger '{\"sync\":1}'")
 
         local message = "设备已断开"
         if kicked and blocked then
@@ -1843,77 +2200,110 @@ function api_kick_device()
         response_data.mac = mac_colon
         response_data.ip = device_ip
         response_data.success = true
+
+        nixio.syslog("info", "[RouterAssistant] api_kick_device step6, success")
     end)
 
     if not ok then
-        response_data = error_response(-1, "操作失败: " .. tostring(err))
-    else
-        response_data = success_response(response_data)
+        nixio.syslog("err", "[RouterAssistant] kick_device error: " .. tostring(err))
+        return fail(-1, "踢出设备失败，请重试")
     end
 
-    luci.http.prepare_content("application/json")
-    luci.http.write_json(response_data)
+    send_response(success_response(response_data))
 end
 
 function api_enable_device()
+    nixio.syslog("info", "[RouterAssistant] api_enable_device step0")
+
+    if not require_csrf_token() then
+        nixio.syslog("err", "[RouterAssistant] api_enable_device: CSRF failed")
+        return
+    end
+
+    nixio.syslog("info", "[RouterAssistant] api_enable_device step1")
+
     local http = require "luci.http"
     local util = require "luci.util"
-    local os = require "os"
+    local nixio = require("nixio")
 
     local response_data = {code = 0, message = "", mac = "", success = false}
 
+    local function send_response(data)
+        luci.http.prepare_content("application/json")
+        luci.http.write_json(data)
+    end
+
+    local function fail(code, msg)
+        send_response(success_response({code = code, message = msg, mac = "", success = false}))
+    end
+
+    local mac = luci.http.formvalue("mac")
+    nixio.syslog("info", "[RouterAssistant] enable_device mac=" .. tostring(mac))
+
+    if not mac or mac == "" then
+        return fail(-1, "MAC地址无效")
+    end
+
+    local mac_colon = mac:upper():gsub("-", ":")
+    local safe_mac = safe_mac_validate(mac_colon)
+    if not safe_mac then
+        return fail(-1, "MAC地址格式无效")
+    end
+
+    local mac_lower = mac_colon:lower()
+
+    nixio.syslog("info", "[RouterAssistant] api_enable_device step2, mac=" .. mac_colon)
+
     local ok, err = pcall(function()
-        local mac = luci.http.formvalue("mac")
+        local formatted_mac = safe_mac:sub(1,2) .. ":" .. safe_mac:sub(3,4) .. ":" ..
+                              safe_mac:sub(5,6) .. ":" .. safe_mac:sub(7,8) .. ":" ..
+                              safe_mac:sub(9,10) .. ":" .. safe_mac:sub(11,12)
 
-        if not mac or mac == "" then
-            response_data.code = -1
-            response_data.message = "MAC地址无效"
-            return
+        safe_exec_command("iptables", "-D INPUT -m mac --mac-source " .. formatted_mac .. " -j DROP")
+        safe_exec_command("iptables", "-D FORWARD -m mac --mac-source " .. formatted_mac .. " -j DROP")
+
+        local blocklist = load_blocklist()
+        local target_oui = get_mac_oui(mac_colon)
+        if blocklist and blocklist.devices then
+            for _, device in ipairs(blocklist.devices) do
+                if device.mac and device.mac ~= mac_colon then
+                    if target_oui and get_mac_oui(device.mac) == target_oui then
+                        local dev_mac = device.mac:gsub(":", "")
+                        local dev_formatted = dev_mac:sub(1,2) .. ":" .. dev_mac:sub(3,4) .. ":" ..
+                                             dev_mac:sub(5,6) .. ":" .. dev_mac:sub(7,8) .. ":" ..
+                                             dev_mac:sub(9,10) .. ":" .. dev_mac:sub(11,12)
+                        safe_exec_command("iptables", "-D INPUT -m mac --mac-source " .. dev_formatted .. " -j DROP")
+                        safe_exec_command("iptables", "-D FORWARD -m mac --mac-source " .. dev_formatted .. " -j DROP")
+                    end
+                end
+            end
         end
 
-        local mac_colon = mac:upper():gsub("-", ":")
-        if not validate_mac(mac_colon) then
-            response_data.code = -1
-            response_data.message = "MAC地址格式无效"
-            return
-        end
-        local mac_lower = mac_colon:lower()
+        pcall(remove_from_blocklist, mac_colon)
 
-        local formatted_mac = mac_lower:gsub("[:%-]", "")
-        formatted_mac = formatted_mac:sub(1,2) .. ":" .. formatted_mac:sub(3,4) .. ":" .. 
-                        formatted_mac:sub(5,6) .. ":" .. formatted_mac:sub(7,8) .. ":" ..
-                        formatted_mac:sub(9,10) .. ":" .. formatted_mac:sub(11,12)
-
-        os.execute("iptables -D INPUT -m mac --mac-source " .. formatted_mac .. " -j DROP 2>/dev/null")
-        os.execute("iptables -D FORWARD -m mac --mac-source " .. formatted_mac .. " -j DROP 2>/dev/null")
-
-        -- 从持久化配置文件中删除
-        remove_from_blocklist(mac_colon)
-
-        -- 清除黑名单缓存，使更改立即生效
         _blocked_macs_cache = nil
         _blocked_macs_cache_time = 0
 
-        -- 通过access_ctl.sh解除限制
-        local acl_cmd = "access_ctl.sh -m " .. mac_lower .. " -a 1 2>&1"
-        local acl_result = util.exec(acl_cmd)
+        if nixio.fs.access("/usr/bin/access_ctl.sh") then
+            safe_exec_with_output("access_ctl.sh", "-m " .. mac_lower .. " -a 1")
+        end
 
-        -- 同步设备状态
-        os.execute("ubus call infocdp trigger \"{'sync':1}\" >/dev/null")
+        -- ubus 调用可能在某些设备上阻塞或不存在，先跳过以避免502
+        -- safe_exec_command("ubus", "call infocdp trigger '{\"sync\":1}'")
 
         response_data.message = "设备已解除限制，已恢复网络访问权限"
         response_data.mac = mac_colon
         response_data.success = true
+
+        nixio.syslog("info", "[RouterAssistant] api_enable_device step3, success")
     end)
 
     if not ok then
-        response_data = error_response(-1, "操作失败: " .. tostring(err))
-    else
-        response_data = success_response(response_data)
+        nixio.syslog("err", "[RouterAssistant] enable_device error: " .. tostring(err))
+        return fail(-1, "恢复设备失败，请重试")
     end
 
-    luci.http.prepare_content("application/json")
-    luci.http.write_json(response_data)
+    send_response(success_response(response_data))
 end
 
 function api_get_blocked_devices()
@@ -2015,9 +2405,9 @@ function api_get_blocked_devices()
     end)
 
     if not ok then
-        result = error_response(-1, "获取黑名单设备失败", tostring(err))
-    else
-        result = success_response(result)
+        result.code = -1
+        result.message = "获取黑名单设备失败"
+        result.details = tostring(err)
     end
 
     luci.http.prepare_content("application/json")
@@ -2052,66 +2442,6 @@ function get_encryption(iface, dev)
         return "WPA/WPA2"
     end
     return "Open"
-end
-
-function validate_mac(mac)
-    if not mac or type(mac) ~= "string" then
-        return false
-    end
-    mac = mac:upper():gsub("[^A-F0-9]", "")
-    if #mac ~= 12 then
-        return false
-    end
-    if not mac:match("^[A-F0-9]+$") then
-        return false
-    end
-    if mac == "000000000000" or mac == "FFFFFFFFFFFF" then
-        return false
-    end
-    return true
-end
-
-function validate_ip(ip)
-    if not ip or type(ip) ~= "string" then
-        return false
-    end
-    if #ip > 15 or #ip < 7 then
-        return false
-    end
-    if ip:match("[^%d%.]") then
-        return false
-    end
-    local parts = {}
-    for part in ip:gmatch("[^%.]+") do
-        if #part > 1 and part:sub(1,1) == "0" then
-            return false
-        end
-        local num = tonumber(part)
-        if not num or num < 0 or num > 255 then
-            return false
-        end
-        table.insert(parts, num)
-    end
-    if #parts ~= 4 then
-        return false
-    end
-    return true
-end
-
-function safe_path(path)
-    if not path or type(path) ~= "string" then
-        return nil
-    end
-    if path:match("%.%.") then
-        return nil
-    end
-    if path:match("[`;|$%[%]%*%?<>]") then
-        return nil
-    end
-    if not path:match("^/[%w%d_/%-%.]+$") then
-        return nil
-    end
-    return path
 end
 
 function api_get_storage_status()
@@ -2152,19 +2482,22 @@ function api_get_storage_status()
             end
 
             if result.tf_card.mount_point ~= "" then
-                local df_output = util.exec("df -k " .. result.tf_card.mount_point .. " 2>/dev/null | tail -1")
-                if df_output and df_output ~= "" then
-                    local parts = {}
-                    for part in df_output:gmatch("%S+") do
-                        table.insert(parts, part)
-                    end
-                    if #parts >= 4 then
-                        result.tf_card.total = tonumber(parts[2]) * 1024
-                        result.tf_card.used = tonumber(parts[3]) * 1024
-                        result.tf_card.available = tonumber(parts[4]) * 1024
-                        if result.tf_card.total > 0 then
-                            local percent = (result.tf_card.used / result.tf_card.total) * 100
-                            result.tf_card.percent = string.format("%.1f%%", percent)
+                local safe_mount = safe_path(result.tf_card.mount_point)
+                if safe_mount then
+                    local df_output = safe_exec_with_output("df", "-k " .. safe_mount .. " | tail -1")
+                    if df_output and df_output ~= "" then
+                        local parts = {}
+                        for part in df_output:gmatch("%S+") do
+                            table.insert(parts, part)
+                        end
+                        if #parts >= 4 then
+                            result.tf_card.total = tonumber(parts[2]) * 1024
+                            result.tf_card.used = tonumber(parts[3]) * 1024
+                            result.tf_card.available = tonumber(parts[4]) * 1024
+                            if result.tf_card.total > 0 then
+                                local percent = (result.tf_card.used / result.tf_card.total) * 100
+                                result.tf_card.percent = string.format("%.1f%%", percent)
+                            end
                         end
                     end
                 end
@@ -2200,6 +2533,7 @@ function api_get_storage_status()
 end
 
 function api_migrate_storage()
+    if not require_csrf_token() then return end
     local result = {
         code = 0,
         message = "",
@@ -2268,6 +2602,7 @@ function api_migrate_storage()
 end
 
 function api_clear_data()
+    if not require_csrf_token() then return end
     local result = {
         code = 0,
         message = "",
@@ -2394,6 +2729,7 @@ function api_get_data_stats()
 end
 
 function api_clear_all_data()
+    if not require_csrf_token() then return end
     local result = {
         code = 0,
         message = "",
@@ -2480,13 +2816,7 @@ end
 
 -- ========== 网络测速功能（Homebox） ==========
 
-local HOMEBOX_BIN = "/usr/bin/homebox"
-local HOMEBOX_PORT = 3300
-local HOMEBOX_PID_FILE = "/var/run/homebox.pid"
-
--- 检查 Homebox 是否运行
 local function is_homebox_running()
-    -- 方法1：检查 PID 文件
     local pid_fd = io.open(HOMEBOX_PID_FILE, "r")
     if pid_fd then
         local pid = pid_fd:read("*l")
@@ -2545,32 +2875,26 @@ local function start_homebox()
         return true, "Homebox 已在运行"
     end
 
-    -- 检查 Homebox 是否存在
     local fd = io.open(HOMEBOX_BIN, "r")
     if not fd then
         return false, "Homebox 未安装"
     end
     fd:close()
 
-    -- 验证路径安全
     if not safe_path(HOMEBOX_BIN) then
         return false, "Homebox 路径无效"
     end
 
-    -- 确保有执行权限
-    os.execute("chmod +x " .. HOMEBOX_BIN .. " 2>/dev/null")
+    safe_exec_command("chmod", "+x " .. HOMEBOX_BIN)
     
-    -- 杀掉可能存在的旧进程
-    os.execute("killall homebox 2>/dev/null")
+    safe_exec_command("killall", "homebox")
     os.remove(HOMEBOX_PID_FILE)
 
-    -- 启动 Homebox（后台运行）
     local start_cmd = HOMEBOX_BIN .. " serve --port " .. tostring(HOMEBOX_PORT) .. 
-                      " > /tmp/homebox.log 2>&1 &"
+                      " > " .. HOMEBOX_LOG_FILE .. " 2>&1 &"
     os.execute(start_cmd)
     
-    -- 获取新进程 PID
-    local pid_fd = io.popen("pgrep -f 'homebox.*serve' | head -1")
+    local pid_fd = io.popen("pgrep -f 'homebox.*serve' | head -1 2>/dev/null", "r")
     if pid_fd then
         local pid = pid_fd:read("*l")
         pid_fd:close()
@@ -2583,10 +2907,8 @@ local function start_homebox()
         end
     end
 
-    -- 等待服务启动（最多3秒）
-    local max_wait = 3
     local waited = 0
-    while waited < max_wait do
+    while waited < HOMEBOX_START_TIMEOUT do
         if is_homebox_running() then
             return true, "Homebox 启动成功"
         end
@@ -2594,8 +2916,7 @@ local function start_homebox()
         waited = waited + 1
     end
 
-    -- 检查日志获取错误信息
-    local log_fd = io.open("/tmp/homebox.log", "r")
+    local log_fd = io.open(HOMEBOX_LOG_FILE, "r")
     local log_content = ""
     if log_fd then
         log_content = log_fd:read("*all") or ""
@@ -2611,6 +2932,7 @@ end
 
 -- 启动测速（返回 Homebox URL）
 function api_speed_test()
+    if not require_csrf_token() then return end
     local http = require("luci.http")
     local util = require("luci.util")
     local json = require("luci.jsonc")

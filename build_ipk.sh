@@ -2,7 +2,7 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-OUTPUT_DIR="$SCRIPT_DIR/测试文件"
+OUTPUT_DIR="$SCRIPT_DIR/output"
 PKG_DIR="$SCRIPT_DIR/ipk_build"
 
 PKG_VERSION="1.0.1-1"
@@ -33,7 +33,6 @@ rm -rf /tmp/luci-indexcache /tmp/luci-modulecache
 # ========== 设置 Homebox 测速工具 ==========
 echo "正在配置 Homebox 测速工具..."
 
-# 设置 Homebox 可执行权限
 if [ -f "/usr/bin/homebox" ]; then
     chmod +x /usr/bin/homebox
     echo "Homebox 测速工具已就绪"
@@ -42,8 +41,9 @@ else
 fi
 
 # ========== 初始化数据存储目录 ==========
+# 存储路径优先级（与运行时代码 router_assistant.lua 保持一致）
 TF_MOUNT=""
-for mp in /tmp/storage/mmcblk0p1 /mnt/mmcblk0p1 /mnt/sdcard /tmp/mnt/mmcblk0p1; do
+for mp in /tmp/storage/mmcblk0p1 /mnt/mmcblk0p1 /mnt/sdcard /tmp/mnt/mmcblk0p1 /overlay; do
     if [ -d "$mp" ] && [ -w "$mp" ]; then
         TF_MOUNT="$mp"
         break
@@ -52,10 +52,10 @@ done
 
 STORAGE_DIR=""
 if [ -n "$TF_MOUNT" ]; then
-    STORAGE_DIR="$TF_MOUNT/router_assistant/data"
+    STORAGE_DIR="$TF_MOUNT/router_assistant"
     mkdir -p "$STORAGE_DIR"
     chmod 755 "$STORAGE_DIR"
-    echo "数据存储目录: $STORAGE_DIR (TF卡)"
+    echo "数据存储目录: $STORAGE_DIR (持久化存储)"
 else
     STORAGE_DIR="/tmp/router_assistant"
     mkdir -p "$STORAGE_DIR"
@@ -63,16 +63,33 @@ else
     echo "数据存储目录: $STORAGE_DIR (内存，重启丢失)"
 fi
 
+# ========== 检查必要服务 ==========
+# 检查 infocd 服务
+if ubus list infocd >/dev/null 2>&1; then
+    : # infocd 服务正常
+else
+    echo "警告: infocd 服务未运行，部分功能可能受限"
+fi
+
+# 检查 access_ctl.sh
+if [ ! -f "/usr/bin/access_ctl.sh" ]; then
+    echo "提示: access_ctl.sh 未安装，ACL控制功能将不可用"
+fi
+
 # ========== 执行首次流量采集 ==========
 if [ -f "/usr/libexec/router_assistant/collect_traffic.lua" ]; then
     chmod +x /usr/libexec/router_assistant/collect_traffic.lua
-    echo "正在执行首次流量采集..."
-    /usr/bin/lua /usr/libexec/router_assistant/collect_traffic.lua 2>/dev/null
-    echo "首次流量采集完成"
+    # 检查 ipset 是否存在
+    if command -v ipset >/dev/null 2>&1; then
+        echo "正在执行首次流量采集..."
+        /usr/bin/lua /usr/libexec/router_assistant/collect_traffic.lua 2>/dev/null
+        echo "首次流量采集完成"
+    else
+        echo "提示: ipset 未安装，跳过首次流量采集（不影响主要功能）"
+    fi
 else
     echo "警告: collect_traffic.lua 未找到"
 fi
-
 # 更新appcenter配置
 uci -q batch <<EOF
 delete appcenter.luci-app-router-assistant

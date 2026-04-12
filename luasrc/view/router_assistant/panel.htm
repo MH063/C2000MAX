@@ -1407,6 +1407,33 @@
         color: var(--text-secondary);
     }
 
+    .rm-form-select {
+        width: 100%;
+        padding: 10px 14px;
+        background: rgba(0, 0, 0, 0.3);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        color: var(--text-primary);
+        font-size: 14px;
+        box-sizing: border-box;
+        cursor: pointer;
+        appearance: none;
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+        background-repeat: no-repeat;
+        background-position: right 12px center;
+        padding-right: 36px;
+    }
+
+    .rm-form-select:focus {
+        outline: none;
+        border-color: var(--accent-cyan);
+    }
+
+    .rm-form-select option {
+        background: #1a1a2e;
+        color: var(--text-primary);
+    }
+
     .rm-modal-footer {
         display: flex;
         gap: 12px;
@@ -1531,9 +1558,9 @@
     <div class="rm-modal-overlay" id="note-modal">
         <div class="rm-modal">
             <div class="rm-modal-header">
-                <div class="rm-modal-title">编辑设备备注</div>
+                <div class="rm-modal-title">编辑设备信息</div>
                 <button class="rm-modal-close" onclick="closeNoteModal()">
-                    <!-- 关闭图标 - 更专业的设计 -->
+                    <!-- 关闭图标 -->
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                         <line x1="18" y1="6" x2="6" y2="18"/>
                         <line x1="6" y1="6" x2="18" y2="18"/>
@@ -1550,8 +1577,27 @@
                     <input type="text" class="rm-form-input" id="note-device-name" readonly>
                 </div>
                 <div class="rm-form-group">
+                    <label class="rm-form-label">设备类型</label>
+                    <select class="rm-form-select" id="note-device-type">
+                        <option value="">自动识别（默认）</option>
+                        <option value="phone">📱 手机</option>
+                        <option value="tablet">📱 平板</option>
+                        <option value="laptop">💻 笔记本电脑</option>
+                        <option value="desktop">🖥️ 台式电脑</option>
+                        <option value="tv">📺 电视/盒子</option>
+                        <option value="smart_home">🏠 智能家居</option>
+                        <option value="camera">📷 摄像头</option>
+                        <option value="printer">🖨️ 打印机</option>
+                        <option value="wearable">⌚ 穿戴设备</option>
+                        <option value="gaming">🎮 游戏机</option>
+                        <option value="server">🖧 服务器/NAS</option>
+                        <option value="router">📡 路由器/网关</option>
+                        <option value="unknown">❓ 未知设备</option>
+                    </select>
+                </div>
+                <div class="rm-form-group">
                     <label class="rm-form-label">备注名称</label>
-                    <input type="text" class="rm-form-input" id="note-content" placeholder="输入备注名称" maxlength="32">
+                    <input type="text" class="rm-form-input" id="note-content" placeholder="输入备注名称（可选）" maxlength="32">
                 </div>
             </div>
             <div class="rm-modal-footer">
@@ -2136,13 +2182,16 @@ function showToast(message, type, duration) {
 }
 
 function loadVersion() {
-    XHR.get('<%=luci.dispatcher.build_url("admin/status/router_assistant/get_version")%>', null,
-        function(xhr) {
+    safeXHR(
+        '<%=luci.dispatcher.build_url("admin/status/router_assistant/get_version")%>',
+        function(res) {
             try {
-                var res = JSON.parse(xhr.responseText);
-                if (res.code === 0) {
+                if (res && res.code === 0) {
+                    var data = extractData(res);
+                    var version = (data && data.version) || res.version || '1.0.0';
+                    var author = (data && data.author) || res.author || 'MH';
                     document.getElementById('version-info').innerHTML =
-                        '路由管家 v' + res.version + ' | 作者：' + res.author;
+                        '路由管家 v' + version + ' | 作者：' + author;
                 }
             } catch (e) {}
         }
@@ -2164,7 +2213,8 @@ function loadDeviceNotes() {
         '<%=luci.dispatcher.build_url("admin/status/router_assistant/get_device_notes")%>',
         function(res) {
             if (res.code === 0) {
-                deviceNotes = res.notes || {};
+                var data = extractData(res);
+                deviceNotes = (data && data.notes) || res.notes || {};
             }
         },
         function(error) {}
@@ -2176,8 +2226,9 @@ function loadAlerts() {
         '<%=luci.dispatcher.build_url("admin/status/router_assistant/get_alerts")%>',
         function(res) {
             if (res.code === 0) {
-                globalThreshold = res.global_threshold || 0;
-                colorLevels = res.color_levels || {warning: 50, danger: 80, critical: 100};
+                var data = extractData(res);
+                globalThreshold = (data && data.global_threshold) || res.global_threshold || 0;
+                colorLevels = (data && data.color_levels) || res.color_levels || {warning: 50, danger: 80, critical: 100};
             }
         },
         function(error) {}
@@ -2189,7 +2240,8 @@ function openNoteModal(mac, hostname) {
     document.getElementById('note-device-name').value = hostname || '未知设备';
     var note = deviceNotes[mac] || {};
     document.getElementById('note-content').value = note.note || '';
-    document.getElementById('note-delete-btn').style.display = note.note ? 'inline-block' : 'none';
+    document.getElementById('note-device-type').value = note.device_type || '';
+    document.getElementById('note-delete-btn').style.display = (note.note || note.device_type) ? 'inline-block' : 'none';
     document.getElementById('note-modal').classList.add('active');
 }
 
@@ -2200,14 +2252,15 @@ function closeNoteModal() {
 function saveNote() {
     var mac = document.getElementById('note-mac').value;
     var note = document.getElementById('note-content').value;
+    var deviceType = document.getElementById('note-device-type').value;
 
-    var params = 'mac=' + encodeURIComponent(mac) + '&note=' + encodeURIComponent(note);
+    var params = 'mac=' + encodeURIComponent(mac) + '&note=' + encodeURIComponent(note) + '&device_type=' + encodeURIComponent(deviceType);
 
     safeXHRpost('<%=luci.dispatcher.build_url("admin/status/router_assistant/save_device_note")%>', params,
         function(res) {
             if (res.code === 0) {
-                showToast('备注已保存', 'success');
-                deviceNotes[mac] = {note: note, updated: Date.now() / 1000};
+                showToast('设备信息已保存', 'success');
+                deviceNotes[mac] = {note: note, device_type: deviceType, updated: Date.now() / 1000};
                 closeNoteModal();
                 loadDevices();
             } else {
@@ -2298,10 +2351,11 @@ function kickDevice(mac, device) {
         params += '&device=' + encodeURIComponent(device);
     }
 
-    safeXHRpost('<%=luci.dispatcher.build_url("admin/status/router_assistant/kick_device")%>', params,
+    safeXHRpostTimeout('<%=luci.dispatcher.build_url("admin/status/router_assistant/kick_device")%>', params,
         function(res) {
             if (res.code === 0) {
-                showToast(res.message || '设备已成功踢出', 'success');
+                var data = extractData(res);
+                showToast(data.message || '设备已成功踢出', 'success');
 
                 // 立即从设备列表中移除该设备（即时反馈）
                 var tbody = document.getElementById('devices-tbody');
@@ -2320,7 +2374,7 @@ function kickDevice(mac, device) {
                 var newDevice = {
                     mac: mac.toUpperCase(),
                     name: device || '未知设备',
-                    ip: res.ip || ''
+                    ip: data.ip || ''
                 };
 
                 // 检查是否已存在，避免重复
@@ -2348,7 +2402,8 @@ function kickDevice(mac, device) {
                 loadDevices();
                 loadBlockedDevices();
             } else {
-                showToast('踢出失败：' + escapeHtml(res.message || '未知错误'), 'error');
+                var errData = extractData(res) || res;
+                showToast('踢出失败：' + escapeHtml(errData.message || '未知错误'), 'error');
             }
         },
         function(error) {
@@ -2369,10 +2424,11 @@ function enableDevice(mac) {
 
     var params = 'mac=' + encodeURIComponent(mac);
 
-    safeXHRpost('<%=luci.dispatcher.build_url("admin/status/router_assistant/enable_device")%>', params,
+    safeXHRpostTimeout('<%=luci.dispatcher.build_url("admin/status/router_assistant/enable_device")%>', params,
         function(res) {
             if (res.code === 0) {
-                showToast(res.message || '设备已恢复', 'success');
+                var data = extractData(res);
+                showToast(data.message || '设备已恢复', 'success');
 
                 // 从本地屏蔽列表中移除
                 var macUpper = mac.toUpperCase();
@@ -2386,7 +2442,8 @@ function enableDevice(mac) {
                 loadDevices();
                 loadBlockedDevices();
             } else {
-                showToast('恢复失败：' + escapeHtml(res.message || '未知错误'), 'error');
+                var errData = extractData(res) || res;
+                showToast('恢复失败：' + escapeHtml(errData.message || '未知错误'), 'error');
             }
         },
         function(error) {
@@ -2405,7 +2462,10 @@ function loadBlockedDevices() {
             var blockedList = null;
 
             if (res.code === 0) {
-                if (res.blocked && Array.isArray(res.blocked)) {
+                var data = extractData(res);
+                if (data && data.blocked && Array.isArray(data.blocked)) {
+                    blockedList = data.blocked;
+                } else if (res.blocked && Array.isArray(res.blocked)) {
                     blockedList = res.blocked;
                 } else if (res.data && res.data.blocked && Array.isArray(res.data.blocked)) {
                     blockedList = res.data.blocked;
@@ -3033,7 +3093,12 @@ function loadStorageStatus() {
         '<%=luci.dispatcher.build_url("admin/status/router_assistant/get_storage_status")%>',
         function(res) {
             if (res.code === 0) {
-                renderStorageStatus(res);
+                var data = extractData(res);
+                if (data) {
+                    renderStorageStatus(data);
+                } else {
+                    renderStorageStatus(res);
+                }
             }
         },
         function(error) {
@@ -3070,10 +3135,9 @@ function renderStorageStatus(data) {
     }
 }
 
-var devicesTimer = null;
-var trafficTimer = null;
-var wifiTimer = null;
+var mainRefreshTimer = null;
 var timeTimer = null;
+var blockedDevicesTimer = null;
 var connectionStatus = true;
 var currentTab = 'devices';
 
@@ -3214,6 +3278,41 @@ function safeXHRpost(url, params, callback, errorCallback) {
     return xhr;
 }
 
+// 带更长超时的POST请求，用于踢出/恢复等可能耗时的操作
+function safeXHRpostTimeout(url, params, callback, errorCallback, timeout) {
+    var xhr = new XMLHttpRequest();
+    xhr.open('POST', url, true);
+    xhr.timeout = timeout || 15000;  // 默认15秒超时（比普通POST的5秒更长）
+    xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+
+    if (typeof LUCI_TOKEN !== 'undefined' && LUCI_TOKEN) {
+        params = 'token=' + encodeURIComponent(LUCI_TOKEN) + '&' + params;
+    }
+
+    xhr.onload = function() {
+        if (xhr.status >= 200 && xhr.status < 300) {
+            try {
+                callback(JSON.parse(xhr.responseText));
+            } catch (e) {
+                if (errorCallback) errorCallback('JSON解析失败');
+            }
+        } else {
+            if (errorCallback) errorCallback('请求失败: ' + xhr.status);
+        }
+    };
+
+    xhr.onerror = function() {
+        if (errorCallback) errorCallback('网络错误');
+    };
+
+    xhr.ontimeout = function() {
+        if (errorCallback) errorCallback('请求超时，请稍后重试');
+    };
+
+    xhr.send(params);
+    return xhr;
+}
+
 function updateTimeDisplay() {
     var now = new Date();
     var timeStr = now.toTimeString().split(' ')[0];
@@ -3233,6 +3332,23 @@ function updateGlobalStatus(success) {
         statusEl.textContent = '连接异常，正在重试...';
         statusEl.style.color = 'var(--accent-red)';
     }
+}
+
+// 辅助函数：从响应中提取数据（支持新的数据结构 {code: 0, data: {...}}）
+function extractData(res, key) {
+    if (!res || res.code !== 0) return null;
+    // 新的数据结构：res.data.xxx
+    if (res.data && typeof res.data === 'object') {
+        if (key) {
+            return res.data[key];
+        }
+        return res.data;
+    }
+    // 兼容旧的数据结构：res.xxx
+    if (key) {
+        return res[key];
+    }
+    return res;
 }
 
 function loadDevices(retryCount) {
@@ -3256,8 +3372,9 @@ function loadDevices(retryCount) {
             pendingRequests.devices = false;
             isFirstLoad.devices = false;
             if (loading) loading.style.display = 'none';
-            if (res.code === 0 && res.devices && res.devices.length > 0) {
-                renderDevices(res.devices, true);
+            var devices = extractData(res, 'devices');
+            if (res.code === 0 && devices && devices.length > 0) {
+                renderDevices(devices, true);
                 if (table) table.style.display = 'block';
                 updateGlobalStatus(true);
             } else {
@@ -3306,7 +3423,13 @@ function loadTraffic(retryCount) {
             if (loading) loading.style.display = 'none';
 
             if (res.code === 0) {
-                renderTraffic(res);
+                // 使用extractData提取数据，兼容新旧数据结构
+                var trafficData = extractData(res);
+                if (trafficData) {
+                    renderTraffic(trafficData);
+                } else {
+                    renderTraffic(res);
+                }
                 if (table) table.style.display = 'block';
                 updateGlobalStatus(true);
             } else {
@@ -3354,7 +3477,9 @@ function loadWifi(retryCount) {
             isFirstLoad.wifi = false;
             if (loading) loading.style.display = 'none';
             if (res.code === 0) {
-                renderWifi(res.wifi, true);
+                var data = extractData(res);
+                var wifiList = (data && data.wifi) || res.wifi || [];
+                renderWifi(wifiList, true);
                 if (table) table.style.display = 'block';
                 loadWifiStatus();
                 updateGlobalStatus(true);
@@ -3380,8 +3505,12 @@ function loadWifiStatus() {
     safeXHR(
         '<%=luci.dispatcher.build_url("admin/status/router_assistant/get_wifi_status")%>',
         function(res) {
-            if (res.code === 0 && res.wifi_status) {
-                renderWifiStatus(res.wifi_status);
+            if (res.code === 0) {
+                var data = extractData(res);
+                var wifiStatus = (data && data.wifi_status) || res.wifi_status;
+                if (wifiStatus) {
+                    renderWifiStatus(wifiStatus);
+                }
             }
         },
         function(error) {}
@@ -3500,12 +3629,18 @@ function startSpeedTest() {
             try {
                 var res = JSON.parse(xhr.responseText);
 
-                if (res.code === 0 && res.url) {
-                    showToast('Homebox 测速服务已启动', 'success', 3000);
+                if (res.code === 0) {
+                    var data = extractData(res);
+                    var url = (data && data.url) || res.url;
+                    if (url) {
+                        showToast('Homebox 测速服务已启动', 'success', 3000);
 
-                    var openNew = confirm('测速服务已就绪！\n\n点击"确定"在新窗口打开测速页面\n点击"取消"手动访问: ' + res.url);
-                    if (openNew) {
-                        window.open(res.url, '_blank');
+                        var openNew = confirm('测速服务已就绪！\n\n点击"确定"在新窗口打开测速页面\n点击"取消"手动访问: ' + url);
+                        if (openNew) {
+                            window.open(url, '_blank');
+                        }
+                    } else {
+                        showToast('启动失败: ' + (res.message || '未知错误'), 'error');
                     }
                 } else {
                     showToast('启动失败: ' + (res.message || '未知错误'), 'error');
@@ -3532,24 +3667,24 @@ function startSpeedTest() {
 }
 
 function stopAllTimers() {
-    if (devicesTimer) { clearInterval(devicesTimer); devicesTimer = null; }
-    if (trafficTimer) { clearInterval(trafficTimer); trafficTimer = null; }
-    if (wifiTimer) { clearInterval(wifiTimer); wifiTimer = null; }
+    if (mainRefreshTimer) { clearInterval(mainRefreshTimer); mainRefreshTimer = null; }
     if (timeTimer) { clearInterval(timeTimer); timeTimer = null; }
     if (blockedDevicesTimer) { clearInterval(blockedDevicesTimer); blockedDevicesTimer = null; }
+}
+
+function refreshAll() {
+    loadDevices();
+    loadTraffic();
+    loadWifi();
 }
 
 function startRefresh() {
     stopAllTimers();
     updateTimeDisplay();
     timeTimer = setInterval(updateTimeDisplay, 1000);
-    loadDevices();
-    loadTraffic();
-    loadWifi();
+    refreshAll();
+    mainRefreshTimer = setInterval(refreshAll, refreshConfig.interval);
     loadBlockedDevices();
-    devicesTimer = setInterval(loadDevices, refreshConfig.interval);
-    trafficTimer = setInterval(loadTraffic, refreshConfig.interval);
-    wifiTimer = setInterval(loadWifi, refreshConfig.interval);
     blockedDevicesTimer = setInterval(loadBlockedDevices, 30000);
 }
 
