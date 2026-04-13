@@ -9,8 +9,27 @@ IPSET_RX="traffic_stats_rx"
 IPSET_TX="traffic_stats_tx"
 CHAIN_RX="TRAFFIC_STATS_RX"
 CHAIN_TX="TRAFFIC_STATS_TX"
-DATA_DIR="/tmp/traffic_stats"
-STATS_FILE="${DATA_DIR}/device_stats.json"
+DATA_DIR_NAME="router_assistant"
+
+# 存储路径搜索顺序（与 collect.lua 和 router_assistant.lua 保持一致）
+STORAGE_BASE_PATHS="/tmp/storage/mmcblk0p1 /mnt/mmcblk0p1 /mnt/sdcard /tmp/mnt/mmcblk0p1 /overlay"
+
+# 动态获取数据目录（与 collect.lua 逻辑一致）
+get_data_dir() {
+    for base_path in ${STORAGE_BASE_PATHS}; do
+        local data_dir="${base_path}/${DATA_DIR_NAME}"
+        if [ -d "${data_dir}" ] && [ -w "${data_dir}" ]; then
+            echo "${data_dir}"
+            return 0
+        fi
+    done
+    # 回退到内存目录
+    echo "/tmp/${DATA_DIR_NAME}"
+    return 0
+}
+
+DATA_DIR=$(get_data_dir)
+STATS_FILE="${DATA_DIR}/current.json"
 BLOCKLIST_FILE=""
 
 # 黑名单文件搜索路径（与 router_assistant.lua 和 postinst 保持一致）

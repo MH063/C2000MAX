@@ -122,6 +122,7 @@ EOF
 exit 0
 ENDPOSTINST
 chmod 755 "$PKG_DIR/CONTROL/postinst"
+sed -i 's/\r$//' "$PKG_DIR/CONTROL/postinst"
 
 cat > "$PKG_DIR/CONTROL/prerm" << 'ENDPRERM'
 #!/bin/sh
@@ -131,12 +132,14 @@ rm -rf /tmp/luci-indexcache /tmp/luci-modulecache
 exit 0
 ENDPRERM
 chmod 755 "$PKG_DIR/CONTROL/prerm"
+sed -i 's/\r$//' "$PKG_DIR/CONTROL/prerm"
 
 echo "=== Step 2: Copying data files ==="
 
 mkdir -p "$PKG_DIR/data/etc/init.d"
 cp "$SCRIPT_DIR/etc/init.d/traffic-stats" "$PKG_DIR/data/etc/init.d/traffic-stats"
 chmod 755 "$PKG_DIR/data/etc/init.d/traffic-stats"
+sed -i 's/\r$//' "$PKG_DIR/data/etc/init.d/traffic-stats"
 
 mkdir -p "$PKG_DIR/data/usr/lib/lua/luci/controller"
 cp "$SCRIPT_DIR/luasrc/controller/router_assistant.lua" "$PKG_DIR/data/usr/lib/lua/luci/controller/"
