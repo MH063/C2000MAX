@@ -2415,22 +2415,368 @@ function saveNote() {
     var note = document.getElementById('note-content').value;
     var deviceType = document.getElementById('note-device-type').value;
 
+    var oldNoteData = deviceNotes[mac] ? {...deviceNotes[mac]} : null;
+    var newNoteData = {note: note, device_type: deviceType, updated: Date.now() / 1000};
+
+    // 乐观更新：立即更新本地缓存和UI（用户无需等待）
+    deviceNotes[mac] = newNoteData;
+    closeNoteModal();
+
+    // 立即更新所有显示该设备信息的UI元素
+    updateDeviceDisplayImmediately(mac, note, deviceType);
+
+    showToast('正在保存...', 'info');
+
     var params = 'mac=' + encodeURIComponent(mac) + '&note=' + encodeURIComponent(note) + '&device_type=' + encodeURIComponent(deviceType);
 
     safeXHRpost('<%=luci.dispatcher.build_url("admin/status/router_assistant/save_device_note")%>', params,
         function(res) {
             if (res.code === 0) {
-                showToast('设备信息已保存', 'success');
-                deviceNotes[mac] = {note: note, device_type: deviceType, updated: Date.now() / 1000};
-                closeNoteModal();
-                // 刷新所有视图（设备列表 + 流量统计等），确保编辑立即生效
-                refreshAll();
+                // 服务器保存成功，更新时间戳
+                deviceNotes[mac].updated = Date.now() / 1000;
+                showToast('✓ 设备信息已保存', 'success');
+
+                // 立即同步更新全局设备数据（确保数据一致性）
+                syncDeviceDataGlobally(mac, note, deviceType);
+
+                // 后台静默刷新确保数据一致性（不阻塞用户）
+                silentRefreshDeviceData(mac);
             } else {
-                showToast('保存失败：' + res.message, 'error');
+                // 服务器保存失败，回滚到旧数据
+                if (oldNoteData) {
+                    deviceNotes[mac] = oldNoteData;
+                } else {
+                    delete deviceNotes[mac];
+                }
+                showToast('✗ 保存失败：' + res.message, 'error');
+
+                // 回滚UI显示
+                updateDeviceDisplayImmediately(mac, oldNoteData ? oldNoteData.note : '', oldNoteData ? oldNoteData.device_type : '');
+
+                // 强制刷新以恢复正确状态
+                refreshAll();
             }
         },
         function(error) {
-            showToast('网络错误：' + error, 'error');
+            // 网络错误，回滚到旧数据
+            if (oldNoteData) {
+                deviceNotes[mac] = oldNoteData;
+            } else {
+                delete deviceNotes[mac];
+            }
+            showToast('✗ 网络错误：' + error, 'error');
+
+            // 回滚UI显示
+            updateDeviceDisplayImmediately(mac, oldNoteData ? oldNoteData.note : '', oldNoteData ? oldNoteData.device_type : '');
+
+            // 标记为待重试
+            markForRetry(mac, newNoteData);
+        }
+    );
+}
+
+// 立即更新设备的显示信息（乐观更新核心函数）
+function updateDeviceDisplayImmediately(mac, newNote, newDeviceType) {
+    // 从全局数据中查找该设备的频段信息（确保不丢失）
+    var frequencyBand = findDeviceFrequencyBand(mac);
+
+    // 更新设备列表中的显示
+    updateDeviceInTable('devices-tbody', mac, newNote, newDeviceType, frequencyBand);
+
+    // 更新流量统计在线设备列表中的显示
+    updateDeviceInTable('traffic-tbody', mac, newNote, newDeviceType, frequencyBand);
+
+    // 更新流量统计离线设备列表中的显示
+    updateDeviceInTable('traffic-offline-tbody', mac, newNote, newDeviceType, frequencyBand);
+}
+
+// 从全局数据中查找设备的频段信息
+function findDeviceFrequencyBand(mac) {
+    // 1. 先从当前设备列表查找
+    if (currentDevices && currentDevices.length > 0) {
+        for (var i = 0; i < currentDevices.length; i++) {
+            if (currentDevices[i].mac === mac && currentDevices[i].frequency_band) {
+                return currentDevices[i].frequency_band;
+            }
+        }
+    }
+
+    // 2. 从流量统计在线设备查找
+    if (currentTrafficOnline && currentTrafficOnline.length > 0) {
+        for (var i = 0; i < currentTrafficOnline.length; i++) {
+            if (currentTrafficOnline[i].mac === mac && currentTrafficOnline[i].frequency_band) {
+                return currentTrafficOnline[i].frequency_band;
+            }
+        }
+    }
+
+    // 3. 从流量统计离线设备查找
+    if (currentTrafficOffline && currentTrafficOffline.length > 0) {
+        for (var i = 0; i < currentTrafficOffline.length; i++) {
+            if (currentTrafficOffline[i].mac === mac && currentTrafficOffline[i].frequency_band) {
+                return currentTrafficOffline[i].frequency_band;
+            }
+        }
+    }
+
+    // 未找到，返回null（会尝试从DOM提取）
+    return null;
+}
+
+// 在指定的表格中查找并更新特定MAC地址的设备显示
+function updateDeviceInTable(tableId, mac, newNote, newDeviceType, frequencyBand) {
+    var table = document.getElementById(tableId);
+    if (!table) return;
+
+    var rows = table.getElementsByTagName('tr');
+    for (var i = 0; i < rows.length; i++) {
+        var row = rows[i];
+
+        // 查找包含该MAC地址的行
+        if (row.innerHTML && row.innerHTML.indexOf(escapeHtml(mac)) !== -1) {
+            // 查找设备名称元素
+            var nameSpan = row.querySelector('.rm-device-name span');
+            if (nameSpan) {
+                // 提取当前显示名称（去除图标和标签）
+                var currentHtml = nameSpan.innerHTML;
+
+                // 如果有新的备注名称或需要强制更新，替换显示
+                if (newNote !== undefined && newNote !== null) {
+                    // 构建新的显示内容（保留原有图标和频段标识）
+                    var iconMatch = currentHtml.match(/(<svg[^>]*>.*?<\/svg>)/g);
+                    var freqBandMatch = currentHtml.match(/(<span[^>]*rm-badge-2[45]g[^>]*>.*?<\/span>)/g);
+                    var blockedBadge = currentHtml.match(/(<span[^>]*style="background:var\(--color-danger\)[^>]*>.*?<\/span>)/g);
+                    var offlineBadge = currentHtml.match(/(<span class="rm-badge rm-badge-offline">离线<\/span>)/g);
+
+                    var newHtml = '';
+                    if (iconMatch) newHtml += iconMatch.join(' ') + ' ';
+
+                    // 显示设备名称（优先使用新备注，否则使用原始hostname）
+                    var displayName = (newNote && newNote.trim() !== '') ? escapeHtml(newNote) : '';
+                    newHtml += displayName;
+
+                    if (blockedBadge) newHtml += ' ' + blockedBadge.join(' ');
+
+                    // 显示频段标签（优先级：传入参数 > DOM提取 > 全局数据查询）
+                    var finalFreqBand = frequencyBand;
+                    if (!finalFreqBand && freqBandMatch && freqBandMatch.length > 0) {
+                        // 从DOM提取成功，保持原样
+                        newHtml += ' ' + freqBandMatch.join(' ');
+                    } else if (finalFreqBand) {
+                        // 使用传入的或从全局数据查找到的频段信息生成标签
+                        newHtml += ' ' + getFrequencyBandIcon(finalFreqBand);
+                    } else if (freqBandMatch && freqBandMatch.length > 0) {
+                        // 兜底：还是用DOM中的
+                        newHtml += ' ' + freqBandMatch.join(' ');
+                    }
+
+                    if (offlineBadge) newHtml += ' ' + offlineBadge.join(' ');
+
+                    nameSpan.innerHTML = newHtml;
+                }
+
+                // 如果有新的设备类型，更新图标
+                if (newDeviceType && newDeviceType.trim() !== '') {
+                    var isWifi = row.innerHTML.indexOf('rm-badge-wifi') !== -1;
+                    var newIcon = getDeviceIcon(newDeviceType, isWifi);
+
+                    // 替换第一个SVG图标（设备类型图标）
+                    var svgIcon = nameSpan.querySelector('svg');
+                    if (svgIcon) {
+                        var tempDiv = document.createElement('div');
+                        tempDiv.innerHTML = newIcon;
+                        var newSvg = tempDiv.firstChild;
+                        svgIcon.parentNode.replaceChild(newSvg, svgIcon);
+                    }
+                }
+
+                // 高亮显示更新的行（视觉反馈）
+                highlightUpdatedRow(row);
+            }
+
+            break; // 只更新第一个匹配的行
+        }
+    }
+}
+
+// 高亮显示更新的行（提供视觉反馈）
+function highlightUpdatedRow(row) {
+    if (!row) return;
+
+    // 添加高亮样式
+    row.style.transition = 'background-color 0.3s ease';
+    row.style.backgroundColor = 'rgba(76, 175, 80, 0.15)'; // 浅绿色背景
+
+    // 2秒后恢复原状
+    setTimeout(function() {
+        row.style.backgroundColor = '';
+    }, 2000);
+}
+
+// 同步更新全局设备数据（确保所有地方的数据一致）
+function syncDeviceDataGlobally(mac, newNote, newDeviceType) {
+    // 更新 currentDevices 数组
+    if (currentDevices && currentDevices.length > 0) {
+        for (var i = 0; i < currentDevices.length; i++) {
+            if (currentDevices[i].mac === mac) {
+                if (newNote && newNote.trim() !== '') {
+                    currentDevices[i].user_note = newNote;
+                } else {
+                    delete currentDevices[i].user_note;
+                }
+                if (newDeviceType && newDeviceType.trim() !== '') {
+                    currentDevices[i].device_type = newDeviceType;
+                }
+                break;
+            }
+        }
+    }
+
+    // 更新 currentTrafficOnline 数组
+    if (currentTrafficOnline && currentTrafficOnline.length > 0) {
+        for (var i = 0; i < currentTrafficOnline.length; i++) {
+            if (currentTrafficOnline[i].mac === mac) {
+                if (newNote && newNote.trim() !== '') {
+                    currentTrafficOnline[i].user_note = newNote;
+                } else {
+                    delete currentTrafficOnline[i].user_note;
+                }
+                if (newDeviceType && newDeviceType.trim() !== '') {
+                    currentTrafficOnline[i].device_type = newDeviceType;
+                }
+                break;
+            }
+        }
+    }
+
+    // 更新 currentTrafficOffline 数组
+    if (currentTrafficOffline && currentTrafficOffline.length > 0) {
+        for (var i = 0; i < currentTrafficOffline.length; i++) {
+            if (currentTrafficOffline[i].mac === mac) {
+                if (newNote && newNote.trim() !== '') {
+                    currentTrafficOffline[i].user_note = newNote;
+                } else {
+                    delete currentTrafficOffline[i].user_note;
+                }
+                if (newDeviceType && newDeviceType.trim() !== '') {
+                    currentTrafficOffline[i].device_type = newDeviceType;
+                }
+                break;
+            }
+        }
+    }
+
+    console.log('[RouterAssistant] 已同步全局设备数据:', mac, {note: newNote, deviceType: newDeviceType});
+}
+
+// 后台静默刷新单个设备数据（确保与服务器一致）
+function silentRefreshDeviceData(mac) {
+    // 延迟500ms执行，避免与用户的即时操作冲突
+    setTimeout(function() {
+        // 静默加载设备列表（不显示loading状态）
+        loadDevicesSilent();
+
+        // 静默加载流量统计
+        loadTrafficSilent();
+    }, 500);
+}
+
+// 静默加载设备列表（无loading提示）
+function loadDevicesSilent() {
+    safeXHRget('<%=luci.dispatcher.build_url("admin/status/router_assistant/get_devices")%>',
+        function(res) {
+            if (res.code === 0 && res.data) {
+                // 更新本地数据但不强制重新渲染整个表格
+                // 只在检测到差异时才更新
+                if (res.data.devices) {
+                    res.data.devices.forEach(function(dev) {
+                        if (deviceNotes[dev.mac]) {
+                            var serverNote = deviceNotes[dev.mac];
+                            // 可以在这里做数据一致性检查
+                        }
+                    });
+                }
+            }
+        },
+        function(error) {
+            console.log('静默刷新失败（可忽略）:', error);
+        }
+    );
+}
+
+// 静默加载流量统计
+function loadTrafficSilent() {
+    safeXHRget('<%=luci.dispatcher.build_url("admin/status/router_assistant/get_traffic")%>',
+        function(res) {
+            if (res.code === 0 && res.data) {
+                // 同上，静默更新数据
+            }
+        },
+        function(error) {
+            console.log('静默刷新失败（可忽略）:', error);
+        }
+    );
+}
+
+// 标记为待重试（网络错误时使用）
+var pendingRetries = {};
+
+function markForRetry(mac, noteData) {
+    if (!pendingRetries[mac]) {
+        pendingRetries[mac] = {
+            data: noteData,
+            retryCount: 0,
+            maxRetries: 3
+        };
+
+        // 3秒后自动重试
+        setTimeout(function() {
+            retrySaveNote(mac);
+        }, 3000);
+    }
+}
+
+// 重试保存操作
+function retrySaveNote(mac) {
+    var retryInfo = pendingRetries[mac];
+    if (!retryInfo || retryInfo.retryCount >= retryInfo.maxRetries) {
+        delete pendingRetries[mac];
+        return;
+    }
+
+    retryInfo.retryCount++;
+    console.log('重试保存设备备注 (' + retryInfo.retryCount + '/' + retryInfo.maxRetries + '):', mac);
+
+    var params = 'mac=' + encodeURIComponent(mac) +
+                 '&note=' + encodeURIComponent(retryInfo.data.note || '') +
+                 '&device_type=' + encodeURIComponent(retryInfo.data.device_type || '');
+
+    safeXHRpost('<%=luci.dispatcher.build_url("admin/status/router_assistant/save_device_note")%>', params,
+        function(res) {
+            if (res.code === 0) {
+                delete pendingRetries[mac];
+                showToast('✓ 重试成功：设备信息已保存', 'success');
+                deviceNotes[mac].updated = Date.now() / 1000;
+            } else {
+                if (retryInfo.retryCount < retryInfo.maxRetries) {
+                    // 继续重试
+                    setTimeout(function() {
+                        retrySaveNote(mac);
+                    }, 3000 * retryInfo.retryCount); // 递增延迟
+                } else {
+                    delete pendingRetries[mac];
+                    showToast('✗ 多次重试仍失败，请手动刷新页面', 'error');
+                }
+            }
+        },
+        function(error) {
+            if (retryInfo.retryCount < retryInfo.maxRetries) {
+                setTimeout(function() {
+                    retrySaveNote(mac);
+                }, 3000 * retryInfo.retryCount);
+            } else {
+                delete pendingRetries[mac];
+            }
         }
     );
 }
@@ -2438,22 +2784,50 @@ function saveNote() {
 function deleteNote() {
     var mac = document.getElementById('note-mac').value;
 
+    // 保存旧数据用于回滚
+    var oldNoteData = deviceNotes[mac] ? {...deviceNotes[mac]} : null;
+
+    // 乐观更新：立即从本地缓存删除
+    delete deviceNotes[mac];
+    closeNoteModal();
+
+    // 立即更新UI显示（恢复为原始设备名称）
+    updateDeviceDisplayImmediately(mac, '', '');
+
+    showToast('正在删除...', 'info');
+
     var params = 'mac=' + encodeURIComponent(mac);
 
     safeXHRpost('<%=luci.dispatcher.build_url("admin/status/router_assistant/delete_device_note")%>', params,
         function(res) {
             if (res.code === 0) {
-                showToast('备注已删除', 'success');
-                delete deviceNotes[mac];
-                closeNoteModal();
-                // 刷新所有视图，确保删除立即生效
-                refreshAll();
+                showToast('✓ 备注已删除', 'success');
+
+                // 后台静默刷新确保数据一致性
+                silentRefreshDeviceData(mac);
             } else {
-                showToast('删除失败：' + res.message, 'error');
+                // 删除失败，回滚数据
+                if (oldNoteData) {
+                    deviceNotes[mac] = oldNoteData;
+                }
+                showToast('✗ 删除失败：' + res.message, 'error');
+
+                // 回滚UI
+                updateDeviceDisplayImmediately(mac, oldNoteData ? oldNoteData.note : '', oldNoteData ? oldNoteData.device_type : '');
+
+                // 强制刷新恢复正确状态
+                refreshAll();
             }
         },
         function(error) {
-            showToast('网络错误：' + error, 'error');
+            // 网络错误，回滚数据
+            if (oldNoteData) {
+                deviceNotes[mac] = oldNoteData;
+            }
+            showToast('✗ 网络错误：' + error, 'error');
+
+            // 回滚UI
+            updateDeviceDisplayImmediately(mac, oldNoteData ? oldNoteData.note : '', oldNoteData ? oldNoteData.device_type : '');
         }
     );
 }
@@ -2703,20 +3077,23 @@ function renderBlockedDevices(blockedList) {
 
 function isWifiDevice(dev) {
     if (dev.is_wifi === true) return true;
-    var ifname = (dev.device || dev.iface || '').toLowerCase();
+    var ifname = (dev.iface || '').toLowerCase();
     var wifiIfaces = ['ra0', 'rai0', 'ra1', 'rai1', 'apcli0', 'apcli1', 'apclii0', 'apclii1', 'wlan0', 'wlan1', 'wlan2', 'wlan3'];
     for (var i = 0; i < wifiIfaces.length; i++) {
         if (ifname === wifiIfaces[i] || ifname.indexOf(wifiIfaces[i]) === 0) {
             return true;
         }
     }
-    var signal = dev.signal || dev.rssi;
+    var signal = dev.signal;
     if (signal !== undefined && signal !== null && signal !== '' && signal !== 0 && signal !== '0') {
         return true;
     }
     return false;
 }
 
+// renderDevices: 渲染设备列表卡片
+// @param checkOnly - true时仅比较hash，不渲染；hash始终在比较前更新（保证下次poll正确性）
+// @return true=已渲染 DOM, false=数据无变化未渲染（hash 已更新，调用方忽略此返回值无副作用）
 function renderDevices(devices, checkOnly) {
     var wired = 0, wifi = 0;
     var dataKey = devices.length + '|';
@@ -2744,11 +3121,17 @@ function renderDevices(devices, checkOnly) {
     initPageState('devices');
 
     var sortedDevices = devices.slice().sort(function(a, b) {
-        var signalA = a.signal || a.rssi || 999;
-        var signalB = b.signal || b.rssi || 999;
+        var signalA = a.signal || 999;
+        var signalB = b.signal || 999;
         if (typeof signalA === 'string') signalA = parseFloat(signalA) || 999;
         if (typeof signalB === 'string') signalB = parseFloat(signalB) || 999;
-        return signalB - signalA;
+        if (signalB !== signalA) {
+            return signalB - signalA;
+        }
+        // 信号相同时以 MAC 稳定排序
+        var macA = (a.mac || '').toLowerCase();
+        var macB = (b.mac || '').toLowerCase();
+        return macA < macB ? -1 : (macA > macB ? 1 : 0);
     });
 
     var state = pageStates['devices'];
@@ -2761,12 +3144,12 @@ function renderDevices(devices, checkOnly) {
     var html = '';
     pageData.forEach(function(dev) {
         var isWifi = isWifiDevice(dev);
-        var kickBtn = '<button class="rm-kick-btn" onclick="kickDevice(\'' + escapeHtml(dev.mac) + '\', \'' + escapeHtml(dev.device || '') + '\')">踢出</button>';
+        var kickBtn = '<button class="rm-kick-btn" onclick="kickDevice(\'' + escapeHtml(dev.mac) + '\', \'' + escapeHtml(dev.iface || '') + '\')">踢出</button>';
         var noteBtn = '<button class="rm-note-btn" onclick="openNoteModal(\'' + escapeHtml(dev.mac) + '\', \'' + escapeHtml(dev.hostname || '') + '\')" title="编辑备注">编辑</button>';
 
         var noteInfo = deviceNotes[dev.mac];
         var hostname = dev.hostname || 'Unknown';
-        var isUnknown = (hostname === 'Unknown' || hostname === '未知设备' || !hostname);
+        var isUnknown = (hostname === 'Unknown' || hostname === '未知设备');
 
         var displayName;
         if (noteInfo && noteInfo.note) {
@@ -2791,7 +3174,7 @@ function renderDevices(devices, checkOnly) {
 
         html += '<tr>' +
             '<td>' +
-                '<div class="rm-device-name"><span style="display:inline-flex;align-items:center;gap:6px;">' + getDeviceIcon(dev.device_type, isWifi) + ' ' + displayName + '</span></div>' +
+                '<div class="rm-device-name"><span style="display:inline-flex;align-items:center;gap:6px;">' + getDeviceIcon(dev.device_type, isWifi) + ' ' + displayName + ' ' + getFrequencyBandIcon(dev.frequency_band) + '</span></div>' +
                 formatDeviceIp(dev.ip) +
             '</td>' +
             '<td><span class="rm-mac">' + escapeHtml(dev.mac) + '</span></td>' +
@@ -2869,7 +3252,7 @@ function renderTraffic(data) {
 
         var noteInfo = deviceNotes[dev.mac];
         var hostname = dev.hostname || 'Unknown';
-        var isUnknown = (hostname === 'Unknown' || hostname === '未知设备' || !hostname);
+        var isUnknown = (hostname === 'Unknown' || hostname === '未知设备');
         var isWifi = isWifiDevice(dev);
 
         var displayName;
@@ -2913,7 +3296,7 @@ function renderTraffic(data) {
         onlineHtml += '<tr>' +
             '<td style="text-align:center;">' + rankHtml + '</td>' +
             '<td>' +
-                '<div class="rm-device-name"><span style="display:inline-flex;align-items:center;gap:6px;">' + getDeviceIcon(dev.device_type, isWifi) + ' ' + displayName + blockedBadge + '</span></div>' +
+                '<div class="rm-device-name"><span style="display:inline-flex;align-items:center;gap:6px;">' + getDeviceIcon(dev.device_type, isWifi) + ' ' + displayName + blockedBadge + ' ' + getFrequencyBandIcon(dev.frequency_band) + '</span></div>' +
                 formatDeviceIp(dev.ip) +
                 onlineDuration +
             '</td>' +
@@ -2972,7 +3355,7 @@ function renderTraffic(data) {
 
             var noteInfo = deviceNotes[dev.mac];
             var hostname = dev.hostname || 'Unknown';
-            var isUnknown = (hostname === 'Unknown' || hostname === '未知设备' || !hostname);
+            var isUnknown = (hostname === 'Unknown' || hostname === '未知设备');
 
             var displayName;
             if (noteInfo && noteInfo.note) {
@@ -2990,7 +3373,7 @@ function renderTraffic(data) {
 
             offlineHtml += '<tr class="rm-offline">' +
                 '<td>' +
-                    '<div class="rm-device-name"><span style="display:inline-flex;align-items:center;gap:6px;">' + getDeviceIcon(dev.device_type, false) + ' ' + displayName + '</span> <span class="rm-badge rm-badge-offline">离线</span>' + blockedBadge + '</div>' +
+                    '<div class="rm-device-name"><span style="display:inline-flex;align-items:center;gap:6px;">' + getDeviceIcon(dev.device_type, false) + ' ' + displayName + ' ' + getFrequencyBandIcon(dev.frequency_band) + '</span> <span class="rm-badge rm-badge-offline">离线</span>' + blockedBadge + '</div>' +
                     formatDeviceIp(dev.ip) +
                     lastSeen +
                 '</td>' +
@@ -3094,6 +3477,22 @@ function getDeviceIcon(deviceType, isWifi) {
         unknown: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#9E9E9E" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/><line x1="9" y1="6" x2="15" y2="6"/><line x1="12" y1="6" x2="12" y2="10"/></svg>'
     };
     return icons[deviceType] || icons.unknown;
+}
+
+function getFrequencyBandIcon(frequencyBand) {
+    if (!frequencyBand) return '';
+
+    if (frequencyBand === '2.4G') {
+        return '<span class="rm-badge rm-badge-24g" title="2.4GHz频段" style="display:inline-flex;align-items:center;gap:3px;font-size:11px;padding:2px 6px;border-radius:3px;background:linear-gradient(135deg,#FF9800,#F57C00);color:#fff;font-weight:500;">' +
+            '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/></svg>' +
+            '2.4G</span>';
+    } else if (frequencyBand === '5G') {
+        return '<span class="rm-badge rm-badge-5g" title="5GHz频段" style="display:inline-flex;align-items:center;gap:3px;font-size:11px;padding:2px 6px;border-radius:3px;background:linear-gradient(135deg,#2196F3,#1976D2);color:#fff;font-weight:500;">' +
+            '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/></svg>' +
+            '5G</span>';
+    }
+
+    return '';
 }
 
 var pageStates = {};

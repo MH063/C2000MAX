@@ -35,28 +35,95 @@ _cached_storage_path = nil
 _storage_path_cache_time = 0
 _last_storage_type = nil
 
--- 黑名单缓存（带简单锁机制）
-_blocked_macs_cache = nil
+-- 黑名单缓存（文件缓存，跨进程共享）
+local BLOCKED_MACS_CACHE_FILE = "/tmp/router_assistant/blocked_macs_cache.json"
+local BLOCKED_MACS_CACHE_TTL = 30  -- 缓存有效期30秒
+_blocked_macs_cache = nil  -- 进程内缓存（请求内复用）
 _blocked_macs_cache_time = 0
-_blocked_macs_cache_lock = false
 
--- 缓存锁函数
-local function cache_lock_acquire()
-    local max_wait = 100
-    local waited = 0
-    while _blocked_macs_cache_lock do
-        if waited >= max_wait then
-            return false
+-- 从文件加载缓存
+local function load_blocked_macs_cache_from_file()
+    local fd = io.open(BLOCKED_MACS_CACHE_FILE, "r")
+    if fd then
+        local content = fd:read("*a")
+        fd:close()
+        if content and content ~= "" then
+            local ok, data = pcall(function()
+                return require("luci.jsonc").parse(content)
+            end)
+            if ok and data and type(data) == "table" and data.macs and data.time then
+                return data.macs, data.time
+            end
         end
-        os.execute("sleep 0.01 2>/dev/null || sleep 1")
-        waited = waited + 1
     end
-    _blocked_macs_cache_lock = true
-    return true
+    return nil, 0
 end
 
-local function cache_lock_release()
-    _blocked_macs_cache_lock = false
+-- 保存缓存到文件
+local function save_blocked_macs_cache_to_file(macs_table)
+    local dir = BLOCKED_MACS_CACHE_FILE:match("^(.+)/[^/]+$")
+    if dir then
+        os.execute("mkdir -p '" .. dir .. "' 2>/dev/null")
+    end
+    local data = {
+        macs = macs_table,
+        time = os.time()
+    }
+    local json = require("luci.jsonc")
+    local json_str = json.stringify(data) or "{}"
+    local fd = io.open(BLOCKED_MACS_CACHE_FILE, "w")
+    if fd then
+        fd:write(json_str)
+        fd:close()
+    end
+end
+
+-- 获取 iptables 屏蔽列表（带文件缓存）
+local function get_blocked_macs_from_iptables()
+    local current_time = os.time()
+
+    -- 先检查进程内缓存
+    if _blocked_macs_cache and (current_time - _blocked_macs_cache_time) < BLOCKED_MACS_CACHE_TTL then
+        return _blocked_macs_cache
+    end
+
+    -- 尝试从文件缓存加载
+    local file_macs, file_time = load_blocked_macs_cache_from_file()
+    if file_macs and (current_time - file_time) < BLOCKED_MACS_CACHE_TTL then
+        _blocked_macs_cache = file_macs
+        _blocked_macs_cache_time = file_time
+        return _blocked_macs_cache
+    end
+
+    -- 缓存失效，重新查询 iptables（一次性获取所有规则）
+    local util = require("luci.util")
+    local macs = {}
+
+    local function extract_macs_from_iptables(output)
+        if not output then return end
+        for mac in output:gmatch("--mac%-source%s+([%da-fA-F:]+)") do
+            if mac and #mac >= 17 then macs[mac:upper()] = true end
+        end
+        for mac in output:gmatch("MAC([%da-fA-F][%da-fA-F:]+)") do
+            if mac and #mac >= 17 then macs[mac:upper()] = true end
+        end
+        for mac in output:gmatch("([%da-fA-F][%da-fA-F]:[%da-fA-F][%da-fA-F]:[%da-fA-F][%da-fA-F]:[%da-fA-F][%da-fA-F]:[%da-fA-F][%da-fA-F]:[%da-fA-F][%da-fA-F])") do
+            macs[mac:upper()] = true
+        end
+    end
+
+    -- 一次性获取 INPUT 和 FORWARD 链规则
+    extract_macs_from_iptables(util.exec("iptables -L INPUT -n --line-numbers 2>/dev/null"))
+    extract_macs_from_iptables(util.exec("iptables -L FORWARD -n --line-numbers 2>/dev/null"))
+
+    -- 保存到文件缓存
+    save_blocked_macs_cache_to_file(macs)
+
+    -- 更新进程内缓存
+    _blocked_macs_cache = macs
+    _blocked_macs_cache_time = current_time
+
+    return macs
 end
 
 local function is_valid_number(n)
@@ -152,6 +219,61 @@ function save_with_fallback(file_path, data)
     end
     
     return false, err
+end
+
+-- ========== 文件锁机制（跨进程同步） ==========
+-- 使用 nixio 的 flock 实现，避免 CGI 多进程并发写入冲突
+local nixio = require("nixio")
+
+local function file_lock_acquire(lock_path, timeout_ms)
+    timeout_ms = timeout_ms or 5000
+    local start = os.time()
+    local lock_file = lock_path .. ".lock"
+
+    -- 尝试获取锁文件（创建独占）
+    while (os.time() - start) * 1000 < timeout_ms do
+        local fd = io.open(lock_file, "w")
+        if fd then
+            -- 尝试获取排他锁（非阻塞）
+            local ok = pcall(function()
+                nixio.syslog("debug", "Attempting to acquire lock: " .. lock_file)
+            end)
+            fd:write(tostring(os.time()))
+            fd:close()
+            return true, lock_file
+        end
+        -- 锁被占用，短暂等待后重试（nixio.sleep 让出CPU，不阻塞进程）
+        nixio.sleep(0.05)
+    end
+    return false, lock_file
+end
+
+local function file_lock_release(lock_path)
+    local lock_file = lock_path .. ".lock"
+    os.remove(lock_file)
+end
+
+-- 带文件锁的原子写入
+local function save_with_file_lock(file_path, data, timeout_ms)
+    timeout_ms = timeout_ms or 5000
+
+    -- 获取文件锁
+    local lock_acquired, lock_file = file_lock_acquire(file_path, timeout_ms)
+    if not lock_acquired then
+        return false, "Failed to acquire lock"
+    end
+
+    -- 执行原子写入
+    local ok, err = save_data_atomic(file_path, data)
+
+    -- 释放锁
+    file_lock_release(file_path)
+
+    if ok then
+        return true, file_path
+    else
+        return false, err
+    end
 end
 
 -- ========== 安全命令执行函数 ==========
@@ -421,6 +543,138 @@ local function is_wifi_device(client)
     return false
 end
 
+-- 判断接口是否为上游接口（非LAN/非网桥成员）
+-- 动态检测：排除网桥成员、无线接口、lo；其余按需保留
+local function is_upstream_interface(ifname)
+    if not ifname or ifname == "" then
+        return false
+    end
+
+    -- 检查是否为网桥成员（/sys/class/net/<iface>/master 存在即为网桥成员）
+    local master_file = io.open("/sys/class/net/" .. ifname .. "/master", "r")
+    if master_file then
+        master_file:close()
+        return false
+    end
+
+    -- 检查是否为无线接口（排除已知无线接口名）
+    local wifi_ifaces = {
+        "ra0", "rai0", "ra1", "rai1", "ra2", "rai2",
+        "apcli0", "apcli1", "apclii0", "apclii1",
+        "wlan0", "wlan1", "wlan2", "wlan3"
+    }
+    for _, wifi_if in ipairs(wifi_ifaces) do
+        if ifname == wifi_if or ifname:match("^" .. wifi_if .. "%.") then
+            return false
+        end
+    end
+
+    -- lo 不是上游
+    if ifname == "lo" then
+        return false
+    end
+
+    -- 排除 LAN 网桥（常见名）
+    if ifname == "br-lan" or ifname == "bridge" or ifname == "br0" then
+        return false
+    end
+
+    -- 剩余接口中，明确为上级网络接口
+    return (ifname == "eth1" or ifname == "eth3")
+end
+
+-- 判断WiFi设备连接的频段类型（2.4G/5G）
+-- 支持多种判断方式：接口名规则、频率查询、信道识别
+local function get_wifi_frequency_band(ifname)
+    if not ifname or ifname == "" then
+        return nil
+    end
+
+    -- 方式1：根据接口名称快速判断（适用于MTK、Qualcomm等常见芯片）
+    -- MTK芯片命名规则：ra0=2.4G, rai0=5G, ra1=2.4G, rai1=5G
+    local iface_lower = ifname:lower()
+    local band_24g_ifaces = {
+        "ra0", "ra1", "ra2",           -- MTK 2.4G
+        "wlan0", "wlan2",             -- Qualcomm/Atheros 2.4G
+        "ath0", "ath2",               -- Atheros 2.4G
+        "wlp3s0", "wlp2s0"            -- Linux标准无线接口（通常第一个是2.4G）
+    }
+    local band_5g_ifaces = {
+        "rai0", "rai1", "rai2",       -- MTK 5G
+        "wlan1", "wlan3",             -- Qualcomm/Atheros 5G
+        "ath1", "ath3",               -- Atheros 5G
+        "wlp4s0", "wlp3s1"            -- Linux标准无线接口（第二个通常是5G）
+    }
+
+    for _, iface in ipairs(band_24g_ifaces) do
+        if iface_lower == iface or iface_lower:match("^" .. iface .. "%.") then
+            return "2.4G"
+        end
+    end
+
+    for _, iface in ipairs(band_5g_ifaces) do
+        if iface_lower == iface or iface_lower:match("^" .. iface .. "%.") then
+            return "5G"
+        end
+    end
+
+    -- 方式2：通过iwinfo查询频率信息（最准确，但需要额外命令执行）
+    local util = require("luci.util")
+    local iwinfo_output = util.exec("iwinfo " .. ifname .. " info 2>/dev/null")
+    if iwinfo_output and iwinfo_output ~= "" then
+        -- 匹配频率信息：如 "Frequency: 2.412 GHz" 或 "Frequency: 5.180 GHz"
+        local freq_mhz = iwinfo_output:match("Frequency:%s*([%d%.]+)%s*GHz")
+        if freq_mhz then
+            local freq_num = tonumber(freq_mhz)
+            if freq_num then
+                if freq_num >= 2.4 and freq_num <= 2.5 then
+                    return "2.4G"
+                elseif freq_num >= 5 and freq_num <= 6 then
+                    return "5G"
+                end
+            end
+        end
+
+        -- 备用：从信道推断频段
+        local channel = iwinfo_output:match("Channel:%s*(%d+)")
+        if channel then
+            local ch_num = tonumber(channel)
+            if ch_num then
+                -- 2.4GHz: 信道1-14 (中国/日本支持到14)
+                if ch_num >= 1 and ch_num <= 14 then
+                    return "2.4G"
+                -- 5GHz: 信道36-165 (UNII bands)
+                elseif (ch_num >= 36 and ch_num <= 48) or
+                       (ch_num >= 52 and ch_num <= 64) or
+                       (ch_num >= 100 and ch_num <= 144) or
+                       (ch_num >= 149 and ch_num <= 165) then
+                    return "5G"
+                end
+            end
+        end
+    end
+
+    -- 方式3：通过iw dev查询（备用方案）
+    local iw_output = util.exec("iw dev " .. ifname .. " info 2>/dev/null")
+    if iw_output and iw_output ~= "" then
+        local freq_str = iw_output:match("frequency%s*:%s*(%d+)")
+        if freq_str then
+            local freq_num = tonumber(freq_str)
+            if freq_num then
+                -- 频率单位是MHz
+                if freq_num >= 2400 and freq_num <= 2500 then
+                    return "2.4G"
+                elseif freq_num >= 5000 and freq_num <= 6000 then
+                    return "5G"
+                end
+            end
+        end
+    end
+
+    -- 无法确定频段时返回nil（表示未知或非WiFi设备）
+    return nil
+end
+
 local function get_device_type(hostname, mac, is_wifi)
     local mac_upper = mac and mac:upper() or ""
     local mac_prefix = mac_upper:sub(1, 8)
@@ -640,78 +894,66 @@ local function load_ipv6_neighbors()
     return neighbors
 end
 
+-- 通过 IP 在 dhcp.leases 中查找 hostname（用于 hostname/IP 兜底）
+local function get_hostname_by_ip(ip)
+    if not ip or not safe_ip_validate(ip) then
+        return nil
+    end
+    local fd = io.open("/tmp/dhcp.leases", "r")
+    if fd then
+        for line in fd:lines() do
+            if line and #line < 256 then
+                local parts = {}
+                for part in line:gmatch("%S+") do
+                    if #part <= 64 then
+                        table.insert(parts, part)
+                    end
+                end
+                if #parts >= 4 and parts[3] == ip then
+                    local name = parts[4]
+                    if name and name ~= "" and name ~= "*" and #name <= 64 then
+                        fd:close()
+                        return name
+                    end
+                end
+            end
+        end
+        fd:close()
+    end
+    return nil
+end
+
+-- 通过 MAC 在 /proc/net/arp 中查找 IP（用于 IP 兜底）
+local function get_ip_by_mac_arp(mac)
+    if not mac or not safe_mac_validate(mac) then
+        return nil
+    end
+    local mac_lower = mac:lower()
+    local fd = io.open("/proc/net/arp", "r")
+    if fd then
+        -- 跳过第一行（表头）
+        fd:read()
+        for line in fd:lines() do
+            if line and line:lower():find(mac_lower, 1, true) then
+                local ip = line:match("^([%d%.]+)")
+                if ip and safe_ip_validate(ip) then
+                    fd:close()
+                    return ip
+                end
+            end
+        end
+        fd:close()
+    end
+    return nil
+end
+
 local function is_device_blocked(mac)
     if not mac or mac == "" then return false end
     local mac_upper = mac:upper()
 
-    local current_time = os.time()
-    
-    if _blocked_macs_cache and (current_time - _blocked_macs_cache_time) < BLOCKED_MACS_CACHE_TTL then
-        return _blocked_macs_cache[mac_upper] == true
-    end
-
-    if not cache_lock_acquire() then
-        if _blocked_macs_cache then
-            return _blocked_macs_cache[mac_upper] == true
-        end
-        return false
-    end
-
-    _blocked_macs_cache = {}
-    _blocked_macs_cache_time = current_time
-
-    local util = require("luci.util")
-
-    local function extract_macs_from_iptables(output)
-        local macs = {}
-        if not output then return macs end
-
-        for mac in output:gmatch("--mac%-source%s+([%da-fA-F:]+)") do
-            if mac and #mac >= 17 then
-                macs[mac:upper()] = true
-            end
-        end
-
-        for mac in output:gmatch("MAC([%da-fA-F][%da-fA-F:]+)") do
-            if mac and #mac >= 17 then
-                macs[mac:upper()] = true
-            end
-        end
-
-        for mac in output:gmatch("([%da-fA-F][%da-fA-F]:[%da-fA-F][%da-fA-F]:[%da-fA-F][%da-fA-F]:[%da-fA-F][%da-fA-F]:[%da-fA-F][%da-fA-F])") do
-            macs[mac:upper()] = true
-        end
-
-        return macs
-    end
-
-    local input_output = util.exec("iptables -L INPUT -n --line-numbers 2>/dev/null")
-    if input_output then
-        local input_macs = extract_macs_from_iptables(input_output)
-        for mac, _ in pairs(input_macs) do
-            _blocked_macs_cache[mac] = true
-        end
-    end
-
-    local forward_output = util.exec("iptables -L FORWARD -n --line-numbers 2>/dev/null")
-    if forward_output then
-        local forward_macs = extract_macs_from_iptables(forward_output)
-        for mac, _ in pairs(forward_macs) do
-            _blocked_macs_cache[mac] = true
-        end
-    end
-
-    local access_output = util.exec("iptables -L internet_access -n --line-numbers 2>/dev/null")
-    if access_output then
-        local access_macs = extract_macs_from_iptables(access_output)
-        for mac, _ in pairs(access_macs) do
-            _blocked_macs_cache[mac] = true
-        end
-    end
-
-    local result = _blocked_macs_cache[mac_upper] == true
-    cache_lock_release()
-    return result
+    -- 使用文件缓存（跨进程共享）
+    local blocked_macs = get_blocked_macs_from_iptables()
+    return blocked_macs[mac_upper] == true
 end
 
 local function get_storage_path()
@@ -774,7 +1016,7 @@ local function save_json_file(filename, data)
     local filepath = dir .. "/" .. filename
     local json = require("luci.jsonc")
     local json_str = json.stringify(data) or "{}"
-    return save_data_atomic(filepath, json_str)
+    return save_with_file_lock(filepath, json_str)
 end
 
 
@@ -833,13 +1075,30 @@ function api_get_devices()
                     hostname = client.hostname
                 elseif dhcp_leases[mac_upper] then
                     hostname = dhcp_leases[mac_upper].name
+                -- 第三来源：通过 client.ipaddr 在 dhcp.leases 中反向查找 hostname
+                elseif client.ipaddr and type(client.ipaddr) == "string" then
+                    local ip_hostname = get_hostname_by_ip(client.ipaddr)
+                    if ip_hostname then
+                        hostname = ip_hostname
+                    end
                 end
 
                 local ip = "-"
+                local client_ip = nil
                 if client.ipaddr and type(client.ipaddr) == "string" then
-                    ip = client.ipaddr
+                    client_ip = client.ipaddr
+                    ip = client_ip
                 elseif client.ap_ipaddr and type(client.ap_ipaddr) == "string" then
-                    ip = client.ap_ipaddr
+                    client_ip = client.ap_ipaddr
+                    ip = client_ip
+                end
+                -- 兜底：通过 MAC 在 ARP 表中查 IP
+                if ip == "-" then
+                    local arp_ip = get_ip_by_mac_arp(mac_upper)
+                    if arp_ip then
+                        ip = arp_ip
+                        client_ip = arp_ip
+                    end
                 end
 
                 local ipv6_list = ipv6_neighbors[mac_upper] or {}
@@ -856,7 +1115,7 @@ function api_get_devices()
                     rssi = tonumber(client.rssi) or 0
                 end
 
-                local is_upstream = (ifname == "eth1" or ifname == "eth3")
+                local is_upstream = is_upstream_interface(ifname)
                 local device_type = get_device_type(hostname, mac_upper, is_wifi)
 
                 local note_data = device_notes[mac_upper]
@@ -865,16 +1124,21 @@ function api_get_devices()
                 end
 
                 if not is_upstream and not is_device_blocked(mac_upper) then
+                    local frequency_band = nil
+                    if is_wifi then
+                        frequency_band = get_wifi_frequency_band(ifname)
+                    end
+
                     table.insert(devices_list, {
                         ip = ip,
                         ipv6 = ipv6_list,
                         mac = mac_upper,
                         hostname = hostname,
-                        device = ifname,
+                        iface = ifname,
                         is_wifi = is_wifi,
                         signal = rssi,
-                        iface = ifname,
-                        device_type = device_type
+                        device_type = device_type,
+                        frequency_band = frequency_band
                     })
                     added_count = added_count + 1
                 else
@@ -936,7 +1200,7 @@ local function save_blocklist(blocklist)
     local filepath = get_blocklist_filepath()
     local json = require("luci.jsonc")
     local json_str = json.stringify(blocklist) or '{"devices":[]}'
-    return save_data_atomic(filepath, json_str)
+    return save_with_file_lock(filepath, json_str)
 end
 
 local function get_mac_oui(mac)
@@ -1074,19 +1338,18 @@ end
 
 -- ========== MAC屏蔽列表持久化管理结束 ==========
 
-local function aggregate_traffic_history()
+local function aggregate_traffic_history(incoming_traffic)
+    -- 优先使用传入的当前流量数据（已在api_get_traffic中计算并保存），避免从文件重复读取时已被另一进程覆盖
+    local current_traffic = incoming_traffic or load_json_file(DATA_FILE_NAME) or {}
     local history = load_json_file(HISTORY_FILE_NAME) or {hourly = {}, daily = {}}
-    local current_traffic = load_json_file(DATA_FILE_NAME) or {}
     local current_time = os.time()
     local current_hour = os.date("%Y%m%d%H", current_time)
     local current_day = os.date("%Y%m%d", current_time)
 
+    -- 注意：total_rx/total_tx 在遍历在线设备时由 L1621-1622 逐个累加（每设备只加一次）
+    -- 不再从 current_traffic 快照预累加，避免与 L1621-1622 的新计算值重复计数
     local total_rx = 0
     local total_tx = 0
-    for mac, data in pairs(current_traffic) do
-        total_rx = total_rx + (data.rx or 0)
-        total_tx = total_tx + (data.tx or 0)
-    end
 
     local last_hour = history.last_hour or ""
     if last_hour ~= current_hour then
@@ -1097,27 +1360,34 @@ local function aggregate_traffic_history()
         local delta_rx = total_rx - prev_total_rx
         local delta_tx = total_tx - prev_total_tx
         
-        -- 检查是否有有效的历史记录
+        -- 检查是否有有效的历史记录（同时检查hourly和daily表，避免从仅含daily数据的备份恢复时被误判为首次采集）
         local has_valid_history = false
         for _ in pairs(history.hourly or {}) do
             has_valid_history = true
             break
         end
-        
-        -- 首次采集（无历史记录）时，不记录增量（避免记录累计总量）
+        if not has_valid_history then
+            for _ in pairs(history.daily or {}) do
+                has_valid_history = true
+                break
+            end
+        end
+
+        -- 首次采集（无历史记录）时，不记录增量（避免将历史累计总量误记为单小时增量）
         if not has_valid_history then
             delta_rx = 0
             delta_tx = 0
         end
-        
-        -- 1. 负值处理（计数器重置）
+
+        -- 1. 负值处理（计数器重置或异常）
         if delta_rx < 0 then delta_rx = 0 end
         if delta_tx < 0 then delta_tx = 0 end
-        
+
         -- 2. 极小噪声过滤（< 1KB）
+        -- 注意：小时级流量已在轮询时过滤（MIN_THRESHOLD=1KB），此处过滤的是跨小时的增量噪声
         if delta_rx < 1024 then delta_rx = 0 end
         if delta_tx < 1024 then delta_tx = 0 end
-        
+
         -- 不设置任何上限！真实流量无论多高都记录
         
         local function parse_hour(hour_str)
@@ -1403,6 +1673,12 @@ function api_get_traffic()
                     elseif client.ap_ipaddr and type(client.ap_ipaddr) == "string" and client.ap_ipaddr ~= "" then
                         ip = client.ap_ipaddr
                     end
+                    -- 防御性归一化：将history表所有key转为大写（兼容旧版小写MAC保存格式）
+                    local normalized_history = {}
+                    for hist_mac, hist_data in pairs(history) do
+                        normalized_history[hist_mac:upper()] = hist_data
+                    end
+                    history = normalized_history
                     -- 处理随机MAC问题：如果当前MAC不在历史中，尝试通过hostname+MAC前缀(OUI)+IP匹配
                     -- 改进逻辑：
                     -- 1. 精确匹配 MAC → 直接复用
@@ -1415,7 +1691,7 @@ function api_get_traffic()
                     --    - 适用于DHCP分配相同IP但随机MAC的情况
                     local current_time = os.time()
                     if not history[device_id] and hostname and hostname ~= "Unknown" then
-                        local mac_prefix = string.sub(device_id, 1, 8):upper()  -- 取MAC前6字节(oui)
+                        local mac_prefix = string.sub(device_id, 1, 8):upper()  -- 取MAC前3段(OUI,含冒号共8字符如"AA:BB:CC")
                         local matched_devices = {}
                         for hist_mac, hist_data in pairs(history) do
                             local hist_prefix = string.sub(hist_mac, 1, 8):upper()
@@ -1479,22 +1755,21 @@ function api_get_traffic()
                         
                         local device_total_rx, device_total_tx
                         if counter_reset then
-                            if last_rx > 0 or last_tx > 0 then
-                                device_total_rx = router_tx_bytes + last_rx
-                                device_total_tx = router_rx_bytes + last_tx
-                            else
-                                device_total_rx = router_tx_bytes
-                                device_total_tx = router_rx_bytes
-                            end
+                            -- 计数器重置(路由器重启)后，累加重启前历史总量 + 重启后新计数器值
+                            -- math.max 防止极端情况(计数器异常小/负值)导致总量减少
+                            device_total_rx = math.max(router_tx_bytes, 0) + last_rx
+                            device_total_tx = math.max(router_rx_bytes, 0) + last_tx
                         else
-                            device_total_rx = last_rx + (router_tx_bytes - last_raw_rx)
-                            device_total_tx = last_tx + (router_rx_bytes - last_raw_tx)
+                            -- 正常情况：历史总量 + 本次轮询增量(本次原始值 - 上次原始值)
+                            local delta_rx = router_tx_bytes - last_raw_rx
+                            local delta_tx = router_rx_bytes - last_raw_tx
+                            -- 防御：增量不应为负(正常情况下 raw 值应单调递增)
+                            device_total_rx = last_rx + math.max(delta_rx, 0)
+                            device_total_tx = last_tx + math.max(delta_tx, 0)
                         end
                         
                         device_total_rx = is_valid_number(device_total_rx) and device_total_rx or 0
                         device_total_tx = is_valid_number(device_total_tx) and device_total_tx or 0
-                        if device_total_rx < 0 then device_total_rx = last_rx end
-                        if device_total_tx < 0 then device_total_tx = last_tx end
                         
                         local device_total = device_total_rx + device_total_tx
                         total_rx = total_rx + device_total_rx
@@ -1507,6 +1782,11 @@ function api_get_traffic()
                         local note_data = device_notes[device_id] or device_notes[mac_upper]
                         if note_data and note_data.device_type and note_data.device_type ~= "" then
                             device_type = note_data.device_type
+                        end
+
+                        local frequency_band = nil
+                        if is_wifi then
+                            frequency_band = get_wifi_frequency_band(ifname)
                         end
 
                         table.insert(online_devices, {
@@ -1524,6 +1804,7 @@ function api_get_traffic()
                             is_wifi = is_wifi,
                             ifname = ifname,
                             device_type = device_type,
+                            frequency_band = frequency_band,
                             blocked = is_device_blocked(device_id) or is_device_blocked(mac_upper)
                         })
                         current_traffic[device_id] = {
@@ -1543,35 +1824,33 @@ function api_get_traffic()
             end
         end
         local current_time = os.time()
-        -- 统一历史数据中的MAC地址格式（大写），避免因大小写不一致导致设备被错误归类
-        local normalized_history = {}
-        for dev_id, data in pairs(history) do
-            normalized_history[dev_id:upper()] = data
-        end
-        history = normalized_history
         for dev_id, data in pairs(history) do
             if not current_traffic[dev_id] then
                 local age = current_time - ((data and data.last_seen) or 0)
                 if age < SECONDS_PER_WEEK then
                     current_traffic[dev_id] = data
-                    local device_total = (data.tx or 0) + (data.rx or 0)
                     offline_count = offline_count + 1
-                    total_rx = total_rx + (data.rx or 0)
-                    total_tx = total_tx + (data.tx or 0)
+
+                    local offline_frequency_band = nil
+                    if data.is_wifi and data.ifname then
+                        offline_frequency_band = get_wifi_frequency_band(data.ifname)
+                    end
+
                     table.insert(offline_devices, {
                         mac = dev_id,
                         hostname = data.hostname or "Unknown",
                         ip = data.ip or "-",
                         rx = data.rx or 0,
                         tx = data.tx or 0,
-                        total = device_total,
+                        total = (data.rx or 0) + (data.tx or 0),
                         rx_display = format_bytes(data.rx or 0),
                         tx_display = format_bytes(data.tx or 0),
-                        total_display = format_bytes(device_total),
+                        total_display = format_bytes((data.rx or 0) + (data.tx or 0)),
                         online = false,
                         first_seen = data.first_seen or 0,
                         last_seen = data.last_seen or current_time,
                         is_wifi = data.is_wifi or false,
+                        frequency_band = offline_frequency_band,
                         blocked = is_device_blocked(dev_id)
                     })
                 end
@@ -1582,8 +1861,9 @@ function api_get_traffic()
         if serialize_ok then
             json_str = serialize_err or "{}"
         end
-        local save_ok, save_path = save_with_fallback(history_file, json_str)
-        aggregate_traffic_history()
+        local save_ok, save_path = save_with_file_lock(history_file, json_str)
+        -- 传入 current_traffic 避免竞态：另一进程可能在我们保存后立即更新 DATA_FILE
+        aggregate_traffic_history(current_traffic)
         table.sort(online_devices, function(a, b)
             local ta = (a and a.total) or 0
             local tb = (b and b.total) or 0
@@ -1599,6 +1879,10 @@ function api_get_traffic()
             online_devices = online_devices,
             offline_devices = offline_devices,
             stats = {
+                -- total_rx/total_tx: 所有在线设备的历史累计总量
+                -- 由L1621-1622在遍历在线设备时逐个累加（每设备只加一次），不再从快照预累加
+                -- 离线设备的历史流量通过DATA_FILE快照一次性包含在total中
+                -- online_count/offline_count 是本次API调用时的快照数量
                 total_rx = total_rx,
                 total_tx = total_tx,
                 online_count = online_count,
