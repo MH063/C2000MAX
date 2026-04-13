@@ -5,9 +5,34 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 OUTPUT_DIR="$SCRIPT_DIR/output"
 PKG_DIR="$SCRIPT_DIR/ipk_build"
 
-PKG_VERSION="1.0.1-1"
+# 从 version.json 读取版本信息
+VERSION_FILE="$SCRIPT_DIR/version.json"
+if [ ! -f "$VERSION_FILE" ]; then
+    echo "错误: version.json 文件不存在"
+    exit 1
+fi
+
+# 解析 version.json（使用 grep 和 sed，兼容性更好）
+PKG_VERSION=$(grep '"version"' "$VERSION_FILE" | sed 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
+PKG_DISPLAY_NAME=$(grep '"name"' "$VERSION_FILE" | sed 's/.*"name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
+PKG_AUTHOR=$(grep '"author"' "$VERSION_FILE" | sed 's/.*"author"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
+PKG_DESCRIPTION=$(grep '"description"' "$VERSION_FILE" | sed 's/.*"description"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
+
+# 完整版本号（添加 -1 后缀）
+FULL_VERSION="${PKG_VERSION}-1"
 PKG_ARCH="aarch64_cortex-a53"
-PKG_NAME="luci-app-router-assistant"
+PKG_INTERNAL_NAME="luci-app-router-assistant"
+
+echo "======================================="
+echo "版本信息（来自 version.json）"
+echo "======================================="
+echo "名称: ${PKG_DISPLAY_NAME}"
+echo "版本: ${PKG_VERSION}"
+echo "完整版本: ${FULL_VERSION}"
+echo "作者: ${PKG_AUTHOR}"
+echo "描述: ${PKG_DESCRIPTION}"
+echo "======================================="
+echo ""
 
 rm -rf "$PKG_DIR" "$OUTPUT_DIR"
 mkdir -p "$PKG_DIR/CONTROL" "$PKG_DIR/data" "$OUTPUT_DIR"
@@ -15,11 +40,11 @@ mkdir -p "$PKG_DIR/CONTROL" "$PKG_DIR/data" "$OUTPUT_DIR"
 echo "=== Step 1: Creating control files ==="
 
 cat > "$PKG_DIR/CONTROL/control" << ENDCONTROL
-Package: luci-app-router-assistant
-Version: 1.0.1-1
-Architecture: aarch64_cortex-a53
-Maintainer: MH
-Description: Router Assistant - Network management and traffic statistics tool
+Package: ${PKG_DISPLAY_NAME}
+Version: ${PKG_VERSION}
+Architecture: ${PKG_ARCH}
+Maintainer: ${PKG_AUTHOR}
+Description: ${PKG_DESCRIPTION}
 ENDCONTROL
 echo "Created control file"
 
@@ -47,7 +72,6 @@ else
 fi
 
 # ========== 初始化数据存储目录 ==========
-# 存储路径优先级（与运行时代码 router_assistant.lua 保持一致）
 TF_MOUNT=""
 for mp in /tmp/storage/mmcblk0p1 /mnt/mmcblk0p1 /mnt/sdcard /tmp/mnt/mmcblk0p1 /overlay; do
     if [ -d "$mp" ] && [ -w "$mp" ]; then
@@ -70,14 +94,12 @@ else
 fi
 
 # ========== 检查必要服务 ==========
-# 检查 infocd 服务
 if ubus list infocd >/dev/null 2>&1; then
     : # infocd 服务正常
 else
     echo "警告: infocd 服务未运行，部分功能可能受限"
 fi
 
-# 检查 access_ctl.sh
 if [ ! -f "/usr/bin/access_ctl.sh" ]; then
     echo "提示: access_ctl.sh 未安装，ACL控制功能将不可用"
 fi
@@ -85,7 +107,6 @@ fi
 # ========== 执行首次流量采集 ==========
 if [ -f "/usr/libexec/router_assistant/collect_traffic.lua" ]; then
     chmod +x /usr/libexec/router_assistant/collect_traffic.lua
-    # 检查 ipset 是否存在
     if command -v ipset >/dev/null 2>&1; then
         echo "正在执行首次流量采集..."
         /usr/bin/lua /usr/libexec/router_assistant/collect_traffic.lua 2>/dev/null
@@ -96,31 +117,37 @@ if [ -f "/usr/libexec/router_assistant/collect_traffic.lua" ]; then
 else
     echo "警告: collect_traffic.lua 未找到"
 fi
-# 更新appcenter配置
+
+# ========== 更新appcenter配置（显示名称：路由管家+版本号）==========
 uci -q batch <<EOF
-delete appcenter.luci-app-router-assistant
-set appcenter.luci-app-router-assistant=package
-set appcenter.luci-app-router-assistant.name='luci-app-router-assistant'
-set appcenter.luci-app-router-assistant.version='1.0.1-1'
-set appcenter.luci-app-router-assistant.size='21702'
-set appcenter.luci-app-router-assistant.status='1'
-set appcenter.luci-app-router-assistant.has_luci='1'
-set appcenter.luci-app-router-assistant.open='1'
-delete appcenter.luci_app_router_assistant_list
-set appcenter.luci_app_router_assistant_list=package_list
-set appcenter.luci_app_router_assistant_list.name='luci-app-router-assistant'
-set appcenter.luci_app_router_assistant_list.pkg_name='luci-app-router-assistant'
-set appcenter.luci_app_router_assistant_list.parent='luci-app-router-assistant'
-set appcenter.luci_app_router_assistant_list.size='21702'
-set appcenter.luci_app_router_assistant_list.version='1.0.1-1'
-set appcenter.luci_app_router_assistant_list.has_luci='1'
-set appcenter.luci_app_router_assistant_list.type='1'
-set appcenter.luci_app_router_assistant_list.luci_module_file='/usr/lib/lua/luci/controller/router_assistant.lua'
+delete appcenter.${PKG_INTERNAL_NAME}
+set appcenter.${PKG_INTERNAL_NAME}=package
+set appcenter.${PKG_INTERNAL_NAME}.name='${PKG_DISPLAY_NAME}${PKG_VERSION}'
+set appcenter.${PKG_INTERNAL_NAME}.version='${PKG_VERSION}'
+set appcenter.${PKG_INTERNAL_NAME}.size='21702'
+set appcenter.${PKG_INTERNAL_NAME}.status='1'
+set appcenter.${PKG_INTERNAL_NAME}.has_luci='1'
+set appcenter.${PKG_INTERNAL_NAME}.open='1'
+delete appcenter.${PKG_INTERNAL_NAME}_list
+set appcenter.${PKG_INTERNAL_NAME}_list=package_list
+set appcenter.${PKG_INTERNAL_NAME}_list.name='${PKG_DISPLAY_NAME}${PKG_VERSION}'
+set appcenter.${PKG_INTERNAL_NAME}_list.pkg_name='${PKG_INTERNAL_NAME}'
+set appcenter.${PKG_INTERNAL_NAME}_list.parent='${PKG_INTERNAL_NAME}'
+set appcenter.${PKG_INTERNAL_NAME}_list.size='21702'
+set appcenter.${PKG_INTERNAL_NAME}_list.version='${PKG_VERSION}'
+set appcenter.${PKG_INTERNAL_NAME}_list.has_luci='1'
+set appcenter.${PKG_INTERNAL_NAME}_list.type='1'
+set appcenter.${PKG_INTERNAL_NAME}_list.luci_module_file='/usr/lib/lua/luci/controller/router_assistant.lua'
 commit appcenter
 EOF
 
 exit 0
 ENDPOSTINST
+
+# 替换 postinst 中的变量占位符
+sed -i "s/\${PKG_INTERNAL_NAME}/${PKG_INTERNAL_NAME}/g" "$PKG_DIR/CONTROL/postinst"
+sed -i "s/\${PKG_VERSION}/${PKG_VERSION}/g" "$PKG_DIR/CONTROL/postinst"
+sed -i "s/\${PKG_DISPLAY_NAME}/${PKG_DISPLAY_NAME}/g" "$PKG_DIR/CONTROL/postinst"
 chmod 755 "$PKG_DIR/CONTROL/postinst"
 sed -i 's/\r$//' "$PKG_DIR/CONTROL/postinst"
 
@@ -188,15 +215,19 @@ cd "$PKG_DIR"
 
 echo "2.0" > debian-binary
 
-IPK_FILE="$OUTPUT_DIR/${PKG_NAME}_${PKG_VERSION}_${PKG_ARCH}.ipk"
+IPK_FILE="$OUTPUT_DIR/${PKG_DISPLAY_NAME}${PKG_VERSION}.ipk"
 rm -f "$IPK_FILE"
 
 tar -cf "$IPK_FILE" debian-binary control.tar.gz data.tar.gz
 gzip "$IPK_FILE"
 mv "$IPK_FILE.gz" "$IPK_FILE"
 
-echo "IPK created"
+echo ""
+echo "======================================="
+echo "IPK 打包成功!"
+echo "======================================="
 ls -lh "$IPK_FILE"
+echo ""
 
 echo "=== Verifying IPK format ==="
 file "$IPK_FILE"
@@ -206,3 +237,6 @@ rm -rf "$PKG_DIR"
 
 echo ""
 echo "=== Done ==="
+echo ""
+echo "输出文件: $IPK_FILE"
+echo "显示名称: ${PKG_DISPLAY_NAME}${PKG_VERSION}"
