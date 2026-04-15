@@ -149,14 +149,39 @@ init_iptables() {
 
     iptables -t mangle -N ${CHAIN_RX} 2>/dev/null
     iptables -t mangle -F ${CHAIN_RX}
-    iptables -t mangle -A ${CHAIN_RX} -j RETURN
-    iptables -t mangle -D FORWARD -j ${CHAIN_RX} 2>/dev/null
-    iptables -t mangle -I FORWARD -j ${CHAIN_RX}
     iptables -t mangle -N ${CHAIN_TX} 2>/dev/null
     iptables -t mangle -F ${CHAIN_TX}
-    iptables -t mangle -A ${CHAIN_TX} -j RETURN
+
+    # 挂载到 FORWARD 链（确保在链首部）
+    iptables -t mangle -D FORWARD -j ${CHAIN_RX} 2>/dev/null
+    iptables -t mangle -I FORWARD -j ${CHAIN_RX}
     iptables -t mangle -D FORWARD -j ${CHAIN_TX} 2>/dev/null
     iptables -t mangle -I FORWARD -j ${CHAIN_TX}
+
+    # === TX 上行规则：LAN设备→互联网 的流量，按源MAC匹配ipset计数器累加 ===
+    # 匹配从局域网接口进入转发的数据包，用源MAC查ipset，命中则自动累加该MAC的计数器
+    for iface in $(ls /sys/class/net/ 2>/dev/null | grep -E '^(br-lan|eth[0-9]|ra0|rai0|wlan0|wlan1|wwan0)' ); do
+        [ -d "/sys/class/net/${iface}" ] || continue
+        # -i 入接口：从LAN进来的包，src-mac就是发送方设备MAC
+        iptables -t mangle -A ${CHAIN_TX} -i "${iface}" \
+            -m set --match-set ${IPSET_TX} src -j RETURN 2>/dev/null && \
+            echo "traffic-stats: TX规则已添加: -i ${iface}"
+    done
+
+    # === RX 下行规则：互联网→LAN设备 的流量，按目的MAC匹配ipset计数器累加 ===
+    # 匹配转发到局域网接口出去的数据包，用目的MAC查ipset
+    for iface in $(ls /sys/class/net/ 2>/dev/null | grep -E '^(br-lan|eth[0-9]|ra0|rai0|wlan0|wlan1|wwan0)' ); do
+        [ -d "/sys/class/net/${iface}" ] || continue
+        # -o 出接口：往LAN出的包，dst-mac就是接收方设备MAC
+        iptables -t mangle -A ${CHAIN_RX} -o "${iface}" \
+            -m set --match-set ${IPSET_RX} dst -j RETURN 2>/dev/null && \
+            echo "traffic-stats: RX规则已添加: -o ${iface}"
+    done
+
+    # 兜底：未命中的包直接放行
+    iptables -t mangle -A ${CHAIN_RX} -j RETURN
+    iptables -t mangle -A ${CHAIN_TX} -j RETURN
+
     echo "traffic-stats: iptables 规则初始化完成"
 }
 
@@ -195,7 +220,7 @@ restore_from_stats() {
 
 setup_cron() {
     local cron_file="/etc/crontabs/root"
-    local lua_script="/usr/libexec/router_assistant/collect_traffic.lua"
+    local lua_script="/usr/lib/traffic_stats/collect.lua"
     local cron_entry="0 * * * * /usr/bin/lua ${lua_script} >/dev/null 2>&1"
 
     if [ -f "${cron_file}" ]; then
@@ -268,6 +293,8 @@ stop() {
 
 reload() {
     if check_ipset; then
+        # 重新初始化 iptables 规则（新增设备或接口变化后需要重建规则）
+        init_iptables
         restore_devices
         restore_from_stats
     fi
@@ -303,3 +330,82 @@ status() {
     echo "黑名单文件位置:"
     find_blocklist_file
 }
+
+# 清理所有流量统计数据（保留黑名单配置）
+# 用法: /etc/init.d/traffic-stats purge_data
+purge_data() {
+    echo "traffic-stats: 正在清理所有流量统计数据（保留黑名单）..."
+
+    # 1. 备份黑名单
+    BLOCKLIST_BACKUP=""
+    if [ -n "${BLOCKLIST_FILE}" ] && [ -f "${BLOCKLIST_FILE}" ]; then
+        BLOCKLIST_BACKUP="/tmp/router_assistant_blocklist_backup.json"
+        cp "${BLOCKLIST_FILE}" "${BLOCKLIST_BACKUP}" 2>/dev/null
+        echo "traffic-stats: 已备份黑名单到 ${BLOCKLIST_BACKUP}"
+    else
+        find_blocklist_file
+        if [ -n "${BLOCKLIST_FILE}" ] && [ -f "${BLOCKLIST_FILE}" ]; then
+            BLOCKLIST_BACKUP="/tmp/router_assistant_blocklist_backup.json"
+            cp "${BLOCKLIST_FILE}" "${BLOCKLIST_BACKUP}" 2>/dev/null
+            echo "traffic-stats: 已备份黑名单到 ${BLOCKLIST_BACKUP}"
+        fi
+    fi
+
+    # 2. 清理数据目录中的流量统计文件
+    # baseline.json 也会被删除，下次采集时会重新初始化（从当时的 WAN 接口字节数开始计算增量）
+    # 路由器重启后如果 baseline 尚未重建，collect.lua 的重启检测会重新初始化
+    local data_dirs="${DATA_DIR} /tmp/router_assistant"
+    for dir in ${data_dirs}; do
+        if [ -d "${dir}" ]; then
+            rm -f "${dir}/current.json" 2>/dev/null
+            rm -f "${dir}/traffic_monthly.json" 2>/dev/null
+            rm -f "${dir}/hourly_snapshot.json" 2>/dev/null
+            rm -f "${dir}/baseline.json" 2>/dev/null
+            rm -rf "${dir}/daily" 2>/dev/null
+            rm -rf "${dir}/weekly" 2>/dev/null
+            rm -rf "${dir}/monthly" 2>/dev/null
+            rm -rf "${dir}/backup" 2>/dev/null
+            echo "traffic-stats: 已清理 ${dir} 流量数据"
+        fi
+    done
+
+    # 3. 清理 ipset 条目并重启服务以恢复设备列表
+    # 警告：先 stop，避免 restart 时仍有进程持有 ipset 引用
+    if check_ipset; then
+        stop
+        sleep 1
+        ipset flush ${IPSET_RX} 2>/dev/null
+        ipset flush ${IPSET_TX} 2>/dev/null
+        echo "traffic-stats: ipset 已清空"
+    else
+        stop
+    fi
+    start
+    echo "traffic-stats: 服务已重启，设备列表已从 dhcp.leases 恢复"
+
+    # 4. 恢复黑名单
+    if [ -n "${BLOCKLIST_BACKUP}" ] && [ -f "${BLOCKLIST_BACKUP}" ]; then
+        # 确保数据目录存在
+        for base_path in ${STORAGE_BASE_PATHS}; do
+            if [ -d "${base_path}" ] && [ -w "${base_path}" ]; then
+                mkdir -p "${base_path}/${DATA_DIR_NAME}"
+                cp "${BLOCKLIST_BACKUP}" "${base_path}/${DATA_DIR_NAME}/mac_blocklist.json" 2>/dev/null
+                echo "traffic-stats: 黑名单已恢复到 ${base_path}/${DATA_DIR_NAME}/mac_blocklist.json"
+                break
+            fi
+        done
+        rm -f "${BLOCKLIST_BACKUP}" 2>/dev/null
+    fi
+
+    # 5. 执行首次流量采集
+    if [ -f "/usr/lib/traffic_stats/collect.lua" ]; then
+        echo "traffic-stats: 正在执行首次流量采集..."
+        /usr/bin/lua /usr/lib/traffic_stats/collect.lua collect >/dev/null 2>&1
+        echo "traffic-stats: 首次流量采集完成"
+    fi
+
+    echo "traffic-stats: 流量数据清理完成（黑名单已保留）"
+}
+
+EXTRA_COMMANDS="purge_data status"
+EXTRA_HELP="	purge_data	清理所有流量统计数据（保留黑名单配置）"

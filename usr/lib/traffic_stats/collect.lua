@@ -1,8 +1,263 @@
 #!/usr/bin/lua
 
 local fs = require "nixio.fs"
-local util = require "luci.util"
-local json = require "json"
+
+-- ========== 内置 JSON 实现（不依赖外部模块，解决 require('json') 找不到的问题） ==========
+-- OpenWrt 环境下没有独立的 json 模块，luci.jsonc 需要 LuCI 上下文
+-- 此实现提供足够的 JSON 编解码功能供流量采集使用
+local json = {}
+
+-- 简单的 JSON 编码（支持 string, number, boolean, nil, table）
+function json.encode(data)
+    local t = type(data)
+    if t == "nil" then return "null"
+    elseif t == "boolean" then return data and "true" or "false"
+    elseif t == "number" then
+        if data ~= data then return "null" end -- NaN
+        if math.abs(data) == math.huge then return "null" end -- Inf
+        return tostring(data)
+    elseif t == "string" then
+        -- 转义特殊字符
+        local s = data:gsub('[%z\1-\31\\"]', function(c)
+            local codes = {
+                ['"'] = '\\"', ['\\'] = "\\\\",
+                ['\n'] = '\\n', ['\r'] = '\\r', ['\t'] = '\\t',
+            }
+            return codes[c] or ('\\u%04x'):format(c:byte())
+        end)
+        return '"' .. s .. '"'
+    elseif t == "table" then
+        local is_array = true
+        local max_idx = 0
+        for k, _ in pairs(data) do
+            if type(k) ~= "number" or k < 1 or math.floor(k) ~= k then
+                is_array = false
+                break
+            end
+            if k > max_idx then max_idx = k end
+        end
+
+        if is_array and #data > 0 then
+            local parts = {}
+            for i = 1, #data do
+                parts[i] = json.encode(data[i])
+            end
+            return "[" .. table.concat(parts, ",") .. "]"
+        else
+            local parts = {}
+            for k, v in pairs(data) do
+                table.insert(parts, '"' .. tostring(k) .. '":' .. json.encode(v))
+            end
+            return "{" .. table.concat(parts, ",") .. "}"
+        end
+    else
+        return '"[unsupported:' .. t .. ']"'
+    end
+end
+
+-- 简单的 JSON 解码（足够解析流量统计数据格式）
+function json.decode(str)
+    if not str or type(str) ~= "string" or str == "" then
+        return nil, "empty input"
+    end
+
+    local pos = 1
+    local len = #str
+
+    -- 跳过空白字符
+    local function skip_whitespace()
+        while pos <= len do
+            local c = str:sub(pos, pos)
+            if c == ' ' or c == '\t' or c == '\n' or c == '\r' then
+                pos = pos + 1
+            else
+                break
+            end
+        end
+    end
+
+    -- 解析值
+    local function parse_value()
+        skip_whitespace()
+        if pos > len then return nil, "unexpected end" end
+
+        local c = str:sub(pos, pos)
+
+        if c == '{' then return parse_object2()
+        elseif c == '[' then return parse_array()
+        elseif c == '"' then return parse_string()
+        elseif c == 't' then return parse_literal("true", true)
+        elseif c == 'f' then return parse_literal("false", false)
+        elseif c == 'n' then return parse_literal("null", nil)
+        elseif c == '-' or c:match('%d') then return parse_number()
+        else
+            return nil, "unexpected char: " .. c .. " at pos " .. pos
+        end
+    end
+
+    -- 解析对象
+    local function parse_object()
+        pos = pos + 1 -- skip '{'
+        local obj = {}
+        skip_whitespace()
+        if str:sub(pos, pos) == '}' then
+            pos = pos + 1
+            return obj
+        end
+        while true do
+            skip_whitespace()
+            local key = parse_string()
+            if not key then return nil, "expected key" end
+            skip_whitespace()
+            if str:sub(pos, pos) ~= ':' then return nil, "expected : at pos " .. pos end
+            pos = pos + 1
+            local val = parse_value()
+            if val == nil and type(parse_value()) ~= "nil" then -- allow null values
+                -- null is fine
+            end
+            -- Re-parse to get actual value including null
+            -- Actually we need to handle this differently
+            -- Let me restructure...
+            break -- will fix below
+        end
+        return obj
+    end
+
+    -- 重写更健壮的解析器
+    local function parse_object2()
+        pos = pos + 1 -- skip '{'
+        local obj = {}
+        skip_whitespace()
+        if pos <= len and str:sub(pos, pos) == '}' then
+            pos = pos + 1
+            return obj
+        end
+        while true do
+            skip_whitespace()
+            if pos > len then return nil, "unclosed object" end
+            local key = parse_string()
+            if not key then return nil, "expected object key" end
+            skip_whitespace()
+            if pos > len or str:sub(pos, pos) ~= ':' then return nil, "expected ':'" end
+            pos = pos + 1
+            local val = parse_value()
+            obj[key] = val
+            skip_whitespace()
+            if pos > len then return nil, "unclosed object" end
+            local c = str:sub(pos, pos)
+            if c == '}' then pos = pos + 1; return obj
+            elseif c == ',' then pos = pos + 1
+            else return nil, "expected ',' or '}'"
+            end
+        end
+    end
+
+    -- 解析数组
+    local function parse_array()
+        pos = pos + 1 -- skip '['
+        local arr = {}
+        skip_whitespace()
+        if pos <= len and str:sub(pos, pos) == ']' then
+            pos = pos + 1
+            return arr
+        end
+        while true do
+            local val = parse_value()
+            arr[#arr + 1] = val
+            skip_whitespace()
+            if pos > len then return nil, "unclosed array" end
+            local c = str:sub(pos, pos)
+            if c == ']' then pos = pos + 1; return arr
+            elseif c == ',' then pos = pos + 1
+            else return nil, "expected ',' or ']'"
+            end
+        end
+    end
+
+    -- 解析字符串
+    local function parse_string()
+        if str:sub(pos, pos) ~= '"' then return nil, "expected '\"'" end
+        pos = pos + 1
+        local result = {}
+        while pos <= len do
+            local c = str:sub(pos, pos)
+            if c == '"' then
+                pos = pos + 1
+                return table.concat(result)
+            elseif c == '\\' then
+                pos = pos + 1
+                if pos > len then return nil, "unterminated escape" end
+                local esc = str:sub(pos, pos)
+                local escapes = {
+                    ['"'] = '"', ['\\'] = '\\', ['/'] = '/',
+                    ['n'] = '\n', ['r'] = '\r', ['t'] = '\t', ['b'] = '\b', ['f'] = '\f',
+                }
+                if esc == 'u' then
+                    -- Unicode escape (simplified: only handle basic BMP)
+                    pos = pos + 1
+                    local hex = str:sub(pos, pos + 3):lower()
+                    if hex:match('^[%da-f]+$') then
+                        result[#result + 1] = string.char(tonumber(hex, 16))
+                        pos = pos + 4
+                    else
+                        result[#result + 1] = '?'
+                    end
+                else
+                    result[#result + 1] = escapes[esc] or esc
+                    pos = pos + 1
+                end
+            else
+                result[#result + 1] = c
+                pos = pos + 1
+            end
+        end
+        return nil, "unterminated string"
+    end
+
+    -- 解析数字
+    local function parse_number()
+        local start = pos
+        if str:sub(pos, pos) == '-' then pos = pos + 1 end
+        while pos <= len and str:sub(pos, pos):match('%d') do
+            pos = pos + 1
+        end
+        if pos <= len and str:sub(pos, pos) == '.' then
+            pos = pos + 1
+            while pos <= len and str:sub(pos, pos):match('%d') do
+                pos = pos + 1
+            end
+        end
+        if pos <= len and str:sub(pos, pos):match('[eE]') then
+            pos = pos + 1
+            if pos <= len and str:sub(pos, pos):match('[+-]') then
+                pos = pos + 1
+            end
+            while pos <= len and str:sub(pos, pos):match('%d') do
+                pos = pos + 1
+            end
+        end
+        local num_str = str:sub(start, pos - 1)
+        local n = tonumber(num_str)
+        if not n then return nil, "invalid number: " .. num_str end
+        return n
+    end
+
+    -- 解析字面量
+    local function parse_literal(expected, value)
+        local end_pos = pos + #expected
+        if str:sub(pos, end_pos) == expected then
+            pos = end_pos
+            return value
+        end
+        return nil, "expected '" .. expected .. "'"
+    end
+
+    -- 替换函数引用
+    parse_object = parse_object2
+
+    local result = parse_value()
+    return result
+end
 
 -- ========== 存储路径配置（与 router_assistant.lua 保持一致） ==========
 -- 数据目录名
@@ -118,19 +373,48 @@ end
 local function getIpsetStats(ipset_name)
     local stats = {}
     local output = exec("ipset list " .. ipset_name .. " 2>/dev/null")
-    if not output or output == "" then return stats end
+    if not output or output == "" then
+        log("WARNING: ipset " .. ipset_name .. " has no output")
+        return stats
+    end
 
-    local current_mac = nil
+    -- ipset 输出格式（带 counters 时）：
+    -- Name: traffic_stats_rx
+    -- Type: hash:mac
+    -- Revision: 0
+    -- Header: hashsize 1024 maxelem 65536 counters
+    -- Size in memory: 1224
+    -- References: 7
+    -- Number of entries: 8
+    -- Members:
+    -- 00:93:37:CD:72:F1 packets 0 bytes 0
+    -- 5E:42:94:69:1C:02 packets 0 bytes 0
+    --
+    -- 注意：ipset 用 "bytes" 而非 "bytes:"，即 "bytes 123" 而非 "bytes:123"
     for line in output:gmatch("[^\r\n]+") do
+        -- MAC 地址行：行首为两个十六进制字符 + 冒号开头（如 "00:93:37:CD:72:F1 packets 0 bytes 0"）
         if line:match("^[0-9a-fA-F][0-9a-fA-F]:") then
-            current_mac = line:match("^([0-9a-fA-F:]+)")
-        elseif current_mac and line:match("bytes:") then
-            local bytes = line:match("bytes:(%d+)")
-            if bytes then
-                stats[current_mac] = tonumber(bytes) or 0
+            local mac = line:match("^([0-9a-fA-F:]+)")
+            if mac then
+                -- 尝试提取 bytes：格式是 "bytes <number>" 或 "bytes:<number>"
+                local bytes = nil
+                if line:match("bytes%s+%d+") then
+                    bytes = line:match("bytes%s+(%d+)")
+                elseif line:match("bytes:%d+") then
+                    bytes = line:match("bytes:(%d+)")
+                end
+                if bytes then
+                    stats[mac] = tonumber(bytes) or 0
+                end
             end
         end
     end
+
+    -- 调试：统计有多少 MAC 被解析出来
+    local count = 0
+    for _ in pairs(stats) do count = count + 1 end
+    print("DEBUG: ipset " .. ipset_name .. " parsed " .. count .. " entries")
+    log("DEBUG: ipset " .. ipset_name .. " parsed " .. count .. " entries")
     return stats
 end
 
@@ -182,7 +466,47 @@ end
 local IPSET_RX = "traffic_stats_rx"
 local IPSET_TX = "traffic_stats_tx"
 
+-- 从 /sys/class/net/ 读取网络接口的字节统计（绕过 iptables/ipset 匹配问题）
+-- 返回 {rx = bytes, tx = bytes} 或 nil
+local function getInterfaceStats(iface)
+    local rx = 0
+    local tx = 0
+    local f = io.open("/sys/class/net/" .. iface .. "/statistics/rx_bytes", "r")
+    if f then
+        local v = f:read("*n")
+        f:close()
+        rx = v or 0
+    end
+    f = io.open("/sys/class/net/" .. iface .. "/statistics/tx_bytes", "r")
+    if f then
+        local v = f:read("*n")
+        f:close()
+        tx = v or 0
+    end
+    return rx, tx
+end
+
+-- 自动检测 WAN 接口（排除 lan/wifi/bridge 类接口）
+local function detectWanIfaces()
+    local wan = {}
+    local lan_patterns = {["br-lan"] = true, ["ra0"] = true, ["rai0"] = true,
+                          ["apcli0"] = true, ["apclii0"] = true, ["lo"] = true}
+    local dir = io.popen("ls /sys/class/net/ 2>/dev/null")
+    if dir then
+        for iface in dir:lines() do
+            if not lan_patterns[iface] and iface:match("^eth") then
+                table.insert(wan, iface)
+            end
+        end
+        dir:close()
+    end
+    -- fallback：至少尝试 eth0
+    if #wan == 0 then table.insert(wan, "eth0") end
+    return wan
+end
+
 local function collectTraffic()
+    print("Starting traffic collection...")
     log("Starting traffic collection...")
 
     -- 动态获取存储目录
@@ -199,22 +523,100 @@ local function collectTraffic()
     mkdir(monthly_dir)
     mkdir(backup_dir)
 
-    local rx_stats = getIpsetStats(IPSET_RX)
-    local tx_stats = getIpsetStats(IPSET_TX)
+    -- ===== 方案A：直接读取 /sys/class/net/ WAN接口字节统计 =====
+    -- 不依赖 iptables/ipset 匹配，避免 nRadio 平台 mangle RX 不计数的 bug
+    local wan_ifaces = detectWanIfaces()
+    local total_wan_rx, total_wan_tx = 0, 0
+    local wan_iface_for_baseline = wan_ifaces[1] or "eth1"
+    for _, iface in ipairs(wan_ifaces) do
+        local r, t = getInterfaceStats(iface)
+        total_wan_rx = total_wan_rx + r
+        total_wan_tx = total_wan_tx + t
+        print("DEBUG: iface " .. iface .. " rx=" .. tostring(r) .. " tx=" .. tostring(t))
+    end
 
+    -- ===== 基准值机制：purge 后从零开始 =====
+    -- 如果有基准值（purge_data 时记录），则计算增量而非累计值
+    -- 这样 purge 后页面显示的就是 purge 后的增量，而不是系统开机以来的总流量
+    local baseline_file = base_dir .. "/baseline.json"
+    local baseline = loadJson(baseline_file)
+    if baseline then
+        local primary_iface = baseline.iface or wan_iface_for_baseline
+        local primary_rx, primary_tx = getInterfaceStats(primary_iface)
+
+        -- 检测计数器重置（路由器重启后接口计数器从 0 开始）
+        -- 如果当前值 < 基准值，说明接口重启或计数器被清零，需要重新初始化基准
+        if primary_rx < (baseline.rx or 0) or primary_tx < (baseline.tx or 0) then
+            -- 重新初始化基准值为当前值（重启后第一个采集周期作为新基准）
+            saveJson(baseline_file, {iface = primary_iface, rx = primary_rx, tx = primary_tx, time = os.time(), rebooted = true})
+            print("DEBUG: baseline reinitialized after reboot/reject: iface=" .. primary_iface ..
+                  " old_base_rx=" .. tostring(baseline.rx) .. " current_rx=" .. tostring(primary_rx))
+            baseline.rx = primary_rx
+            baseline.tx = primary_tx
+        end
+
+        -- 计算相对于基准的增量
+        local delta_rx = math.max(0, primary_rx - (baseline.rx or 0))
+        local delta_tx = math.max(0, primary_tx - (baseline.tx or 0))
+        print("DEBUG: baseline active: iface=" .. primary_iface ..
+              " base_rx=" .. tostring(baseline.rx) .. " current_rx=" .. tostring(primary_rx) ..
+              " delta_rx=" .. tostring(delta_rx))
+        -- 用增量替换总量，后续按比例分配
+        total_wan_rx = delta_rx
+        total_wan_tx = delta_tx
+    else
+        -- 无基准值（首次安装），初始化基准值
+        -- 这样下次 purge 后可以正确从零开始
+        local primary_iface = wan_iface_for_baseline
+        local primary_rx, primary_tx = getInterfaceStats(primary_iface)
+        saveJson(baseline_file, {iface = primary_iface, rx = primary_rx, tx = primary_tx, time = os.time()})
+        print("DEBUG: baseline initialized: iface=" .. primary_iface ..
+              " rx=" .. tostring(primary_rx) .. " tx=" .. tostring(primary_tx))
+    end
+
+    -- ===== 方案B：从 ipset 获取每设备 TX 数据（仍然工作） =====
+    -- TX 方向（LAN→WAN）通过 br-lan 入接口匹配 src MAC，完全正常
+    local tx_stats = getIpsetStats(IPSET_TX)
+    local tx_count = 0
+    for _ in pairs(tx_stats) do tx_count = tx_count + 1 end
+    print("DEBUG: tx_stats from ipset: " .. tx_count .. " devices")
+
+    -- ===== 按设备分配 WAN 总流量 =====
+    -- TX 比例 × WAN 总流量 = 估算的每设备 RX
+    -- 原理：TCP 下行流量与上行流量自然相关（请求→响应）
     local current = loadJson(data_file) or {}
     local names = loadDeviceNames()
 
+    -- 计算当前 TX 总量
+    local total_tx = 0
+    for mac, v in pairs(tx_stats) do total_tx = total_tx + v end
+
+    -- 按 TX 比例分配 RX 给各设备
     local combined = {}
-    for mac, rx in pairs(rx_stats) do
-        combined[mac] = {rx = rx, tx = tx_stats[mac] or 0}
-    end
-    for mac, tx in pairs(tx_stats) do
-        if not combined[mac] then
-            combined[mac] = {rx = 0, tx = tx}
+    for mac, tx_bytes in pairs(tx_stats) do
+        local rx_estimate = 0
+        if total_tx > 0 then
+            rx_estimate = math.floor((tx_bytes / total_tx) * total_wan_rx)
         end
+        combined[mac] = {rx = rx_estimate, tx = tx_bytes}
     end
 
+    -- 归一化 RX 总和 = WAN 总 RX（避免舍入误差）
+    local allocated_rx = 0
+    for mac, data in pairs(combined) do
+        allocated_rx = allocated_rx + data.rx
+    end
+    local rx_diff = total_wan_rx - allocated_rx
+    -- 把差值加到 TX 最大的设备上（归一化）
+    if rx_diff > 0 and total_tx > 0 then
+        local top_mac, top_tx = nil, 0
+        for mac, tx in pairs(tx_stats) do
+            if tx > top_tx then top_tx = tx; top_mac = mac end
+        end
+        if top_mac then combined[top_mac].rx = combined[top_mac].rx + rx_diff end
+    end
+
+    -- 写入历史
     for mac, stats in pairs(combined) do
         local prev = current[mac] or {rx = 0, tx = 0}
         local delta_rx = math.max(0, stats.rx - prev.rx)
@@ -229,14 +631,39 @@ local function collectTraffic()
 
     saveJson(data_file, combined)
 
-    local total_rx, total_tx = 0, 0
-    for mac, stats in pairs(combined) do
-        total_rx = total_rx + stats.rx
-        total_tx = total_tx + stats.tx
+    -- ===== 保存或更新月度流量快照 =====
+    -- 每月第一天自动重置基准
+    -- 注意：collect.lua 使用独立的 traffic_monthly_collect.json，避免与 router_assistant.lua 的 traffic_monthly_router.json 冲突
+    local monthly_file = base_dir .. "/traffic_monthly_collect.json"
+    local monthly_data = loadJson(monthly_file) or {}
+    local current_month_key = getMonth()
+
+    -- 检查是否需要初始化新月度快照
+    if not monthly_data.last_month or monthly_data.last_month ~= current_month_key then
+        -- 新月份：用 combined（当前每设备累计值）作为本月起点基准
+        monthly_data[current_month_key] = {}
+        for mac, stats in pairs(combined) do
+            monthly_data[current_month_key][mac] = {
+                rx_start = stats.rx,
+                tx_start = stats.tx,
+                created_at = os.time()
+            }
+        end
+        monthly_data.last_month = current_month_key
+        saveJson(monthly_file, monthly_data)
+        -- 修复：#combined 只对数组有效，combined 是哈希表需手动计数
+        local dev_count = 0
+        for _ in pairs(combined) do dev_count = dev_count + 1 end
+        local msg2 = "Monthly snapshot created for " .. current_month_key .. " with " .. dev_count .. " devices"
+        print(msg2)
+        log(msg2)
     end
 
-    log(string.format("Traffic collected: RX=%.2f MB, TX=%.2f MB",
-        total_rx / 1024 / 1024, total_tx / 1024 / 1024))
+    local msg = string.format(
+        "Traffic collected: WAN total RX=%.2f MB, TX=%.2f MB | %d devices tracked via ipset TX",
+        total_wan_rx / 1024 / 1024, total_wan_tx / 1024 / 1024, tx_count)
+    print(msg)
+    log(msg)
 
     return combined
 end

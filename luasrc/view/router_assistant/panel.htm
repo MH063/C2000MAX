@@ -1921,27 +1921,27 @@
         <div class="rm-stats">
             <div class="rm-stat-card cyan">
                 <div class="rm-stat-header">
-                    <span class="rm-stat-label">总接收</span>
+                    <span class="rm-stat-label">本月接收</span>
                     <span class="rm-stat-tag cyan">RX</span>
                 </div>
                 <div class="rm-stat-value cyan" id="stat-total-rx">0<span class="rm-stat-unit">B</span></div>
-                <div class="rm-stat-desc">所有设备接收的数据总量</div>
+                <div class="rm-stat-desc">本月所有设备累计下载数据总量</div>
             </div>
             <div class="rm-stat-card green">
                 <div class="rm-stat-header">
-                    <span class="rm-stat-label">总发送</span>
+                    <span class="rm-stat-label">本月发送</span>
                     <span class="rm-stat-tag green">TX</span>
                 </div>
                 <div class="rm-stat-value green" id="stat-total-tx">0<span class="rm-stat-unit">B</span></div>
-                <div class="rm-stat-desc">所有设备发送的数据总量</div>
+                <div class="rm-stat-desc">本月所有设备累计上传数据总量</div>
             </div>
             <div class="rm-stat-card" style="--accent-cyan:var(--gradient-card-1);background:linear-gradient(135deg, rgba(138, 43, 226, 0.15) 0%, rgba(75, 0, 130, 0.15) 100%);border:1px solid rgba(138, 43, 226, 0.3);">
                 <div class="rm-stat-header">
-                    <span class="rm-stat-label">总流量消耗</span>
+                    <span class="rm-stat-label">本月消耗</span>
                     <span class="rm-stat-tag" style="background:rgba(138, 43, 226, 0.2);color:#BA55D3;">TOTAL</span>
                 </div>
                 <div class="rm-stat-value" style="color:#E066FF;" id="stat-total-all">0<span class="rm-stat-unit"></span></div>
-                <div class="rm-stat-desc">系统累计流量消耗统计</div>
+                <div class="rm-stat-desc">本月累计流量消耗统计（下载+上传）</div>
             </div>
             <div class="rm-stat-card orange">
                 <div class="rm-stat-header">
@@ -1992,9 +1992,11 @@
                                     <th>排名</th>
                                     <th>设备信息</th>
                                     <th>MAC地址</th>
-                                    <th>下载 (RX)</th>
-                                    <th>上传 (TX)</th>
+                                    <th>总下载 (RX)</th>
+                                    <th>总上传 (TX)</th>
                                     <th>总计</th>
+                                    <th style="color:var(--accent-cyan);">本次增量↓ RX</th>
+                                    <th style="color:var(--accent-cyan);">本次增量↑ TX</th>
                                 </tr>
                             </thead>
                             <tbody id="traffic-tbody"></tbody>
@@ -2036,70 +2038,6 @@
                             </thead>
                             <tbody id="offline-tbody"></tbody>
                         </table>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- 流量历史统计区域 -->
-        <div class="rm-card" style="margin-top: 20px;">
-            <div class="rm-card-header">
-                <div class="rm-card-title">流量历史统计</div>
-                <div class="rm-period-tabs">
-                    <button class="rm-period-tab active" data-period="daily" onclick="switchTrafficPeriod('daily')">今日</button>
-                    <button class="rm-period-tab" data-period="weekly" onclick="switchTrafficPeriod('weekly')">本周</button>
-                    <button class="rm-period-tab" data-period="monthly" onclick="switchTrafficPeriod('monthly')">本月</button>
-                    <button class="rm-period-tab" data-period="hourly" onclick="switchTrafficPeriod('hourly')">小时趋势</button>
-                </div>
-            </div>
-            <div class="rm-card-body">
-                <div id="history-loading" class="rm-loading" style="display:none;">
-                    <div class="rm-loading-spinner"></div>
-                    <p>正在加载历史数据...</p>
-                </div>
-                <div id="history-empty" class="rm-empty" style="display:none;">
-                    <p>暂无历史流量数据</p>
-                </div>
-                <!-- 流量趋势图表区域 -->
-                <div id="traffic-chart-container" style="display:none; margin-bottom: 20px;">
-                    <div id="traffic-chart" style="width:100%; height:200px; display:flex; align-items:flex-end; gap:4px; padding:10px 0;"></div>
-                    <div id="chart-legend" style="display:flex; justify-content:center; gap:20px; margin-top:10px; font-size:12px;">
-                        <span style="color:var(--accent-cyan);">● 下载 (RX)</span>
-                        <span style="color:var(--accent-green);">● 上传 (TX)</span>
-                    </div>
-                </div>
-                <!-- 历史数据表格 -->
-                <div id="history-table-wrapper" style="display:none;">
-                    <div class="rm-table-wrapper" style="max-height:300px;">
-                        <table class="rm-table">
-                            <thead>
-                                <tr>
-                                    <th>时间</th>
-                                    <th>下载 (RX)</th>
-                                    <th>上传 (TX)</th>
-                                    <th>总计</th>
-                                    <th>占比</th>
-                                </tr>
-                            </thead>
-                            <tbody id="history-tbody"></tbody>
-                        </table>
-                    </div>
-                </div>
-                <!-- 历史汇总卡片 -->
-                <div id="history-summary" style="display:none; margin-top:15px; padding:15px; background:rgba(0,0,0,0.2); border-radius:8px;">
-                    <div style="display:flex; justify-content:space-around; flex-wrap:wrap; gap:15px;">
-                        <div style="text-align:center;">
-                            <div id="hist-rx-label" style="font-size:12px;color:var(--text-secondary);">今日下载</div>
-                            <div style="font-size:18px;font-weight:bold;color:var(--accent-cyan);" id="hist-total-rx">0 B</div>
-                        </div>
-                        <div style="text-align:center;">
-                            <div id="hist-tx-label" style="font-size:12px;color:var(--text-secondary);">今日上传</div>
-                            <div style="font-size:18px;font-weight:bold;color:var(--accent-green);" id="hist-total-tx">0 B</div>
-                        </div>
-                        <div style="text-align:center;">
-                            <div style="font-size:12px;color:var(--text-secondary);">记录数</div>
-                            <div style="font-size:18px;font-weight:bold;color:#BA55D3;" id="hist-record-count">0</div>
-                        </div>
                     </div>
                 </div>
             </div>
@@ -2399,7 +2337,9 @@ function loadAlerts() {
 function openNoteModal(mac, hostname) {
     document.getElementById('note-mac').value = mac;
     document.getElementById('note-device-name').value = hostname || '未知设备';
-    var note = deviceNotes[mac] || {};
+    // 使用统一的MAC格式查找备注
+    var macKey = normalizeMacKey(mac);
+    var note = deviceNotes[macKey] || {};
     document.getElementById('note-content').value = note.note || '';
     document.getElementById('note-device-type').value = note.device_type || '';
     document.getElementById('note-delete-btn').style.display = (note.note || note.device_type) ? 'inline-block' : 'none';
@@ -2410,16 +2350,25 @@ function closeNoteModal() {
     document.getElementById('note-modal').classList.remove('active');
 }
 
+// 统一MAC格式：去除冒号后转大写，保证键一致性
+function normalizeMacKey(mac) {
+    if (!mac) return '';
+    return mac.toUpperCase().replace(/:/g, '');
+}
+
 function saveNote() {
     var mac = document.getElementById('note-mac').value;
     var note = document.getElementById('note-content').value;
     var deviceType = document.getElementById('note-device-type').value;
 
-    var oldNoteData = deviceNotes[mac] ? {...deviceNotes[mac]} : null;
+    // 统一MAC格式为无冒号大写，与后端保持一致
+    var macKey = normalizeMacKey(mac);
+
+    var oldNoteData = deviceNotes[macKey] ? {...deviceNotes[macKey]} : null;
     var newNoteData = {note: note, device_type: deviceType, updated: Date.now() / 1000};
 
     // 乐观更新：立即更新本地缓存和UI（用户无需等待）
-    deviceNotes[mac] = newNoteData;
+    deviceNotes[macKey] = newNoteData;
     closeNoteModal();
 
     // 立即更新所有显示该设备信息的UI元素
@@ -2427,31 +2376,31 @@ function saveNote() {
 
     showToast('正在保存...', 'info');
 
-    var params = 'mac=' + encodeURIComponent(mac) + '&note=' + encodeURIComponent(note) + '&device_type=' + encodeURIComponent(deviceType);
+    var params = 'mac=' + encodeURIComponent(macKey) + '&note=' + encodeURIComponent(note) + '&device_type=' + encodeURIComponent(deviceType);
 
     safeXHRpost('<%=luci.dispatcher.build_url("admin/status/router_assistant/save_device_note")%>', params,
         function(res) {
             if (res.code === 0) {
                 // 服务器保存成功，更新时间戳
-                deviceNotes[mac].updated = Date.now() / 1000;
+                deviceNotes[macKey].updated = Date.now() / 1000;
                 showToast('✓ 设备信息已保存', 'success');
 
                 // 立即同步更新全局设备数据（确保数据一致性）
-                syncDeviceDataGlobally(mac, note, deviceType);
+                syncDeviceDataGlobally(macKey, note, deviceType);
 
                 // 后台静默刷新确保数据一致性（不阻塞用户）
-                silentRefreshDeviceData(mac);
+                silentRefreshDeviceData(macKey);
             } else {
                 // 服务器保存失败，回滚到旧数据
                 if (oldNoteData) {
-                    deviceNotes[mac] = oldNoteData;
+                    deviceNotes[macKey] = oldNoteData;
                 } else {
-                    delete deviceNotes[mac];
+                    delete deviceNotes[macKey];
                 }
                 showToast('✗ 保存失败：' + res.message, 'error');
 
                 // 回滚UI显示
-                updateDeviceDisplayImmediately(mac, oldNoteData ? oldNoteData.note : '', oldNoteData ? oldNoteData.device_type : '');
+                updateDeviceDisplayImmediately(macKey, oldNoteData ? oldNoteData.note : '', oldNoteData ? oldNoteData.device_type : '');
 
                 // 强制刷新以恢复正确状态
                 refreshAll();
@@ -2460,17 +2409,17 @@ function saveNote() {
         function(error) {
             // 网络错误，回滚到旧数据
             if (oldNoteData) {
-                deviceNotes[mac] = oldNoteData;
+                deviceNotes[macKey] = oldNoteData;
             } else {
-                delete deviceNotes[mac];
+                delete deviceNotes[macKey];
             }
             showToast('✗ 网络错误：' + error, 'error');
 
             // 回滚UI显示
-            updateDeviceDisplayImmediately(mac, oldNoteData ? oldNoteData.note : '', oldNoteData ? oldNoteData.device_type : '');
+            updateDeviceDisplayImmediately(macKey, oldNoteData ? oldNoteData.note : '', oldNoteData ? oldNoteData.device_type : '');
 
             // 标记为待重试
-            markForRetry(mac, newNoteData);
+            markForRetry(macKey, newNoteData);
         }
     );
 }
@@ -2542,52 +2491,54 @@ function updateDeviceInTable(tableId, mac, newNote, newDeviceType, frequencyBand
 
                 // 如果有新的备注名称或需要强制更新，替换显示
                 if (newNote !== undefined && newNote !== null) {
-                    // 构建新的显示内容（保留原有图标和频段标识）
-                    var iconMatch = currentHtml.match(/(<svg[^>]*>.*?<\/svg>)/g);
-                    var freqBandMatch = currentHtml.match(/(<span[^>]*rm-badge-2[45]g[^>]*>.*?<\/span>)/g);
+                    // 提取状态标签（已屏蔽、离线）- 这些不受设备类型影响
                     var blockedBadge = currentHtml.match(/(<span[^>]*style="background:var\(--color-danger\)[^>]*>.*?<\/span>)/g);
                     var offlineBadge = currentHtml.match(/(<span class="rm-badge rm-badge-offline">离线<\/span>)/g);
 
+                    // 提取当前显示的设备名称（从DOM中提取纯文本部分）
+                    var tempDivForText = document.createElement('div');
+                    tempDivForText.innerHTML = currentHtml;
+                    var currentDisplayText = tempDivForText.textContent || tempDivForText.innerText || '';
+                    currentDisplayText = currentDisplayText.replace(/\s+/g, ' ').trim();
+
+                    // 判断设备是否为WiFi（用于生成正确的图标）
+                    var isWifiDevice = row.innerHTML.indexOf('rm-badge-wifi') !== -1;
+
                     var newHtml = '';
-                    if (iconMatch) newHtml += iconMatch.join(' ') + ' ';
 
-                    // 显示设备名称（优先使用新备注，否则使用原始hostname）
-                    var displayName = (newNote && newNote.trim() !== '') ? escapeHtml(newNote) : '';
-                    newHtml += displayName;
+                    // 1. 添加设备类型图标（根据最新设备类型动态生成，不使用旧图标）
+                    if (newDeviceType && newDeviceType.trim() !== '') {
+                        // 有新的设备类型 → 使用新生成的图标
+                        newHtml += getDeviceIcon(newDeviceType, isWifiDevice) + ' ';
+                    } else {
+                        // 没有新的设备类型 → 从旧HTML提取第一个SVG图标保留
+                        var oldIconMatch = currentHtml.match(/(<svg[^>]*>.*?<\/svg>)/);
+                        if (oldIconMatch) {
+                            newHtml += oldIconMatch[1] + ' ';
+                        }
+                    }
 
+                    // 2. 显示设备名称（智能选择显示内容）
+                    if (newNote && newNote.trim() !== '') {
+                        newHtml += escapeHtml(newNote);
+                    } else if (currentDisplayText) {
+                        var originalName = extractDeviceNameFromText(currentDisplayText);
+                        newHtml += escapeHtml(originalName);
+                    }
+
+                    // 3. 添加状态标签（已屏蔽）
                     if (blockedBadge) newHtml += ' ' + blockedBadge.join(' ');
 
-                    // 显示频段标签（优先级：传入参数 > DOM提取 > 全局数据查询）
-                    var finalFreqBand = frequencyBand;
-                    if (!finalFreqBand && freqBandMatch && freqBandMatch.length > 0) {
-                        // 从DOM提取成功，保持原样
-                        newHtml += ' ' + freqBandMatch.join(' ');
-                    } else if (finalFreqBand) {
-                        // 使用传入的或从全局数据查找到的频段信息生成标签
-                        newHtml += ' ' + getFrequencyBandIcon(finalFreqBand);
-                    } else if (freqBandMatch && freqBandMatch.length > 0) {
-                        // 兜底：还是用DOM中的
-                        newHtml += ' ' + freqBandMatch.join(' ');
+                    // 4. 显示频段标签（始终通过函数生成全新标签）
+                    if (frequencyBand) {
+                        newHtml += ' ' + getFrequencyBandIcon(frequencyBand);
                     }
 
+                    // 5. 添加离线标签
                     if (offlineBadge) newHtml += ' ' + offlineBadge.join(' ');
 
+                    // 一次性设置完整的HTML（包含正确的图标）
                     nameSpan.innerHTML = newHtml;
-                }
-
-                // 如果有新的设备类型，更新图标
-                if (newDeviceType && newDeviceType.trim() !== '') {
-                    var isWifi = row.innerHTML.indexOf('rm-badge-wifi') !== -1;
-                    var newIcon = getDeviceIcon(newDeviceType, isWifi);
-
-                    // 替换第一个SVG图标（设备类型图标）
-                    var svgIcon = nameSpan.querySelector('svg');
-                    if (svgIcon) {
-                        var tempDiv = document.createElement('div');
-                        tempDiv.innerHTML = newIcon;
-                        var newSvg = tempDiv.firstChild;
-                        svgIcon.parentNode.replaceChild(newSvg, svgIcon);
-                    }
                 }
 
                 // 高亮显示更新的行（视觉反馈）
@@ -2597,6 +2548,31 @@ function updateDeviceInTable(tableId, mac, newNote, newDeviceType, frequencyBand
             break; // 只更新第一个匹配的行
         }
     }
+}
+
+// 从显示文本中提取纯净的设备名称（过滤掉状态标签文字）
+function extractDeviceNameFromText(text) {
+    if (!text) return '';
+
+    // 需要过滤的状态文字列表
+    var filterPatterns = [
+        '已屏蔽',           // 屏蔽状态
+        '离线',             // 离线状态
+        '2.4G', '5G',       // 频段标识
+        'WiFi', '有线'      // 连接类型
+    ];
+
+    var cleanedText = text;
+
+    // 移除所有状态文字
+    for (var i = 0; i < filterPatterns.length; i++) {
+        cleanedText = cleanedText.replace(new RegExp(filterPatterns[i], 'g'), '');
+    }
+
+    // 清理多余空白
+    cleanedText = cleanedText.replace(/\s+/g, ' ').trim();
+
+    return cleanedText;
 }
 
 // 高亮显示更新的行（提供视觉反馈）
@@ -2738,33 +2714,35 @@ function markForRetry(mac, noteData) {
 
 // 重试保存操作
 function retrySaveNote(mac) {
-    var retryInfo = pendingRetries[mac];
+    // 确保MAC格式统一
+    var macKey = normalizeMacKey(mac);
+    var retryInfo = pendingRetries[macKey];
     if (!retryInfo || retryInfo.retryCount >= retryInfo.maxRetries) {
-        delete pendingRetries[mac];
+        delete pendingRetries[macKey];
         return;
     }
 
     retryInfo.retryCount++;
-    console.log('重试保存设备备注 (' + retryInfo.retryCount + '/' + retryInfo.maxRetries + '):', mac);
+    console.log('重试保存设备备注 (' + retryInfo.retryCount + '/' + retryInfo.maxRetries + '):', macKey);
 
-    var params = 'mac=' + encodeURIComponent(mac) +
+    var params = 'mac=' + encodeURIComponent(macKey) +
                  '&note=' + encodeURIComponent(retryInfo.data.note || '') +
                  '&device_type=' + encodeURIComponent(retryInfo.data.device_type || '');
 
     safeXHRpost('<%=luci.dispatcher.build_url("admin/status/router_assistant/save_device_note")%>', params,
         function(res) {
             if (res.code === 0) {
-                delete pendingRetries[mac];
+                delete pendingRetries[macKey];
                 showToast('✓ 重试成功：设备信息已保存', 'success');
-                deviceNotes[mac].updated = Date.now() / 1000;
+                deviceNotes[macKey].updated = Date.now() / 1000;
             } else {
                 if (retryInfo.retryCount < retryInfo.maxRetries) {
                     // 继续重试
                     setTimeout(function() {
-                        retrySaveNote(mac);
+                        retrySaveNote(macKey);
                     }, 3000 * retryInfo.retryCount); // 递增延迟
                 } else {
-                    delete pendingRetries[mac];
+                    delete pendingRetries[macKey];
                     showToast('✗ 多次重试仍失败，请手动刷新页面', 'error');
                 }
             }
@@ -2772,10 +2750,10 @@ function retrySaveNote(mac) {
         function(error) {
             if (retryInfo.retryCount < retryInfo.maxRetries) {
                 setTimeout(function() {
-                    retrySaveNote(mac);
+                    retrySaveNote(macKey);
                 }, 3000 * retryInfo.retryCount);
             } else {
-                delete pendingRetries[mac];
+                delete pendingRetries[macKey];
             }
         }
     );
@@ -2784,19 +2762,22 @@ function retrySaveNote(mac) {
 function deleteNote() {
     var mac = document.getElementById('note-mac').value;
 
+    // 统一MAC格式为无冒号大写
+    var macKey = normalizeMacKey(mac);
+
     // 保存旧数据用于回滚
-    var oldNoteData = deviceNotes[mac] ? {...deviceNotes[mac]} : null;
+    var oldNoteData = deviceNotes[macKey] ? {...deviceNotes[macKey]} : null;
 
     // 乐观更新：立即从本地缓存删除
-    delete deviceNotes[mac];
+    delete deviceNotes[macKey];
     closeNoteModal();
 
     // 立即更新UI显示（恢复为原始设备名称）
-    updateDeviceDisplayImmediately(mac, '', '');
+    updateDeviceDisplayImmediately(macKey, '', '');
 
     showToast('正在删除...', 'info');
 
-    var params = 'mac=' + encodeURIComponent(mac);
+    var params = 'mac=' + encodeURIComponent(macKey);
 
     safeXHRpost('<%=luci.dispatcher.build_url("admin/status/router_assistant/delete_device_note")%>', params,
         function(res) {
@@ -2804,16 +2785,16 @@ function deleteNote() {
                 showToast('✓ 备注已删除', 'success');
 
                 // 后台静默刷新确保数据一致性
-                silentRefreshDeviceData(mac);
+                silentRefreshDeviceData(macKey);
             } else {
                 // 删除失败，回滚数据
                 if (oldNoteData) {
-                    deviceNotes[mac] = oldNoteData;
+                    deviceNotes[macKey] = oldNoteData;
                 }
                 showToast('✗ 删除失败：' + res.message, 'error');
 
                 // 回滚UI
-                updateDeviceDisplayImmediately(mac, oldNoteData ? oldNoteData.note : '', oldNoteData ? oldNoteData.device_type : '');
+                updateDeviceDisplayImmediately(macKey, oldNoteData ? oldNoteData.note : '', oldNoteData ? oldNoteData.device_type : '');
 
                 // 强制刷新恢复正确状态
                 refreshAll();
@@ -2822,12 +2803,12 @@ function deleteNote() {
         function(error) {
             // 网络错误，回滚数据
             if (oldNoteData) {
-                deviceNotes[mac] = oldNoteData;
+                deviceNotes[macKey] = oldNoteData;
             }
             showToast('✗ 网络错误：' + error, 'error');
 
             // 回滚UI
-            updateDeviceDisplayImmediately(mac, oldNoteData ? oldNoteData.note : '', oldNoteData ? oldNoteData.device_type : '');
+            updateDeviceDisplayImmediately(macKey, oldNoteData ? oldNoteData.note : '', oldNoteData ? oldNoteData.device_type : '');
         }
     );
 }
@@ -3209,16 +3190,24 @@ function renderTraffic(data) {
     }
 
     if (Object.keys(stats).length > 0) {
-        var rxFormatted = formatSize(stats.total_rx || 0);
-        var txFormatted = formatSize(stats.total_tx || 0);
-        var totalAllFormatted = formatSize((stats.total_rx || 0) + (stats.total_tx || 0));
-        
+        // 优先使用本月累计流量（monthly_total_rx/tx），如果没有则回退到总流量
+        var monthlyRx = stats.monthly_total_rx || stats.total_rx || 0;
+        var monthlyTx = stats.monthly_total_tx || stats.total_tx || 0;
+
+        var rxFormatted = formatSize(monthlyRx);
+        var txFormatted = formatSize(monthlyTx);
+        var totalAllFormatted = formatSize(monthlyRx + monthlyTx);
+
         document.getElementById('stat-total-rx').innerHTML = rxFormatted.value + '<span class="rm-stat-unit">' + rxFormatted.unit + '</span>';
         document.getElementById('stat-total-tx').innerHTML = txFormatted.value + '<span class="rm-stat-unit">' + txFormatted.unit + '</span>';
         document.getElementById('stat-online-count').textContent = stats.online_count || 0;
         document.getElementById('stat-offline-count').textContent = stats.offline_count || 0;
         document.getElementById('online-count-label').textContent = stats.online_count || 0;
         document.getElementById('stat-total-all').innerHTML = totalAllFormatted.value + '<span class="rm-stat-unit">' + totalAllFormatted.unit + '</span>';
+
+        // 保存本月统计数据供今日统计汇总使用（确保数据一致性）
+        currentTrafficStats.monthly_total_rx = monthlyRx;
+        currentTrafficStats.monthly_total_tx = monthlyTx;
     }
 
     initPageState('traffic-online');
@@ -3306,6 +3295,13 @@ function renderTraffic(data) {
             // 上传(TX)图标
             '<td class="rm-traffic-tx"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:4px;"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg> ' + escapeHtml(dev.tx_display) + '</td>' +
             '<td class="rm-traffic-total" ' + totalColorClass + '>' + escapeHtml(dev.total_display) + '</td>' +
+            // 本次增量（自上次采集以来的新增流量）：左边RX增量，右边TX增量
+            '<td style="text-align:center;color:var(--accent-cyan);font-size:12px;">' +
+                (dev.rx_delta_display || '0 B') +
+            '</td>' +
+            '<td style="text-align:center;color:var(--accent-cyan);font-size:12px;">' +
+                (dev.tx_delta_display || '0 B') +
+            '</td>' +
             '</tr>';
     });
     document.getElementById('traffic-tbody').innerHTML = onlineHtml;
@@ -3718,8 +3714,7 @@ var refreshConfig = {
 var isFirstLoad = {
     devices: true,
     traffic: true,
-    wifi: true,
-    trafficHistory: true
+    wifi: true
 };
 
 var lastDataHash = {
@@ -3775,8 +3770,7 @@ function clearCache(key) {
 var pendingRequests = {
     devices: false,
     traffic: false,
-    wifi: false,
-    trafficHistory: false
+    wifi: false
 };
 
 var wifiStatusData = [];
@@ -3884,25 +3878,6 @@ function safeXHRpostTimeout(url, params, callback, errorCallback, timeout) {
 }
 
 /* ========== 流量历史统计功能（参考loadTraffic防抖模式）========== */
-var currentTrafficPeriod = 'daily';
-var trafficHistoryLoaded = false;
-
-/**
- * 切换流量统计时间周期
- * @param {string} period - 时间周期: daily/weekly/monthly/hourly
- */
-function switchTrafficPeriod(period) {
-    if (currentTrafficPeriod === period && trafficHistoryLoaded) return;
-    currentTrafficPeriod = period;
-    trafficHistoryLoaded = false;
-    isFirstLoad.trafficHistory = true;
-    var tabs = document.querySelectorAll('.rm-period-tab');
-    tabs.forEach(function(tab) {
-        tab.classList.toggle('active', tab.dataset.period === period);
-    });
-    loadTrafficHistory(period);
-}
-
 /**
  * 格式化字节数为可读字符串
  * @param {number} bytes - 字节数
@@ -3914,307 +3889,6 @@ function formatBytes(bytes) {
     if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
     if (bytes < 1024 * 1024 * 1024) return (bytes / 1048576).toFixed(1) + ' MB';
     return (bytes / 1073741824).toFixed(2) + ' GB';
-}
-
-/**
- * 加载流量历史数据（参考loadTraffic的防抖模式）
- * @param {number|string} retryCount - 重试次数或时间周期
- */
-function loadTrafficHistory(retryCount) {
-    if (pendingRequests.trafficHistory) return;
-
-    var period = currentTrafficPeriod || 'daily';
-
-    if (typeof retryCount === 'string') {
-        period = retryCount;
-        retryCount = 0;
-    }
-    if (retryCount === undefined) retryCount = 0;
-
-    pendingRequests.trafficHistory = true;
-
-    var loading = document.getElementById('history-loading');
-    var empty = document.getElementById('history-empty');
-    var chartContainer = document.getElementById('traffic-chart-container');
-    var tableWrapper = document.getElementById('history-table-wrapper');
-    var summary = document.getElementById('history-summary');
-
-    if (isFirstLoad.trafficHistory) {
-        if (loading) loading.style.display = 'block';
-        if (chartContainer) chartContainer.style.display = 'none';
-        if (tableWrapper) tableWrapper.style.display = 'none';
-        if (summary) summary.style.display = 'none';
-    }
-    if (empty) empty.style.display = 'none';
-
-    var url = '<%=luci.dispatcher.build_url("admin/status/router_assistant/get_traffic_history")%>';
-    url += '?period=' + (period === 'hourly' ? 'hourly' : 'daily');
-
-    safeXHR(url,
-        function(res) {
-            pendingRequests.trafficHistory = false;
-            isFirstLoad.trafficHistory = false;
-            trafficHistoryLoaded = true;
-            if (loading) loading.style.display = 'none';
-
-            if (res.code === 0) {
-                var data = extractData(res);
-                var rawList = [];
-
-                if (period === 'hourly') {
-                    rawList = data.hourly_list || res.hourly_list || [];
-                } else {
-                    rawList = data.daily_list || res.daily_list || [];
-                }
-
-                var list = filterHistoryByPeriod(rawList, period);
-
-                if (list && list.length > 0) {
-                    renderTrafficChart(list, period);
-                    renderHistoryTable(list, period);
-                    renderHistorySummary(list, period);
-
-                    if (chartContainer) chartContainer.style.display = 'block';
-                    if (tableWrapper) tableWrapper.style.display = 'block';
-                    if (summary) summary.style.display = 'block';
-                } else {
-                    if (empty) {
-                        empty.style.display = 'block';
-                        empty.innerHTML = '<p>暂无' + getPeriodName(period) + '流量数据</p>';
-                    }
-                }
-            } else {
-                if (empty) {
-                    empty.style.display = 'block';
-                    empty.innerHTML = '<p>获取流量历史失败</p>';
-                }
-            }
-        },
-        function(error) {
-            pendingRequests.trafficHistory = false;
-            isFirstLoad.trafficHistory = false;
-            if (loading) loading.style.display = 'none';
-            if (retryCount < refreshConfig.maxRetries) {
-                setTimeout(function() {
-                    loadTrafficHistory(retryCount + 1);
-                }, refreshConfig.retryDelay);
-            } else {
-                if (empty) {
-                    empty.style.display = 'block';
-                    empty.innerHTML = '<p>加载失败，请稍后重试</p>';
-                }
-            }
-        }
-    );
-}
-
-/**
- * 获取周期名称
- * @param {string} period - 周期标识
- * @returns {string} 周期中文名称
- */
-function getPeriodName(period) {
-    var names = {
-        'hourly': '小时',
-        'daily': '今日',
-        'weekly': '本周',
-        'monthly': '本月'
-    };
-    return names[period] || '';
-}
-
-/**
- * 根据时间周期过滤历史数据
- * @param {Array} rawList - 原始数据列表
- * @param {string} period - 时间周期: hourly/daily/weekly/monthly
- * @returns {Array} 过滤后的数据列表
- */
-function filterHistoryByPeriod(rawList, period) {
-    if (!rawList || rawList.length === 0) return [];
-
-    var now = new Date();
-    var todayStr = now.getFullYear() + '-' +
-        String(now.getMonth() + 1).padStart(2, '0') + '-' +
-        String(now.getDate()).padStart(2, '0');
-
-    var filtered = [];
-
-    if (period === 'daily') {
-        rawList.forEach(function(item) {
-            var dateKey = item.date || '';
-            if (dateKey === todayStr || dateKey.indexOf(todayStr) === 0) {
-                filtered.push(item);
-            }
-        });
-        if (filtered.length === 0 && rawList.length > 0) {
-            filtered.push(rawList[rawList.length - 1]);
-        }
-    } else if (period === 'weekly') {
-        var weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-        var weekAgoStr = weekAgo.getFullYear() + '-' +
-            String(weekAgo.getMonth() + 1).padStart(2, '0') + '-' +
-            String(weekAgo.getDate()).padStart(2, '0');
-        rawList.forEach(function(item) {
-            var dateKey = item.date || '';
-            if (dateKey >= weekAgoStr) {
-                filtered.push(item);
-            }
-        });
-        var maxWeekCount = 7;
-        if (filtered.length > maxWeekCount) {
-            filtered = filtered.slice(-maxWeekCount);
-        }
-    } else if (period === 'monthly') {
-        var monthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-        var monthAgoStr = monthAgo.getFullYear() + '-' +
-            String(monthAgo.getMonth() + 1).padStart(2, '0') + '-' +
-            String(monthAgo.getDate()).padStart(2, '0');
-        rawList.forEach(function(item) {
-            var dateKey = item.date || '';
-            if (dateKey >= monthAgoStr) {
-                filtered.push(item);
-            }
-        });
-        var maxMonthCount = 30;
-        if (filtered.length > maxMonthCount) {
-            filtered = filtered.slice(-maxMonthCount);
-        }
-    } else if (period === 'hourly') {
-        var maxHourlyCount = 24;
-        if (rawList.length > maxHourlyCount) {
-            filtered = rawList.slice(-maxHourlyCount);
-        } else {
-            filtered = rawList;
-        }
-    }
-
-    return filtered;
-}
-
-/**
- * 渲染流量趋势柱状图
- * @param {Array} list - 流量数据列表
- * @param {string} period - 时间周期
- */
-function renderTrafficChart(list, period) {
-    var chartEl = document.getElementById('traffic-chart');
-    if (!chartEl || !list || list.length === 0) return;
-
-    var maxVal = 0;
-    list.forEach(function(item) {
-        var total = (item.rx || 0) + (item.tx || 0);
-        if (total > maxVal) maxVal = total;
-    });
-
-    if (maxVal === 0) maxVal = 1;
-
-    var html = '';
-    var displayCount = Math.min(list.length, period === 'hourly' ? 24 : 30);
-    var startIdx = Math.max(0, list.length - displayCount);
-
-    for (var i = startIdx; i < list.length; i++) {
-        var item = list[i];
-        var rx = item.rx || 0;
-        var tx = item.tx || 0;
-        var total = rx + tx;
-
-        var rxHeight = Math.max((rx / maxVal) * 150, 2);
-        var txHeight = Math.max((tx / maxVal) * 150, 2);
-
-        var label = '';
-        if (period === 'hourly') {
-            label = (item.time || '').substring(8, 10) + ':00';
-        } else {
-            label = (item.date || '').substring(5, 10);
-        }
-
-        html += '<div class="chart-bar-group">';
-        html += '<div class="chart-bars">';
-        html += '<div class="chart-bar rx-bar" style="height:' + rxHeight + 'px;" title="下载: ' + formatBytes(rx) + '"></div>';
-        html += '<div class="chart-bar tx-bar" style="height:' + txHeight + 'px;" title="上传: ' + formatBytes(tx) + '"></div>';
-        html += '</div>';
-        html += '<div class="chart-label">' + label + '</div>';
-        html += '</div>';
-    }
-
-    chartEl.innerHTML = html;
-}
-
-/**
- * 渲染历史数据表格
- * @param {Array} list - 流量数据列表
- * @param {string} period - 时间周期
- */
-function renderHistoryTable(list, period) {
-    var tbody = document.getElementById('history-tbody');
-    if (!tbody || !list) return;
-
-    var totalAllRx = 0, totalAllTx = 0;
-    list.forEach(function(item) {
-        totalAllRx += (item.rx || 0);
-        totalAllTx += (item.tx || 0);
-    });
-    var grandTotal = totalAllRx + totalAllTx;
-    if (grandTotal === 0) grandTotal = 1;
-
-    var html = '';
-
-    for (var i = list.length - 1; i >= 0; i--) {
-        var item = list[i];
-        var rx = item.rx || 0;
-        var tx = item.tx || 0;
-        var total = rx + tx;
-        var percent = ((total / grandTotal) * 100).toFixed(1);
-
-        var timeLabel = '';
-        if (period === 'hourly') {
-            timeLabel = item.time || '-';
-            timeLabel = timeLabel.substring(0, 4) + '-' + timeLabel.substring(4, 6) + '-' + timeLabel.substring(6, 8) + ' ' + timeLabel.substring(8, 10) + ':00';
-        } else {
-            timeLabel = item.date || '-';
-            timeLabel = timeLabel.substring(0, 4) + '-' + timeLabel.substring(4, 6) + '-' + timeLabel.substring(6, 8);
-        }
-
-        html += '<tr>';
-        html += '<td style="font-size:12px;color:var(--text-secondary);">' + timeLabel + '</td>';
-        html += '<td><span style="color:var(--accent-cyan);">' + formatBytes(rx) + '</span></td>';
-        html += '<td><span style="color:var(--accent-green);">' + formatBytes(tx) + '</span></td>';
-        html += '<td><strong>' + formatBytes(total) + '</strong></td>';
-        html += '<td>';
-        html += '<div class="traffic-progress"><div class="traffic-progress-bar" style="width:' + percent + '%;"></div></div>';
-        html += '<span style="margin-left:8px;font-size:11px;color:var(--text-secondary);">' + percent + '%</span>';
-        html += '</td>';
-        html += '</tr>';
-    }
-
-    tbody.innerHTML = html;
-}
-
-/**
- * 渲染历史汇总信息
- * @param {Array} list - 流量数据列表
- * @param {string} period - 时间周期
- */
-function renderHistorySummary(list, period) {
-    var totalRx = 0, totalTx = 0;
-    list.forEach(function(item) {
-        totalRx += (item.rx || 0);
-        totalTx += (item.tx || 0);
-    });
-
-    var elRx = document.getElementById('hist-total-rx');
-    var elTx = document.getElementById('hist-total-tx');
-    var elCount = document.getElementById('hist-record-count');
-    var elRxLabel = document.getElementById('hist-rx-label');
-    var elTxLabel = document.getElementById('hist-tx-label');
-
-    if (elRx) elRx.textContent = formatBytes(totalRx);
-    if (elTx) elTx.textContent = formatBytes(totalTx);
-    if (elCount) elCount.textContent = list.length + ' 条';
-
-    var periodLabel = getPeriodName(period);
-    if (elRxLabel) elRxLabel.textContent = periodLabel + '下载';
-    if (elTxLabel) elTxLabel.textContent = periodLabel + '上传';
 }
 
 function updateTimeDisplay() {
@@ -4606,10 +4280,6 @@ document.querySelectorAll('.rm-tab').forEach(function(tab) {
         document.getElementById(tabId).classList.add('active');
 
         startTabRefresh(tab.dataset.tab);
-
-        if (tab.dataset.tab === 'traffic' && !trafficHistoryLoaded) {
-            loadTrafficHistory(currentTrafficPeriod || 'daily');
-        }
     });
 });
 

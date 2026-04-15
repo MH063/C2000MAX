@@ -5,7 +5,7 @@ module("luci.controller.router_assistant", package.seeall)
 DATA_DIR_NAME = "router_assistant"
 DATA_FILE_NAME = "traffic_stats.json"
 NOTES_FILE_NAME = "device_notes.json"
-HISTORY_FILE_NAME = "traffic_history.json"
+-- HISTORY_FILE_NAME 已删除（流量历史统计模块已移除）
 ALERTS_FILE_NAME = "traffic_alerts.json"
 BLOCKLIST_FILE_NAME = "mac_blocklist.json"
 
@@ -242,8 +242,14 @@ local function file_lock_acquire(lock_path, timeout_ms)
             fd:close()
             return true, lock_file
         end
-        -- 锁被占用，短暂等待后重试（nixio.sleep 让出CPU，不阻塞进程）
-        nixio.sleep(0.05)
+        -- 锁被占用，短暂等待后重试
+        -- 使用 pcall 包装 nixio.sleep，避免该函数不存在时崩溃
+        pcall(function()
+            local n = require("nixio")
+            if n and type(n.sleep) == "function" then
+                n.sleep(0.05)
+            end
+        end)
     end
     return false, lock_file
 end
@@ -858,7 +864,8 @@ local function load_dhcp_leases()
                     local name = parts[4]
                     if safe_mac_validate(mac) and safe_ip_validate(ip) then
                         if name and name ~= "" and name ~= "*" and #name <= 64 then
-                            leases[mac] = {ip = ip, name = name}
+                            -- 统一为无冒号大写格式，与设备列表的 device_id 格式一致
+                            leases[mac:gsub(":", ""):upper()] = {ip = ip, name = name}
                         end
                     end
                 end
@@ -949,11 +956,13 @@ end
 
 local function is_device_blocked(mac)
     if not mac or mac == "" then return false end
-    local mac_upper = mac:upper()
+    -- 统一格式：无冒号大写
+    local mac_normalized = mac:gsub(":", ""):upper()
 
     -- 使用文件缓存（跨进程共享）
     local blocked_macs = get_blocked_macs_from_iptables()
-    return blocked_macs[mac_upper] == true
+    -- blocked_macs 格式可能带冒号或无冒号，都要检查
+    return blocked_macs[mac_normalized] == true or blocked_macs[mac:upper()] == true
 end
 
 local function get_storage_path()
@@ -1118,7 +1127,8 @@ function api_get_devices()
                 local is_upstream = is_upstream_interface(ifname)
                 local device_type = get_device_type(hostname, mac_upper, is_wifi)
 
-                local note_data = device_notes[mac_upper]
+                -- 备注查找：优先用无冒号 device_id（当前格式），兼容带冒号 mac_upper（旧格式）
+                local note_data = device_notes[device_id] or device_notes[mac_upper]
                 if note_data and note_data.device_type and note_data.device_type ~= "" then
                     device_type = note_data.device_type
                 end
@@ -1338,289 +1348,151 @@ end
 
 -- ========== MAC屏蔽列表持久化管理结束 ==========
 
-local function aggregate_traffic_history(incoming_traffic)
-    -- 优先使用传入的当前流量数据（已在api_get_traffic中计算并保存），避免从文件重复读取时已被另一进程覆盖
-    local current_traffic = incoming_traffic or load_json_file(DATA_FILE_NAME) or {}
-    local history = load_json_file(HISTORY_FILE_NAME) or {hourly = {}, daily = {}}
-    local current_time = os.time()
-    local current_hour = os.date("%Y%m%d%H", current_time)
-    local current_day = os.date("%Y%m%d", current_time)
+-- ========== 流量快照管理（替代历史聚合） ==========
 
-    -- 注意：total_rx/total_tx 在遍历在线设备时由 L1621-1622 逐个累加（每设备只加一次）
-    -- 不再从 current_traffic 快照预累加，避免与 L1621-1622 的新计算值重复计数
-    local total_rx = 0
-    local total_tx = 0
+local MONTHLY_SNAPSHOT_FILE = "traffic_monthly.json"
+local HOURLY_SNAPSHOT_FILE = "traffic_hourly.json"
 
-    local last_hour = history.last_hour or ""
-    if last_hour ~= current_hour then
-        local prev_hourly = history.hourly[history.last_hour] or {}
-        local prev_total_rx = prev_hourly.total_rx or 0
-        local prev_total_tx = prev_hourly.total_tx or 0
+-- 获取或创建月度流量快照基准
+-- 新月份开始时自动记录每个设备的当前 history 作为本月起始基准
+-- 返回：{ devices: { mac: { rx, tx }, ... }, created_at }
+local function get_or_update_monthly_snapshot(current_month, current_history)
+    local data = load_json_file(MONTHLY_SNAPSHOT_FILE) or {}
+    local snapshot = data[current_month]
 
-        local delta_rx = total_rx - prev_total_rx
-        local delta_tx = total_tx - prev_total_tx
-        
-        -- 检查是否有有效的历史记录（同时检查hourly和daily表，避免从仅含daily数据的备份恢复时被误判为首次采集）
-        local has_valid_history = false
-        for _ in pairs(history.hourly or {}) do
-            has_valid_history = true
-            break
+    -- 检查快照是否需要重建：
+    -- 1. 月份变化了（新月份开始）
+    -- 2. 当前月份的快照不存在（首次创建或被删除）
+    -- 3. 快照格式不对（旧格式没有 devices 字段）
+    local needs_rebuild = (data.last_month ~= current_month) or (not snapshot) or (snapshot and not snapshot.devices)
+
+    if needs_rebuild then
+        -- 记录每个设备的当前 history 作为本月起始基准
+        local devices = {}
+        for mac, dev_data in pairs(current_history) do
+            devices[mac] = {
+                rx = dev_data.rx or 0,
+                tx = dev_data.tx or 0
+            }
         end
-        if not has_valid_history then
-            for _ in pairs(history.daily or {}) do
-                has_valid_history = true
-                break
-            end
-        end
-
-        -- 首次采集（无历史记录）时，不记录增量（避免将历史累计总量误记为单小时增量）
-        if not has_valid_history then
-            delta_rx = 0
-            delta_tx = 0
-        end
-
-        -- 1. 负值处理（计数器重置或异常）
-        if delta_rx < 0 then delta_rx = 0 end
-        if delta_tx < 0 then delta_tx = 0 end
-
-        -- 2. 极小噪声过滤（< 1KB）
-        -- 注意：小时级流量已在轮询时过滤（MIN_THRESHOLD=1KB），此处过滤的是跨小时的增量噪声
-        if delta_rx < 1024 then delta_rx = 0 end
-        if delta_tx < 1024 then delta_tx = 0 end
-
-        -- 不设置任何上限！真实流量无论多高都记录
-        
-        local function parse_hour(hour_str)
-            if not hour_str or hour_str == "" or #hour_str < 10 then
-                return 0
-            end
-            local year = tonumber(hour_str:sub(1, 4))
-            local month = tonumber(hour_str:sub(5, 6))
-            local day = tonumber(hour_str:sub(7, 8))
-            local hour = tonumber(hour_str:sub(9, 10))
-            if not year or not month or not day then
-                return 0
-            end
-            return os.time({
-                year = year,
-                month = month,
-                day = day,
-                hour = hour or 0,
-                min = 0, sec = 0
-            })
-        end
-
-        local prev_hour_time = parse_hour(last_hour)
-        local curr_hour_time = parse_hour(current_hour)
-        local hours_diff = 0
-        if prev_hour_time > 0 and curr_hour_time > 0 then
-            hours_diff = math.floor(os.difftime(curr_hour_time, prev_hour_time) / 3600)
-        end
-
-        if hours_diff > 1 and prev_total_rx > 0 then
-            local avg_rx = math.floor(delta_rx / hours_diff)
-            local avg_tx = math.floor(delta_tx / hours_diff)
-
-            for i = 1, hours_diff - 1 do
-                local mid_hour = os.date("%Y%m%d%H", prev_hour_time + i * 3600)
-                history.hourly[mid_hour] = {
-                    rx = avg_rx,
-                    tx = avg_tx,
-                    total_rx = prev_total_rx + avg_rx * i,
-                    total_tx = prev_total_tx + avg_tx * i,
-                    timestamp = prev_hour_time + i * 3600,
-                    estimated = true
-                }
-            end
-        end
-
-        history.hourly[current_hour] = {
-            rx = delta_rx,
-            tx = delta_tx,
-            total_rx = total_rx,
-            total_tx = total_tx,
-            timestamp = current_time
+        snapshot = {
+            devices = devices,
+            created_at = os.time()
         }
-        history.last_hour = current_hour
-        local hour_keys = {}
-        for k, _ in pairs(history.hourly) do
-            table.insert(hour_keys, k)
+        data[current_month] = snapshot
+        data.last_month = current_month
+        save_json_file(MONTHLY_SNAPSHOT_FILE, data)
+        local nixio_log = require("nixio")
+        local dev_count = 0
+        for _ in pairs(devices) do dev_count = dev_count + 1 end
+        nixio_log.syslog("info", "[RouterAssistant] Month " .. current_month .. ", monthly snapshot (re)created with " .. dev_count .. " devices")
+    end
+
+    return snapshot or { devices = {}, created_at = 0 }
+end
+
+-- 获取设备本月流量（当前 history - 月初基准）
+-- 返回：{ rx, tx }，无基准时使用当前值作为本月流量（新设备当月流量=当月累计）
+local function get_device_monthly_flow(mac, current_rx, current_tx, snapshot)
+    if snapshot and snapshot.devices then
+        local baseline = snapshot.devices[mac]
+        if baseline then
+            -- 有基准，正常计算差值
+            local rx = math.max(0, current_rx - (baseline.rx or 0))
+            local tx = math.max(0, current_tx - (baseline.tx or 0))
+            return { rx = rx, tx = tx }
         end
-        table.sort(hour_keys)
-        while #hour_keys > MAX_HOURLY_RECORDS do
-            local oldest = table.remove(hour_keys, 1)
-            history.hourly[oldest] = nil
+    end
+    -- 无快照或新设备：使用当前值作为本月流量（从本月开始累计）
+    return { rx = current_rx, tx = current_tx }
+end
+
+-- 获取当前小时的实时累计增量（从小时开始到现在的差值）
+-- 每次调用都更新，支持小时趋势实时显示
+local function calculate_hourly_realtime(current_hour, current_total_rx, current_total_tx)
+    local data = load_json_file(HOURLY_SNAPSHOT_FILE) or {}
+
+    if data.last_hour ~= current_hour then
+        -- 新小时开始：记录起始基准
+        data[current_hour] = {
+            start_rx = current_total_rx,
+            start_tx = current_total_tx,
+            created_at = os.time()
+        }
+        data.last_hour = current_hour
+        save_json_file(HOURLY_SNAPSHOT_FILE, data)
+    end
+
+    local snap = data[current_hour] or { start_rx = current_total_rx, start_tx = current_total_tx }
+    local realtime_rx = math.max(0, current_total_rx - (snap.start_rx or 0))
+    local realtime_tx = math.max(0, current_total_tx - (snap.start_tx or 0))
+
+    -- 噪声过滤（< 1KB）
+    if realtime_rx < 1024 then realtime_rx = 0 end
+    if realtime_tx < 1024 then realtime_tx = 0 end
+
+    return {
+        rx = realtime_rx,
+        tx = realtime_tx,
+        total_rx = current_total_rx,
+        total_tx = current_total_tx,
+        hour_key = current_hour
+    }
+end
+
+-- 获取最近N小时的小时数据列表（用于小时趋势图表）
+local function get_recent_hours_list(current_hour, max_hours)
+    local data = load_json_file(HOURLY_SNAPSHOT_FILE) or {}
+    local result = {}
+
+    -- 收集所有已结束的小时（有完整数据的）
+    for hour_key, hour_data in pairs(data) do
+        if hour_key and #hour_key >= 10 and hour_key ~= "last_hour" and hour_data.start_rx then
+            table.insert(result, {
+                time = hour_key,
+                display_time = string.sub(hour_key, 1, 4) .. "-" ..
+                               string.sub(hour_key, 5, 6) .. "-" ..
+                               string.sub(hour_key, 7, 8) .. " " ..
+                               string.sub(hour_key, 9, 10) .. ":00",
+                rx = tonumber(hour_data.rx) or 0,
+                tx = tonumber(hour_data.tx) or 0,
+                total_rx = tonumber(hour_data.total_rx) or 0,
+                total_tx = tonumber(hour_data.total_tx) or 0
+            })
         end
     end
 
-    local last_day = history.last_day or ""
-
-    local function parse_date(date_str)
-        if not date_str or date_str == "" or #date_str < 8 then
-            return 0
-        end
-        local year = tonumber(date_str:sub(1, 4))
-        local month = tonumber(date_str:sub(5, 6))
-        local day = tonumber(date_str:sub(7, 8))
-        if not year or not month or not day then
-            return 0
-        end
-        return os.time({
-            year = year,
-            month = month,
-            day = day,
-            hour = 0, min = 0, sec = 0
+    -- 添加当前小时的实时数据
+    local current_snapshot = data[current_hour]
+    if current_snapshot and current_snapshot.start_rx then
+        local cur_rx = math.max(0, (current_snapshot.total_rx or 0) - (current_snapshot.start_rx or 0))
+        local cur_tx = math.max(0, (current_snapshot.total_tx or 0) - (current_snapshot.start_tx or 0))
+        if cur_rx < 1024 then cur_rx = 0 end
+        if cur_tx < 1024 then cur_tx = 0 end
+        table.insert(result, {
+            time = current_hour,
+            display_time = string.sub(current_hour, 1, 4) .. "-" ..
+                           string.sub(current_hour, 5, 6) .. "-" ..
+                           string.sub(current_hour, 7, 8) .. " " ..
+                           string.sub(current_hour, 9, 10) .. ":00",
+            rx = cur_rx,
+            tx = cur_tx,
+            total_rx = current_snapshot.total_rx or 0,
+            total_tx = current_snapshot.total_tx or 0,
+            is_realtime = true
         })
     end
 
-    local function calculate_daily_from_hourly(target_day)
-        local day_rx = 0
-        local day_tx = 0
-        local has_data = false
-        -- 异常值过滤：只忽略小于1KB的数据（可能是计数器刚重置的噪声）
-        local MIN_THRESHOLD = 1 * 1024  -- 1KB
-        for hour_str, hour_data in pairs(history.hourly) do
-            if hour_str:sub(1, 8) == target_day then
-                local hour_rx = hour_data.rx or 0
-                local hour_tx = hour_data.tx or 0
-                -- 过滤异常值：只忽略过小的数据（噪声）
-                if hour_rx >= MIN_THRESHOLD then
-                    day_rx = day_rx + hour_rx
-                    has_data = true
-                end
-                if hour_tx >= MIN_THRESHOLD then
-                    day_tx = day_tx + hour_tx
-                    has_data = true
-                end
-            end
-        end
-        if has_data then
-            return day_rx, day_tx
-        end
-        return nil, nil
+    -- 按时间排序并限制数量
+    table.sort(result, function(a, b) return a.time < b.time end)
+    while #result > (max_hours or 24) do
+        table.remove(result, 1)
     end
 
-    if last_day ~= current_day then
-        local prev_daily = history.daily[history.last_day] or {}
-        local prev_total_rx = prev_daily.total_rx or 0
-        local prev_total_tx = prev_daily.total_tx or 0
-
-        local delta_rx = total_rx - prev_total_rx
-        local delta_tx = total_tx - prev_total_tx
-        
-        -- 检查是否有有效的历史记录
-        local has_valid_history = false
-        for _ in pairs(history.daily or {}) do
-            has_valid_history = true
-            break
-        end
-        
-        -- 首次采集（无历史记录）时，不记录增量（避免记录累计总量）
-        if not has_valid_history then
-            delta_rx = 0
-            delta_tx = 0
-        end
-        
-        -- 1. 负值处理（计数器重置）
-        if delta_rx < 0 then delta_rx = 0 end
-        if delta_tx < 0 then delta_tx = 0 end
-        
-        -- 2. 极小噪声过滤（< 1KB）
-        if delta_rx < 1024 then delta_rx = 0 end
-        if delta_tx < 1024 then delta_tx = 0 end
-        
-        -- 不设置任何上限！真实流量无论多高都记录
-
-        local prev_day_time = parse_date(last_day)
-        local curr_day_time = parse_date(current_day)
-        local days_diff = 0
-        if prev_day_time > 0 and curr_day_time > 0 then
-            days_diff = math.floor(os.difftime(curr_day_time, prev_day_time) / 86400)
-        end
-
-        if days_diff > 1 and prev_total_rx > 0 then
-            local avg_rx = math.floor(delta_rx / days_diff)
-            local avg_tx = math.floor(delta_tx / days_diff)
-            local remaining_rx = delta_rx
-            local remaining_tx = delta_tx
-
-            for i = 1, days_diff - 1 do
-                local mid_day = os.date("%Y%m%d", prev_day_time + i * 86400)
-                local day_rx = avg_rx
-                local day_tx = avg_tx
-                if i == days_diff - 1 then
-                    day_rx = remaining_rx - avg_rx * (days_diff - 2)
-                    day_tx = remaining_tx - avg_tx * (days_diff - 2)
-                end
-                history.daily[mid_day] = {
-                    rx = day_rx,
-                    tx = day_tx,
-                    total_rx = prev_total_rx + avg_rx * i,
-                    total_tx = prev_total_tx + avg_tx * i,
-                    timestamp = prev_day_time + i * 86400,
-                    estimated = true
-                }
-            end
-        end
-
-        history.last_day = current_day
-    end
-
-    local day_rx_from_hourly, day_tx_from_hourly = calculate_daily_from_hourly(current_day)
-
-    if day_rx_from_hourly and day_tx_from_hourly then
-        history.daily[current_day] = {
-            rx = day_rx_from_hourly,
-            tx = day_tx_from_hourly,
-            total_rx = total_rx,
-            total_tx = total_tx,
-            timestamp = current_time,
-            source = "hourly"
-        }
-    else
-        local existing = history.daily[current_day]
-        if not existing or existing.source ~= "hourly" then
-            local prev_for_delta = history.daily[history.last_day] or {}
-            if last_day == current_day and existing then
-                prev_for_delta = {total_rx = existing.snapshot_rx or 0, total_tx = existing.snapshot_tx or 0}
-            end
-            local prev_total_rx = prev_for_delta.total_rx or 0
-            local prev_total_tx = prev_for_delta.total_tx or 0
-
-            local delta_rx = total_rx - prev_total_rx
-            local delta_tx = total_tx - prev_total_tx
-            if delta_rx < 0 then delta_rx = total_rx end
-            if delta_tx < 0 then delta_tx = total_tx end
-
-            history.daily[current_day] = {
-                rx = math.max(delta_rx, (existing and existing.rx or 0)),
-                tx = math.max(delta_tx, (existing and existing.tx or 0)),
-                total_rx = total_rx,
-                total_tx = total_tx,
-                snapshot_rx = total_rx,
-                snapshot_tx = total_tx,
-                timestamp = current_time,
-                source = "delta"
-            }
-        else
-            history.daily[current_day].total_rx = total_rx
-            history.daily[current_day].total_tx = total_tx
-            history.daily[current_day].timestamp = current_time
-        end
-    end
-
-    local day_keys = {}
-    for k, _ in pairs(history.daily) do
-        table.insert(day_keys, k)
-    end
-    table.sort(day_keys)
-    while #day_keys > 30 do
-        local oldest = table.remove(day_keys, 1)
-        history.daily[oldest] = nil
-    end
-    save_json_file(HISTORY_FILE_NAME, history)
-    return history
+    return result
 end
+
+-- ========== 流量快照管理结束 ==========
 
 function api_get_traffic()
     local response_data = nil
@@ -1657,12 +1529,23 @@ function api_get_traffic()
         if output and output ~= "" then
             local parse_ok, data = pcall(json.parse, output)
             if parse_ok and data and data.client then
+                -- 防御性归一化：将history表所有key转为无冒号大写格式（兼容旧版各种MAC格式）
+                -- 注意：此操作必须在设备循环之前执行一次即可，避免每个设备重复归一化
+                local normalized_history = {}
+                for hist_mac, hist_data in pairs(history) do
+                    normalized_history[hist_mac:gsub(":", ""):upper()] = hist_data
+                end
+                history = normalized_history
+
                 for mac, client in pairs(data.client) do
                     local mac_str = (mac and type(mac) == "string") and mac or (mac and tostring(mac)) or ""
+                    -- 统一格式：去除冒号后转大写，保证 MAC 键一致
+                    local mac_normalized = mac_str:gsub(":", ""):upper()
                     local mac_upper = mac_str:upper()
                     local real_mac_raw = client.real_mac
-                    local real_mac = (real_mac_raw and type(real_mac_raw) == "string" and real_mac_raw ~= "") and real_mac_raw or ""
-                    local device_id = (real_mac ~= "" and real_mac ~= mac_str) and real_mac:upper() or mac_upper
+                    local real_mac_raw_fmt = (real_mac_raw and type(real_mac_raw) == "string" and real_mac_raw ~= "") and real_mac_raw:gsub(":", ""):upper() or ""
+                    -- 格式统一后再比较
+                    local device_id = (real_mac_raw_fmt ~= "" and real_mac_raw_fmt ~= mac_normalized) and real_mac_raw_fmt or mac_normalized
                     local hostname = (client.hostname and type(client.hostname) == "string" and client.hostname ~= "" and client.hostname ~= "*") and client.hostname or nil
                     if not hostname then
                         hostname = dhcp_leases[device_id] and dhcp_leases[device_id].name or "Unknown"
@@ -1673,12 +1556,6 @@ function api_get_traffic()
                     elseif client.ap_ipaddr and type(client.ap_ipaddr) == "string" and client.ap_ipaddr ~= "" then
                         ip = client.ap_ipaddr
                     end
-                    -- 防御性归一化：将history表所有key转为大写（兼容旧版小写MAC保存格式）
-                    local normalized_history = {}
-                    for hist_mac, hist_data in pairs(history) do
-                        normalized_history[hist_mac:upper()] = hist_data
-                    end
-                    history = normalized_history
                     -- 处理随机MAC问题：如果当前MAC不在历史中，尝试通过hostname+MAC前缀(OUI)+IP匹配
                     -- 改进逻辑：
                     -- 1. 精确匹配 MAC → 直接复用
@@ -1754,11 +1631,19 @@ function api_get_traffic()
                         local counter_reset = (router_tx_bytes < last_raw_rx) or (router_rx_bytes < last_raw_tx)
                         
                         local device_total_rx, device_total_tx
+                        local current_reset_count = (hist.reset_count and type(hist.reset_count) == "number") and hist.reset_count or 0
                         if counter_reset then
-                            -- 计数器重置(路由器重启)后，累加重启前历史总量 + 重启后新计数器值
-                            -- math.max 防止极端情况(计数器异常小/负值)导致总量减少
-                            device_total_rx = math.max(router_tx_bytes, 0) + last_rx
-                            device_total_tx = math.max(router_rx_bytes, 0) + last_tx
+                            -- 计数器重置(路由器重启)后，只有首次重置才累加重启前的历史总量
+                            -- 后续重启若计数器仍小，说明还在重置周期内，不再重复累加
+                            if current_reset_count == 0 then
+                                device_total_rx = math.max(router_tx_bytes, 0) + last_rx
+                                device_total_tx = math.max(router_rx_bytes, 0) + last_tx
+                            else
+                                -- 已在之前累加过，本次只使用新计数器值
+                                device_total_rx = math.max(router_tx_bytes, 0)
+                                device_total_tx = math.max(router_rx_bytes, 0)
+                            end
+                            current_reset_count = current_reset_count + 1
                         else
                             -- 正常情况：历史总量 + 本次轮询增量(本次原始值 - 上次原始值)
                             local delta_rx = router_tx_bytes - last_raw_rx
@@ -1789,6 +1674,11 @@ function api_get_traffic()
                             frequency_band = get_wifi_frequency_band(ifname)
                         end
 
+                        local rx_delta = device_total_rx - last_rx
+                        local tx_delta = device_total_tx - last_tx
+                        if rx_delta < 0 then rx_delta = 0 end
+                        if tx_delta < 0 then tx_delta = 0 end
+
                         table.insert(online_devices, {
                             mac = device_id,
                             hostname = hostname,
@@ -1799,6 +1689,10 @@ function api_get_traffic()
                             rx_display = format_bytes(device_total_rx),
                             tx_display = format_bytes(device_total_tx),
                             total_display = format_bytes(device_total),
+                            rx_delta = rx_delta,
+                            tx_delta = tx_delta,
+                            rx_delta_display = format_bytes(rx_delta),
+                            tx_delta_display = format_bytes(tx_delta),
                             online = true,
                             first_seen = hist.first_seen or current_time,
                             is_wifi = is_wifi,
@@ -1812,6 +1706,7 @@ function api_get_traffic()
                             tx = device_total_tx,
                             raw_rx = router_tx_bytes,
                             raw_tx = router_rx_bytes,
+                            reset_count = current_reset_count,
                             ip = ip,
                             hostname = hostname,
                             mac = mac_upper,
@@ -1828,6 +1723,13 @@ function api_get_traffic()
             if not current_traffic[dev_id] then
                 local age = current_time - ((data and data.last_seen) or 0)
                 if age < SECONDS_PER_WEEK then
+                    local offline_rx = data.rx or 0
+                    local offline_tx = data.tx or 0
+
+                    -- 将离线设备也加入总流量统计（修复：确保与aggregate_traffic_history数据源一致）
+                    total_rx = total_rx + offline_rx
+                    total_tx = total_tx + offline_tx
+
                     current_traffic[dev_id] = data
                     offline_count = offline_count + 1
 
@@ -1862,8 +1764,58 @@ function api_get_traffic()
             json_str = serialize_err or "{}"
         end
         local save_ok, save_path = save_with_file_lock(history_file, json_str)
-        -- 传入 current_traffic 避免竞态：另一进程可能在我们保存后立即更新 DATA_FILE
-        aggregate_traffic_history(current_traffic)
+
+        -- 使用快照机制（仅用于新月检测和标记）
+        -- 月度统计 = 当前总量 - 月初快照基准（差值法，正确反映本月新增流量）
+        local current_month = os.date("%Y%m", current_time)
+        local current_hour = os.date("%Y%m%d%H", current_time)
+
+        local monthly_snapshot = get_or_update_monthly_snapshot(current_month, history)
+
+        -- 计算本月新增流量（当前总量 - 月初快照），防御负值
+        -- 使用与设备列表相同的数据源（current_traffic），保证数据一致性
+        local monthly_total_rx = 0
+        local monthly_total_tx = 0
+        for mac, dev_data in pairs(current_traffic) do
+            local monthly = get_device_monthly_flow(mac, dev_data.rx or 0, dev_data.tx or 0, monthly_snapshot)
+            monthly_total_rx = monthly_total_rx + monthly.rx
+            monthly_total_tx = monthly_total_tx + monthly.tx
+        end
+
+        -- 第二遍：更新所有设备的本月流量（基于月度快照）
+        for _, dev in ipairs(online_devices) do
+            local mac = dev.mac
+            local dev_data = current_traffic[mac]
+            if dev_data then
+                local monthly = get_device_monthly_flow(mac, dev_data.rx or 0, dev_data.tx or 0, monthly_snapshot)
+                dev.rx = monthly.rx
+                dev.tx = monthly.tx
+                dev.total = monthly.rx + monthly.tx
+                dev.rx_display = format_bytes(monthly.rx)
+                dev.tx_display = format_bytes(monthly.tx)
+                dev.total_display = format_bytes(monthly.rx + monthly.tx)
+            end
+        end
+        for _, dev in ipairs(offline_devices) do
+            local mac = dev.mac
+            local dev_data = current_traffic[mac]
+            if dev_data then
+                local monthly = get_device_monthly_flow(mac, dev_data.rx or 0, dev_data.tx or 0, monthly_snapshot)
+                dev.rx = monthly.rx
+                dev.tx = monthly.tx
+                dev.total = monthly.rx + monthly.tx
+                dev.rx_display = format_bytes(monthly.rx)
+                dev.tx_display = format_bytes(monthly.tx)
+                dev.total_display = format_bytes(monthly.rx + monthly.tx)
+            end
+        end
+
+        -- 当前小时实时增量
+        local hourly_data = calculate_hourly_realtime(current_hour, total_rx, total_tx)
+
+        -- 最近24小时数据列表（用于小时趋势图表）
+        local hourly_list = get_recent_hours_list(current_hour, 24)
+
         table.sort(online_devices, function(a, b)
             local ta = (a and a.total) or 0
             local tb = (b and b.total) or 0
@@ -1874,20 +1826,27 @@ function api_get_traffic()
             local tb = (b and b.total) or 0
             return ta > tb
         end)
+
         response_data = {
             code = 0,
             online_devices = online_devices,
             offline_devices = offline_devices,
             stats = {
-                -- total_rx/total_tx: 所有在线设备的历史累计总量
-                -- 由L1621-1622在遍历在线设备时逐个累加（每设备只加一次），不再从快照预累加
-                -- 离线设备的历史流量通过DATA_FILE快照一次性包含在total中
-                -- online_count/offline_count 是本次API调用时的快照数量
+                -- 所有设备的历史累计总量（在线+离线）
                 total_rx = total_rx,
                 total_tx = total_tx,
+                -- 本月累计流量（差值法：当前总量 - 月初快照基准）
+                monthly_total_rx = monthly_total_rx,
+                monthly_total_tx = monthly_total_tx,
+                monthly_total = monthly_total_rx + monthly_total_tx,
+                -- 当前小时实时累计增量
+                hourly_realtime_rx = hourly_data.rx,
+                hourly_realtime_tx = hourly_data.tx,
                 online_count = online_count,
                 offline_count = offline_count
-            }
+            },
+            -- 小时趋势数据（用于图表渲染）
+            hourly_list = hourly_list
         }
     end)
     if not ok then
@@ -2047,7 +2006,8 @@ function api_save_device_note()
             result.message = "MAC地址格式无效"
             return
         end
-        local mac_formatted = mac_clean:sub(1,2) .. ":" .. mac_clean:sub(3,4) .. ":" .. mac_clean:sub(5,6) .. ":" .. mac_clean:sub(7,8) .. ":" .. mac_clean:sub(9,10) .. ":" .. mac_clean:sub(11,12)
+        -- 统一为无冒号大写格式，与设备列表的 device_id 格式一致
+        local mac_formatted = mac_clean
         local safe_note = sanitize_input(note or "")
         local safe_device_type = sanitize_input(device_type or "")
         local notes = load_json_file(NOTES_FILE_NAME) or {}
@@ -2089,7 +2049,8 @@ function api_delete_device_note()
             result.message = "MAC地址格式无效"
             return
         end
-        local mac_formatted = mac_clean:sub(1,2) .. ":" .. mac_clean:sub(3,4) .. ":" .. mac_clean:sub(5,6) .. ":" .. mac_clean:sub(7,8) .. ":" .. mac_clean:sub(9,10) .. ":" .. mac_clean:sub(11,12)
+        -- 统一为无冒号大写格式，与设备列表的 device_id 格式一致
+        local mac_formatted = mac_clean
         local notes = load_json_file(NOTES_FILE_NAME) or {}
         notes[mac_formatted] = nil
         save_json_file(NOTES_FILE_NAME, notes)
@@ -2108,43 +2069,20 @@ function api_collect_traffic()
     if not require_csrf_token() then return end
     local result = {code = 0, message = "流量采集完成"}
     local ok, err = pcall(function()
-        aggregate_traffic_history()
+        -- 调用 /usr/lib/traffic_stats/collect.lua collect 执行实际流量采集
+        local collect_cmd = "lua /usr/lib/traffic_stats/collect.lua collect 2>&1"
+        local handle = io.popen(collect_cmd)
+        if handle then
+            local output = handle:read("*all")
+            handle:close()
+            -- 捕获 collect.lua 的输出（包含 print 调试信息）
+            if output and output ~= "" then
+                require("nixio").syslog("info", "[RouterAssistant] collect.lua output: " .. output:gsub("\n", " "))
+            end
+        end
     end)
     if not ok then
         result = error_response(-1, "流量采集失败", tostring(err))
-    else
-        result = success_response(result)
-    end
-    luci.http.prepare_content("application/json")
-    luci.http.write_json(result)
-end
-
-function api_get_traffic_history()
-    local result = {code = 0, history = {hourly = {}, daily = {}}}
-    local ok, err = pcall(function()
-        local history = load_json_file(HISTORY_FILE_NAME)
-        if history then
-            result.history = history
-        end
-        local period = luci.http.formvalue("period") or "daily"
-        if period == "hourly" then
-            local hourly_list = {}
-            for k, v in pairs(result.history.hourly or {}) do
-                table.insert(hourly_list, {time = k, rx = v.rx or 0, tx = v.tx or 0, timestamp = v.timestamp or 0})
-            end
-            table.sort(hourly_list, function(a, b) return a.time < b.time end)
-            result.hourly_list = hourly_list
-        else
-            local daily_list = {}
-            for k, v in pairs(result.history.daily or {}) do
-                table.insert(daily_list, {date = k, rx = v.rx or 0, tx = v.tx or 0, timestamp = v.timestamp or 0})
-            end
-            table.sort(daily_list, function(a, b) return a.date < b.date end)
-            result.daily_list = daily_list
-        end
-    end)
-    if not ok then
-        result = error_response(-1, "获取流量历史失败", tostring(err))
     else
         result = success_response(result)
     end
@@ -2338,11 +2276,22 @@ function api_get_wifi_status()
                 -- 获取连接的客户端
                 local stations_output = sys.exec("iwinfo " .. ifname .. " assoclist 2>/dev/null")
                 if stations_output and stations_output ~= "" and not stations_output:match("No station") then
-                    for mac, signal in stations_output:gmatch("([%x%x:%x%x:%x%x:%x%x:%x%x:%x%x]).-\n%s*Signal:%s*([%-%d]+)%s*dBm") do
+                    -- iwinfo assoclist 实际输出格式：AA:BB:CC:DD:EE:FF  -49 dBm / unknown (SNR -49)  4000 ms ago
+                    -- MAC地址后直接跟 "-XX dBm"，不是 "Signal:"
+                    for mac, signal in stations_output:gmatch("([%x%x:%x%x:%x%x:%x%x:%x%x:%x%x])%s+([%-%d]+)%s+dBm") do
                         table.insert(status.connected_stations, {
                             mac = mac,
                             signal = signal .. " dBm"
                         })
+                    end
+                    -- 兼容：如果上面没匹配到，尝试只匹配MAC地址（无Signal信息的情况）
+                    if #status.connected_stations == 0 then
+                        for mac in stations_output:gmatch("([%x%x:%x%x:%x%x:%x%x:%x%x:%x%x])") do
+                            table.insert(status.connected_stations, {
+                                mac = mac,
+                                signal = "-"
+                            })
+                        end
                     end
                 end
             end
@@ -3120,12 +3069,14 @@ function api_clear_all_data()
             all = {
                 DATA_FILE_NAME,
                 NOTES_FILE_NAME,
-                HISTORY_FILE_NAME,
+                "traffic_monthly.json",
+                "traffic_hourly.json",
                 ALERTS_FILE_NAME
             },
             traffic = {
                 DATA_FILE_NAME,
-                HISTORY_FILE_NAME
+                "traffic_monthly.json",
+                "traffic_hourly.json"
             },
             notes = {
                 NOTES_FILE_NAME
