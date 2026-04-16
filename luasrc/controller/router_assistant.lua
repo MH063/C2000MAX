@@ -371,7 +371,20 @@ local function shell_escape(arg)
     return "'" .. arg:gsub("'", "'\\''") .. "'"
 end
 
--- 安全的 MAC 地址验证（严格格式）
+-- ========== MAC地址格式常量 ==========
+-- 统一规定：所有存储、API返回、日志均使用带冒号大写格式（AA:BB:CC:DD:EE:FF）
+-- 内部处理时使用无冒号纯十六进制格式（AABBCCDDEEFF）
+local MAC_FMT_COLON = "AA:BB:CC:DD:EE:FF"  -- 标准MAC格式（用于存储和API返回）
+local MAC_FMT_PLAIN = "AABBCCDDEEFF"        -- 纯十六进制格式（仅内部处理使用）
+
+-- 安全验证MAC地址（防注入）
+-- @param mac string 原始MAC地址
+-- @return string|nil 12位大写十六进制字符串（如 "AABBCCDDEEFF"）或nil
+-- 安全保证：返回值仅包含 [A-F0-9]，无特殊字符，可直接用于：
+--   - 文件名拼接（已二次验证）
+--   - shell命令拼接（已加引号保护）
+--   - 日志记录
+-- 注意：拼入shell命令时仍建议加引号（防御深度，见问题1修复）
 local function safe_mac_validate(mac)
     if not mac or type(mac) ~= "string" then
         return nil
@@ -420,7 +433,13 @@ local function safe_ifname(ifname)
     return ifname
 end
 
--- 安全的 IP 地址验证（严格格式）
+-- 安全验证IP地址（防注入）
+-- @param ip string 原始IP地址
+-- @return string|nil 验证通过的IP地址或nil
+-- 安全保证：返回值仅包含 [0-9.]，每段0-255，可直接用于：
+--   - shell命令拼接（已加引号保护）
+--   - 日志记录
+-- 注意：拼入shell命令时仍建议加引号（防御深度，见问题1修复）
 local function safe_ip_validate(ip)
     if not ip or type(ip) ~= "string" then
         return nil
@@ -552,6 +571,22 @@ local function exec_background(cmd_name, args)
     local cmd = "nohup " .. cmd_name .. " " .. safe_args .. " >/dev/null 2>&1 &"
     os.execute(cmd)
     return true
+end
+
+-- 【问题5修复】强制超时执行包装器（用于 os.execute 调用）
+-- 确保所有后台命令都有超时保护，防止命令阻塞导致502
+local function safe_os_execute(cmd, timeout_sec)
+    local t = timeout_sec or CMD_TIMEOUT
+    if has_timeout_cmd() then
+        return os.execute("timeout " .. t .. " " .. cmd)
+    else
+        -- 无timeout命令时记录警告但不阻止执行
+        pcall(function()
+            local nixio = require("nixio")
+            nixio.syslog("warning", "[RouterAssistant] no timeout command, running without protection: " .. tostring(t))
+        end)
+        return os.execute(cmd)
+    end
 end
 
 -- 统一错误响应格式（不暴露敏感信息）
@@ -1035,8 +1070,8 @@ local function load_dhcp_leases()
                     local name = parts[4]
                     if safe_mac_validate(mac) and safe_ip_validate(ip) then
                         if name and name ~= "" and name ~= "*" and #name <= 64 then
-                            -- 统一为无冒号大写格式，与设备列表的 device_id 格式一致
-                            leases[mac:gsub(":", ""):upper()] = {ip = ip, name = name}
+                            -- 统一为带冒号大写格式（MAC_FMT_COLON），与设备列表 mac 字段格式一致
+                            leases[format_mac_colon(mac:gsub(":", ""):upper())] = {ip = ip, name = name}
                         end
                     end
                 end
@@ -1396,7 +1431,7 @@ function api_get_devices()
                     table.insert(devices_list, {
                         ip = ip,
                         ipv6 = ipv6_list,
-                        mac = mac_upper,
+                        mac = format_mac_colon(mac_normalized),
                         -- 修复问题10：对hostname进行HTML转义，防止XSS
                         hostname = sanitize_input(hostname),
                         iface = ifname,
@@ -2047,10 +2082,12 @@ function api_get_traffic()
                         if rx_delta < 0 then rx_delta = 0 end
                         if tx_delta < 0 then tx_delta = 0 end
 
-                        -- 确保 MAC 格式一致：使用 normalizeMacKey 保证 key 格式统一
+                        -- 确保 MAC 格式一致：
+                        -- 存储 key 使用无冒号格式（mac_normalized），API 返回使用带冒号格式（MAC_FMT_COLON）
                         local mac_key = mac_normalized  -- 统一使用无冒号大写格式作为 key
+                        local mac_display = format_mac_colon(mac_key)  -- 统一使用带冒号大写格式作为显示格式
                         table.insert(online_devices, {
-                            mac = mac_key,
+                            mac = mac_display,
                             -- 修复问题10：对hostname进行HTML转义，防止XSS
                             hostname = sanitize_input(hostname),
                             ip = ip,
@@ -2111,7 +2148,7 @@ function api_get_traffic()
                     end
 
                     table.insert(offline_devices, {
-                        mac = dev_id,
+                        mac = format_mac_colon(dev_id),
                         hostname = data.hostname or "Unknown",
                         ip = data.ip or "-",
                         rx = data.rx or 0,
@@ -2443,11 +2480,17 @@ function api_save_device_note()
             result.message = "MAC地址格式无效"
             return
         end
-        -- 统一为无冒号大写格式，与设备列表的 device_id 格式一致
-        local mac_formatted = mac_clean
+        -- 统一为带冒号大写格式（MAC_FMT_COLON），与设备列表 mac 字段格式一致
+        local mac_formatted = format_mac_colon(mac_clean)
         local safe_note = sanitize_input(note or "")
         local safe_device_type = sanitize_input(device_type or "")
         local notes = load_json_file(NOTES_FILE_NAME) or {}
+        -- 迁移旧数据：兼容无冒号格式的 key
+        local legacy_mac = mac_clean
+        if notes[legacy_mac] and not notes[mac_formatted] then
+            notes[mac_formatted] = notes[legacy_mac]
+            notes[legacy_mac] = nil
+        end
         local existing = notes[mac_formatted] or {}
         notes[mac_formatted] = {
             note = safe_note,
@@ -2487,10 +2530,12 @@ function api_delete_device_note()
             result.message = "MAC地址格式无效"
             return
         end
-        -- 统一为无冒号大写格式，与设备列表的 device_id 格式一致
-        local mac_formatted = mac_clean
+        -- 统一为带冒号大写格式（MAC_FMT_COLON），与设备列表 mac 字段格式一致
+        local mac_formatted = format_mac_colon(mac_clean)
+        local legacy_mac = mac_clean  -- 兼容旧无冒号格式
         local notes = load_json_file(NOTES_FILE_NAME) or {}
         notes[mac_formatted] = nil
+        notes[legacy_mac] = nil  -- 同时删除旧格式 key（如果存在）
         save_json_file(NOTES_FILE_NAME, notes)
         result.message = "备注已删除"
     end)
@@ -2870,31 +2915,34 @@ function api_kick_device()
     -- 延迟 ≈ 写文件(~1ms) + nohup启动(~1ms) + iptables执行(~1-2ms) ≈ 3-5ms（人类不可感知）
     local formatted_mac = format_mac_colon(safe_mac)
 
+    -- 【安全加固】所有拼入shell命令的变量加引号保护（防御深度）
+    -- safe_mac 来自 safe_mac_validate()，仅含 [A-F0-9]{12}，但引号防御更稳妥
+    local safe_mac_quoted = "'" .. formatted_mac .. "'"
+    local safe_ip_quoted = safe_device_ip and ("'" .. safe_device_ip .. "'") or "''"
+    local safe_mac_lower_quoted = "'" .. mac_lower .. "'"
+    local safe_mac_colon_quoted = "'" .. mac_colon .. "'"
+
     local script_parts = {}
 
     -- 【最高优先级】iptables DROP 规则（最先执行，~0.5ms/条）
-    table.insert(script_parts, "iptables -I INPUT -m mac --mac-source " .. formatted_mac .. " -j DROP 2>/dev/null")
-    table.insert(script_parts, "iptables -I FORWARD -m mac --mac-source " .. formatted_mac .. " -j DROP 2>/dev/null")
+    table.insert(script_parts, "iptables -I INPUT -m mac --mac-source " .. safe_mac_quoted .. " -j DROP 2>/dev/null")
+    table.insert(script_parts, "iptables -I FORWARD -m mac --mac-source " .. safe_mac_quoted .. " -j DROP 2>/dev/null")
 
     -- 【高优先级】conntrack 清除已有连接（阻止残留流量）
-    local safe_device_ip = nil
-    if device_ip ~= "" then
-        safe_device_ip = safe_ip_validate(device_ip)
-    end
     if safe_device_ip then
-        table.insert(script_parts, "conntrack -D -s " .. safe_device_ip .. " 2>/dev/null")
-        table.insert(script_parts, "conntrack -D -d " .. safe_device_ip .. " 2>/dev/null")
+        table.insert(script_parts, "conntrack -D -s " .. safe_ip_quoted .. " 2>/dev/null")
+        table.insert(script_parts, "conntrack -D -d " .. safe_ip_quoted .. " 2>/dev/null")
     end
     table.insert(script_parts, "conntrack -D -m " .. mac_no_colon_lower .. " 2>/dev/null")
 
     -- 【低优先级】iw 命令踢出无线连接（MTK驱动可能阻塞，timeout保护）
     local ifaces = {"ra0", "rai0", "ra1", "rai1", "apcli0", "apcli1"}
     for _, iface in ipairs(ifaces) do
-        table.insert(script_parts, "timeout 3 iw dev " .. iface .. " station del " .. mac_colon .. " 2>/dev/null || true")
+        table.insert(script_parts, "timeout 3 iw dev " .. iface .. " station del " .. safe_mac_colon_quoted .. " 2>/dev/null || true")
     end
 
     -- 【低优先级】access_ctl.sh ACL黑名单（如果存在）
-    table.insert(script_parts, "if [ -x /usr/bin/access_ctl.sh ]; then timeout 5 access_ctl.sh -m " .. mac_lower .. " -a 0 2>/dev/null || true; fi")
+    table.insert(script_parts, "if [ -x /usr/bin/access_ctl.sh ]; then timeout 5 access_ctl.sh -m " .. safe_mac_lower_quoted .. " -a 0 2>/dev/null || true; fi")
 
     -- 写入脚本并后台执行（按顺序：iptables→conntrack→iw→access_ctl）
     -- 先写入黑名单文件（同步操作，成功后才执行 iptables）
@@ -2911,17 +2959,29 @@ function api_kick_device()
 
     -- 文件写入成功，执行 iptables 脚本（后台运行）
     local script_content = "#!/bin/sh\n" .. table.concat(script_parts, "\n")
-    local script_file = "/tmp/router_assistant_kick_" .. os.time() .. "_" .. mac_no_colon .. ".sh"
+    -- 【问题2修复】二次验证文件名安全性（虽然 safe_mac 已保证纯十六进制）
+    local safe_filename = mac_no_colon:match("^([A-Fa-f0-9]+)$")
+    if not safe_filename then
+        nixio.syslog("err", "[RouterAssistant] kick_device: invalid filename chars in " .. tostring(mac_no_colon))
+        luci.http.prepare_content("application/json")
+        luci.http.write_json({code = -1, message = "内部错误", timestamp = os.time()})
+        return
+    end
+    local script_file = "/tmp/router_assistant_kick_" .. os.time() .. "_" .. safe_filename .. ".sh"
     local sfd = io.open(script_file, "w")
     if sfd then
         sfd:write(script_content .. "\n")
         sfd:close()
-        os.execute("chmod +x " .. script_file .. " 2>/dev/null")
-        os.execute("nohup /bin/sh " .. script_file .. " >/dev/null 2>&1 &")
-        os.execute("(sleep 15 && rm -f " .. script_file .. ") >/dev/null 2>&1 &")
+        -- 【问题5修复】使用 safe_os_execute 添加超时保护
+        safe_os_execute("chmod +x '" .. script_file .. "' 2>/dev/null", 3)
+        safe_os_execute("nohup /bin/sh '" .. script_file .. "' >/dev/null 2>&1 &", 10)
+        safe_os_execute("(sleep 15 && rm -f '" .. script_file .. "') >/dev/null 2>&1 &", 20)
     else
+        -- 【问题4修复】fallback 路径：转义 cmd 中的单引号（防御深度）
+        nixio.syslog("warning", "[RouterAssistant] kick_device: cannot write script file, using fallback for " .. mac_colon)
         for _, cmd in ipairs(script_parts) do
-            os.execute("nohup /bin/sh -c '" .. cmd .. "' >/dev/null 2>&1 &")
+            local escaped_cmd = cmd:gsub("'", "'\\''")
+            safe_os_execute("nohup /bin/sh -c '" .. escaped_cmd .. "' >/dev/null 2>&1 &", 10)
         end
     end
 
@@ -2977,11 +3037,15 @@ function api_enable_device()
     -- ========== 所有耗时操作后台异步执行 ==========
     local formatted_mac = format_mac_colon(safe_mac)
 
+    -- 【安全加固】所有拼入shell命令的变量加引号保护（防御深度）
+    local safe_mac_quoted = "'" .. formatted_mac .. "'"
+    local safe_mac_lower_quoted = "'" .. mac_lower .. "'"
+
     local script_parts = {}
 
     -- 1. 删除 iptables 规则
-    table.insert(script_parts, "iptables -D INPUT -m mac --mac-source " .. formatted_mac .. " -j DROP 2>/dev/null || true")
-    table.insert(script_parts, "iptables -D FORWARD -m mac --mac-source " .. formatted_mac .. " -j DROP 2>/dev/null || true")
+    table.insert(script_parts, "iptables -D INPUT -m mac --mac-source " .. safe_mac_quoted .. " -j DROP 2>/dev/null || true")
+    table.insert(script_parts, "iptables -D FORWARD -m mac --mac-source " .. safe_mac_quoted .. " -j DROP 2>/dev/null || true")
 
     -- 2. 仅删除指定 MAC 的 iptables 规则（不再按 OUI 批量清理，保持与添加操作对称）
     --[[ 已禁用 OUI 联动删除（避免误删其他同品牌设备）
@@ -3007,22 +3071,34 @@ function api_enable_device()
     ]]
 
     -- 3. access_ctl.sh 恢复（如果存在）
-    table.insert(script_parts, "if [ -x /usr/bin/access_ctl.sh ]; then timeout 5 access_ctl.sh -m " .. mac_lower .. " -a 1 2>/dev/null || true; fi")
+    table.insert(script_parts, "if [ -x /usr/bin/access_ctl.sh ]; then timeout 5 access_ctl.sh -m " .. safe_mac_lower_quoted .. " -a 1 2>/dev/null || true; fi")
 
     -- 将所有操作写入临时脚本并后台执行（使用 MAC 唯一定位，避免并发覆盖）
     local script_content = table.concat(script_parts, "\n")
-    local script_file = "/tmp/router_assistant_enable_" .. mac_no_colon .. ".sh"
+    -- 【问题2修复】二次验证文件名安全性
+    local safe_filename = mac_no_colon:match("^([A-Fa-f0-9]+)$")
+    if not safe_filename then
+        nixio.syslog("err", "[RouterAssistant] enable_device: invalid filename chars in " .. tostring(mac_no_colon))
+        luci.http.prepare_content("application/json")
+        luci.http.write_json({code = -1, message = "内部错误", timestamp = os.time()})
+        return
+    end
+    local script_file = "/tmp/router_assistant_enable_" .. safe_filename .. ".sh"
     local sfd = io.open(script_file, "w")
     if sfd then
         sfd:write("#!/bin/sh\n")
         sfd:write(script_content .. "\n")
         sfd:close()
-        os.execute("chmod +x " .. script_file .. " 2>/dev/null")
-        os.execute("nohup /bin/sh " .. script_file .. " >/dev/null 2>&1 &")
-        os.execute("(sleep 10 && rm -f " .. script_file .. ") >/dev/null 2>&1 &")
+        -- 【问题5修复】使用 safe_os_execute 添加超时保护
+        safe_os_execute("chmod +x '" .. script_file .. "' 2>/dev/null", 3)
+        safe_os_execute("nohup /bin/sh '" .. script_file .. "' >/dev/null 2>&1 &", 10)
+        safe_os_execute("(sleep 10 && rm -f '" .. script_file .. "') >/dev/null 2>&1 &", 15)
     else
+        -- 【问题4修复】fallback 路径：转义 cmd 中的单引号（防御深度）
+        nixio.syslog("warning", "[RouterAssistant] enable_device: cannot write script file, using fallback for " .. mac_colon)
         for _, cmd in ipairs(script_parts) do
-            os.execute("nohup /bin/sh -c '" .. cmd .. "' >/dev/null 2>&1 &")
+            local escaped_cmd = cmd:gsub("'", "'\\''")
+            safe_os_execute("nohup /bin/sh -c '" .. escaped_cmd .. "' >/dev/null 2>&1 &", 10)
         end
     end
 
