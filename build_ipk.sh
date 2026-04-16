@@ -129,6 +129,7 @@ if [ -n "$DATA_DIR" ]; then
 
     # 删除所有流量统计数据（格式可能不兼容，必须清理）
     rm -f "$DATA_DIR/current.json" 2>/dev/null
+    rm -f "$DATA_DIR/traffic_stats.json" 2>/dev/null
     rm -f "$DATA_DIR/traffic_monthly.json" 2>/dev/null
     rm -f "$DATA_DIR/hourly_snapshot.json" 2>/dev/null
     rm -rf "$DATA_DIR/daily" 2>/dev/null
@@ -148,6 +149,7 @@ else
 
     # 检查 /tmp 下的临时数据
     rm -rf /tmp/router_assistant/current.json 2>/dev/null
+    rm -rf /tmp/router_assistant/traffic_stats.json 2>/dev/null
     rm -rf /tmp/router_assistant/daily 2>/dev/null
     rm -rf /tmp/router_assistant/weekly 2>/dev/null
     rm -rf /tmp/router_assistant/monthly 2>/dev/null

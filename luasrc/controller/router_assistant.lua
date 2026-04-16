@@ -22,6 +22,8 @@ BLOCKED_MACS_CACHE_TTL = 30
 -- 历史记录保留常量
 MAX_HOURLY_RECORDS = 168
 MAX_DAILY_RECORDS = 30
+-- 修复问题6：限制流量历史中的设备条目数，避免文件无限增长
+MAX_TRAFFIC_DEVICES = 200
 
 -- Homebox 配置
 HOMEBOX_BIN = "/usr/bin/homebox"
@@ -76,6 +78,14 @@ local function save_blocked_macs_cache_to_file(macs_table)
         fd:write(json_str)
         fd:close()
     end
+end
+
+-- 清除缓存文件（跨进程同步）
+-- 清除黑名单缓存文件（不使用锁，因为 nRadio 平台 flock 不可用）
+-- 注意：此操作仅影响文件层，其他 CGI 进程的内存缓存（TTL=30s）不会立即失效
+-- 这是无锁设计的固有限制，可接受（下次查询会重新读取 iptables）
+local function clear_blocked_macs_cache_file()
+    os.remove(BLOCKED_MACS_CACHE_FILE)
 end
 
 -- 获取 iptables 屏蔽列表（带文件缓存）
@@ -171,30 +181,59 @@ function ensure_directory(path)
     return true
 end
 
-function save_data_atomic(file_path, data)
-    local temp_file = file_path .. ".tmp." .. os.time()
-    local fd = io.open(temp_file, "w")
-    if not fd then
-        return false, "Cannot create temp file"
+-- 生成唯一的临时文件名（使用PID+随机数，避免并发冲突）
+local function generate_temp_filename(file_path)
+    local nixio = require("nixio")
+    local pid = nixio.getpid and nixio.getpid() or os.time()
+    local random = math.random(10000, 99999)
+    return file_path .. ".tmp." .. pid .. "." .. random
+end
+
+function save_data_atomic(file_path, data, max_retries)
+    max_retries = max_retries or 3
+    local last_err = "Unknown error"
+
+    for attempt = 1, max_retries do
+        local temp_file = generate_temp_filename(file_path)
+        local fd, open_err = io.open(temp_file, "w")
+        if not fd then
+            last_err = "Cannot create temp file: " .. tostring(open_err)
+            nixio.syslog("warning", "save_data_atomic: attempt " .. attempt .. " failed - " .. last_err)
+            pcall(function()
+                if nixio.sleep then nixio.sleep(0.1 * attempt) end
+            end)
+        else
+            local ok, write_err = pcall(function()
+                fd:write(data)
+                fd:close()
+            end)
+
+            if not ok then
+                last_err = write_err or "Write failed"
+                pcall(os.remove, temp_file)
+                nixio.syslog("warning", "save_data_atomic: attempt " .. attempt .. " write failed - " .. last_err)
+            else
+                local rename_ok, rename_err = os.rename(temp_file, file_path)
+                if rename_ok then
+                    return true
+                else
+                    last_err = "Rename failed: " .. tostring(rename_err)
+                    pcall(os.remove, temp_file)
+                    nixio.syslog("warning", "save_data_atomic: attempt " .. attempt .. " rename failed - " .. last_err)
+                end
+            end
+        end
+
+        -- 最后一次尝试失败
+        if attempt < max_retries then
+            pcall(function()
+                if nixio.sleep then nixio.sleep(0.2 * attempt) end
+            end)
+        end
     end
-    
-    local ok, err = pcall(function()
-        fd:write(data)
-        fd:close()
-    end)
-    
-    if not ok then
-        os.remove(temp_file)
-        return false, err or "Write failed"
-    end
-    
-    local rename_ok = os.rename(temp_file, file_path)
-    if not rename_ok then
-        os.remove(temp_file)
-        return false, "Rename failed"
-    end
-    
-    return true
+
+    nixio.syslog("err", "save_data_atomic: all " .. max_retries .. " attempts failed for " .. file_path .. " - " .. last_err)
+    return false, last_err
 end
 
 function save_with_fallback(file_path, data)
@@ -222,49 +261,90 @@ function save_with_fallback(file_path, data)
 end
 
 -- ========== 文件锁机制（跨进程同步） ==========
--- 使用 nixio 的 flock 实现，避免 CGI 多进程并发写入冲突
+-- 防御性：检测 nixio.flock 是否可用（nRadio 等平台可能没有 flock 方法）
 local nixio = require("nixio")
+local LOCK_EX = 2  -- 排他锁
+local LOCK_UN = 8  -- 解锁
+local flock_available = false
+
+-- 兼容性检测：尝试实际调用 flock
+do
+    local test_ok = pcall(function()
+        local f = nixio.open("/tmp/.flock_test", "w+")
+        if f then
+            f:flock(LOCK_EX)
+            f:flock(LOCK_UN)
+            f:close()
+        end
+    end)
+    flock_available = test_ok
+end
 
 local function file_lock_acquire(lock_path, timeout_ms)
     timeout_ms = timeout_ms or 5000
-    local start = os.time()
     local lock_file = lock_path .. ".lock"
 
-    -- 尝试获取锁文件（创建独占）
-    while (os.time() - start) * 1000 < timeout_ms do
-        local fd = io.open(lock_file, "w")
-        if fd then
-            -- 尝试获取排他锁（非阻塞）
-            local ok = pcall(function()
-                nixio.syslog("debug", "Attempting to acquire lock: " .. lock_file)
-            end)
+    -- flock 不可用时，直接返回成功（无锁模式）
+    if not flock_available then
+        return true, lock_file, nil
+    end
+
+    local retry_interval = 0.1  -- 100ms
+
+    -- 打开锁文件（创建/读写）
+    local fd, err = nixio.open(lock_file, "w+")
+    if not fd then
+        nixio.syslog("err", "Failed to open lock file: " .. tostring(err))
+        return false, lock_file
+    end
+
+    local start_time = nixio.sysinfo().uptime or os.time()
+    while true do
+        -- 尝试获取排他锁（非阻塞）
+        local ok, err = fd:flock(LOCK_EX)
+        if ok then
+            -- 写入锁持有者的 PID，方便调试
             fd:write(tostring(os.time()))
-            fd:close()
-            return true, lock_file
+            fd:seek("set", 0)
+            return true, lock_file, fd
         end
-        -- 锁被占用，短暂等待后重试
-        -- 使用 pcall 包装 nixio.sleep，避免该函数不存在时崩溃
+
+        -- 检查是否超时
+        local elapsed = (nixio.sysinfo().uptime or os.time()) - start_time
+        if elapsed * 1000 >= timeout_ms then
+            fd:close()
+            nixio.syslog("err", "Lock acquisition timeout: " .. lock_file)
+            return false, lock_file
+        end
+
+        -- 短暂等待后重试
         pcall(function()
-            local n = require("nixio")
-            if n and type(n.sleep) == "function" then
-                n.sleep(0.05)
+            if nixio.sleep then
+                nixio.sleep(retry_interval)
             end
         end)
     end
-    return false, lock_file
 end
 
-local function file_lock_release(lock_path)
-    local lock_file = lock_path .. ".lock"
-    os.remove(lock_file)
+local function file_lock_release(lock_path, fd)
+    if fd and flock_available then
+        pcall(function()
+            fd:flock(LOCK_UN)
+            fd:close()
+        end)
+    elseif fd then
+        pcall(function()
+            fd:close()
+        end)
+    end
 end
 
 -- 带文件锁的原子写入
 local function save_with_file_lock(file_path, data, timeout_ms)
     timeout_ms = timeout_ms or 5000
 
-    -- 获取文件锁
-    local lock_acquired, lock_file = file_lock_acquire(file_path, timeout_ms)
+    -- 获取文件锁（返回值包含 fd）
+    local lock_acquired, lock_file, fd = file_lock_acquire(file_path, timeout_ms)
     if not lock_acquired then
         return false, "Failed to acquire lock"
     end
@@ -272,8 +352,8 @@ local function save_with_file_lock(file_path, data, timeout_ms)
     -- 执行原子写入
     local ok, err = save_data_atomic(file_path, data)
 
-    -- 释放锁
-    file_lock_release(file_path)
+    -- 释放锁（传入 fd）
+    file_lock_release(lock_file, fd)
 
     if ok then
         return true, file_path
@@ -309,6 +389,37 @@ local function safe_mac_validate(mac)
     return clean_mac
 end
 
+-- 修复问题12：MAC格式化函数（将无冒号格式转换为冒号分隔格式）
+-- 输入：已验证的12位十六进制无冒号大写MAC（如 "AABBCCDDEEFF"）
+-- 输出：冒号分隔格式（如 "AA:BB:CC:DD:EE:FF"）
+local function format_mac_colon(safe_mac)
+    if not safe_mac or #safe_mac ~= 12 then
+        return safe_mac or ""
+    end
+    return safe_mac:sub(1,2) .. ":" .. safe_mac:sub(3,4) .. ":" ..
+           safe_mac:sub(5,6) .. ":" .. safe_mac:sub(7,8) .. ":" ..
+           safe_mac:sub(9,10) .. ":" .. safe_mac:sub(11,12)
+end
+
+-- 修复问题#2：WiFi接口名安全验证（防止命令注入）
+-- WiFi接口名通常为 wlan0, wlan1, wlan0-1, wlan0-2, radio0, etc 等格式
+-- 允许：字母、数字、下划线、短横线，且不以空格或特殊字符开头
+local function safe_ifname(ifname)
+    if not ifname or type(ifname) ~= "string" or ifname == "" then
+        return nil
+    end
+    -- 验证只包含安全的字符：字母、数字、下划线、短横线
+    -- 同时排除常见的命令注入字符：空格、分号、反引号、管道、$、&、|、<、>、!、*、?、~、'、"
+    if ifname:match("[^%w%-_]") then
+        return nil
+    end
+    -- 长度限制（WiFi接口名通常不超过16字符）
+    if #ifname > 16 then
+        return nil
+    end
+    return ifname
+end
+
 -- 安全的 IP 地址验证（严格格式）
 local function safe_ip_validate(ip)
     if not ip or type(ip) ~= "string" then
@@ -322,9 +433,8 @@ local function safe_ip_validate(ip)
     end
     local parts = {}
     for part in ip:gmatch("[^%.]+") do
-        if #part > 1 and part:sub(1,1) == "0" then
-            return nil
-        end
+        -- 修复问题9：移除前导零检查，允许 192.168.01.100 等格式
+        -- 虽然标准格式不应有前导零，但部分老旧设备或特殊DHCP实现可能输出这种格式
         local num = tonumber(part)
         if not num or num < 0 or num > 255 then
             return nil
@@ -437,8 +547,9 @@ local function exec_background(cmd_name, args)
     if not cmd_name or not ALLOWED_COMMANDS[cmd_name] then
         return false
     end
-    -- 使用nohup + 后台执行，完全不等待结果
-    local cmd = "nohup " .. cmd_name .. " " .. (args or "") .. " >/dev/null 2>&1 &"
+    -- 使用白名单 + 参数转义防止命令注入
+    local safe_args = shell_escape(args or "")
+    local cmd = "nohup " .. cmd_name .. " " .. safe_args .. " >/dev/null 2>&1 &"
     os.execute(cmd)
     return true
 end
@@ -446,14 +557,13 @@ end
 -- 统一错误响应格式（不暴露敏感信息）
 local DEBUG_MODE = false
 local function error_response(code, message, details)
-    local safe_details = ""
-    if details and details ~= "" then
-        if DEBUG_MODE then
-            safe_details = details
-        else
+    -- details 始终记录到响应中，便于调试；syslog 保留用于生产环境日志收集
+    local safe_details = details and tostring(details) or ""
+    if safe_details ~= "" then
+        pcall(function()
             local nixio = require("nixio")
-            nixio.syslog("err", "[RouterAssistant] Error " .. tostring(code) .. ": " .. tostring(message) .. " - " .. tostring(details))
-        end
+            nixio.syslog("err", "[RouterAssistant] Error " .. tostring(code) .. ": " .. tostring(message) .. " - " .. safe_details)
+        end)
     end
     return {
         code = code,
@@ -551,6 +661,58 @@ end
 
 -- 判断接口是否为上游接口（非LAN/非网桥成员）
 -- 动态检测：排除网桥成员、无线接口、lo；其余按需保留
+-- 首次调用时通过 ubus 动态获取 WAN 接口列表并缓存
+local _wan_interface_cache = nil
+local _wan_interface_cache_time = 0
+local WAN_CACHE_TTL = 300  -- 缓存5分钟
+
+local function get_wan_interfaces()
+    local now = os.time()
+    if _wan_interface_cache and (now - _wan_interface_cache_time) < WAN_CACHE_TTL then
+        return _wan_interface_cache
+    end
+
+    local wan_list = {}
+    local util = require("luci.util")
+
+    -- 方法1：通过 ubus network.interface 获取 WAN 接口
+    local cmd = "ubus call network.interface dump 2>/dev/null"
+    local output = util.exec(cmd)
+    if output and output ~= "" then
+        local json = require("luci.jsonc")
+        local parse_ok, data = pcall(json.parse, output)
+        if parse_ok and data and data.interface then
+            for _, iface in ipairs(data.interface) do
+                if iface.interface and
+                   (iface.interface:match("^wan") or iface.interface:match("^ppoe") or
+                    iface.interface:match("^3g") or iface.interface:match("^qmi") or
+                    iface.interface:match("^ncm") or iface.interface:match("^wwan")) then
+                    if iface.device and iface.device ~= "" then
+                        wan_list[iface.device] = true
+                    end
+                end
+            end
+        end
+    end
+
+    -- 方法2：通过默认路由获取出口接口
+    local route_cmd = "ip route show default 2>/dev/null | head -1"
+    local route_output = util.exec(route_cmd)
+    if route_output and route_output ~= "" then
+        -- default via x.x.x.x dev eth0 或者 default dev eth0
+        local dev = route_output:match("dev%s+(%S+)")
+        if dev and dev ~= "" then
+            wan_list[dev] = true
+        end
+    end
+
+    -- 缓存结果
+    _wan_interface_cache = wan_list
+    _wan_interface_cache_time = now
+
+    return wan_list
+end
+
 local function is_upstream_interface(ifname)
     if not ifname or ifname == "" then
         return false
@@ -585,8 +747,17 @@ local function is_upstream_interface(ifname)
         return false
     end
 
-    -- 剩余接口中，明确为上级网络接口
-    return (ifname == "eth1" or ifname == "eth3")
+    -- 动态判断：检查是否为 WAN 接口
+    local wan_interfaces = get_wan_interfaces()
+    if wan_interfaces[ifname] then
+        return true
+    end
+
+    -- 修复问题5：移除 eth1/eth3 硬编码 fallback
+    -- 如果动态检测未命中，说明该接口不是 WAN（可能是 LAN 或其他自定义接口）
+    -- 这避免了非目标硬件（如 x86 软路由、其他品牌路由器）上的误判
+
+    return false
 end
 
 -- 判断WiFi设备连接的频段类型（2.4G/5G）
@@ -877,12 +1048,17 @@ local function load_dhcp_leases()
 end
 
 -- 加载IPv6邻居表（从ip -6 neigh获取）
+-- 修复问题11：使用带超时的popen，防止IPv6邻居表异常庞大时阻塞
 local function load_ipv6_neighbors()
     local neighbors = {}
-    local fd = io.popen("ip -6 neigh show 2>/dev/null")
+    -- 使用timeout命令限制执行时间，避免被攻击或表过大时永久阻塞
+    local fd = io.popen("timeout 3 ip -6 neigh show 2>/dev/null")
     if fd then
+        local start_time = os.time()
+        local max_wait = 4  -- 最多等待4秒
         for line in fd:lines() do
-            if line and #line < 512 then
+            -- 防御：检查每行长度和总等待时间
+            if line and #line < 512 and (os.time() - start_time) < max_wait then
                 local ipv6 = line:match("^(%S+)")
                 local mac = line:match("lladdr%s+(%S+)")
                 if ipv6 and mac and mac ~= "00:00:00:00:00:00" then
@@ -954,6 +1130,18 @@ local function get_ip_by_mac_arp(mac)
     return nil
 end
 
+-- HTML转义函数，防止XSS
+local function sanitize_input(str)
+    if not str or type(str) ~= "string" then return "" end
+    str = str:gsub("<", "&lt;")
+    str = str:gsub(">", "&gt;")
+    str = str:gsub('"', "&quot;")
+    str = str:gsub("'", "&#39;")
+    str = str:gsub("&", "&amp;")
+    str = str:sub(1, 64)
+    return str
+end
+
 local function is_device_blocked(mac)
     if not mac or mac == "" then return false end
     -- 统一格式：无冒号大写
@@ -1009,13 +1197,73 @@ local function load_json_file(filename)
     local dir = get_data_dir()
     local filepath = dir .. "/" .. filename
     local fd = io.open(filepath, "r")
-    if not fd then return nil end
+    if not fd then
+        -- 尝试从备份文件恢复
+        local backup_path = filepath .. ".bak"
+        local backup_fd = io.open(backup_path, "r")
+        if backup_fd then
+            local content = backup_fd:read("*all")
+            backup_fd:close()
+            if content and content ~= "" then
+                local json = require("luci.jsonc")
+                local ok, data = pcall(json.parse, content)
+                if ok and data then
+                    nixio.syslog("info", "traffic: recovered from backup " .. backup_path)
+                    return data
+                end
+            end
+        end
+        return nil
+    end
     local content = fd:read("*all")
     fd:close()
-    if not content or content == "" then return nil end
+    if not content or content == "" then
+        -- 尝试从备份文件恢复
+        local backup_path = filepath .. ".bak"
+        local backup_fd = io.open(backup_path, "r")
+        if backup_fd then
+            local bcontent = backup_fd:read("*all")
+            backup_fd:close()
+            if bcontent and bcontent ~= "" then
+                local json = require("luci.jsonc")
+                local ok, data = pcall(json.parse, bcontent)
+                if ok and data then
+                    nixio.syslog("info", "traffic: recovered from backup " .. backup_path)
+                    return data
+                end
+            end
+        end
+        return nil
+    end
     local json = require("luci.jsonc")
     local ok, data = pcall(json.parse, content)
-    if ok and data then return data end
+    if ok and data then
+        -- 保存备份（每次成功加载后更新备份）
+        pcall(function()
+            local backup_fd = io.open(filepath .. ".bak", "w")
+            if backup_fd then
+                backup_fd:write(content)
+                backup_fd:close()
+            end
+        end)
+        return data
+    end
+    -- JSON解析失败，尝试从备份恢复
+    local backup_path = filepath .. ".bak"
+    local backup_fd = io.open(backup_path, "r")
+    if backup_fd then
+        local bcontent = backup_fd:read("*all")
+        backup_fd:close()
+        if bcontent and bcontent ~= "" then
+            local json = require("luci.jsonc")
+            local ok2, data2 = pcall(json.parse, bcontent)
+            if ok2 and data2 then
+                nixio.syslog("warning", "traffic: recovered corrupted file from backup: " .. filepath)
+                return data2
+            end
+        end
+    end
+    nixio.syslog("warning", "traffic: JSON parse error for " .. filepath .. " - all sources failed")
     return nil
 end
 
@@ -1076,6 +1324,12 @@ function api_get_devices()
                     mac_str = tostring(mac)
                 end
                 local mac_upper = mac_str:upper()
+                local mac_normalized = mac_str:gsub(":", ""):upper()
+                -- real_mac 处理：部分设备（如无线终端）上报的 MAC 可能不同于关联 MAC
+                local real_mac_raw = client.real_mac
+                local real_mac_raw_fmt = (real_mac_raw and type(real_mac_raw) == "string" and real_mac_raw ~= "") and real_mac_raw:gsub(":", ""):upper() or ""
+                -- 统一 device_id：无冒号格式，用于备注查找
+                local device_id = (real_mac_raw_fmt ~= "" and real_mac_raw_fmt ~= mac_normalized) and real_mac_raw_fmt or mac_normalized
 
                 local is_wifi = is_wifi_device(client)
 
@@ -1143,7 +1397,8 @@ function api_get_devices()
                         ip = ip,
                         ipv6 = ipv6_list,
                         mac = mac_upper,
-                        hostname = hostname,
+                        -- 修复问题10：对hostname进行HTML转义，防止XSS
+                        hostname = sanitize_input(hostname),
                         iface = ifname,
                         is_wifi = is_wifi,
                         signal = rssi,
@@ -1166,17 +1421,6 @@ function api_get_devices()
 
     luci.http.prepare_content("application/json")
     luci.http.write_json(response_data)
-end
-
-local function sanitize_input(str)
-    if not str or type(str) ~= "string" then return "" end
-    str = str:gsub("<", "&lt;")
-    str = str:gsub(">", "&gt;")
-    str = str:gsub('"', "&quot;")
-    str = str:gsub("'", "&#39;")
-    str = str:gsub("&", "&amp;")
-    str = str:sub(1, 64)
-    return str
 end
 
 -- ========== MAC屏蔽列表持久化管理 ==========
@@ -1308,10 +1552,9 @@ local function remove_from_blocklist(mac)
             end
         end
         
-        if target_oui and get_mac_oui(device.mac) == target_oui then
-            should_remove = true
-        end
-        
+        -- 注意：不再按 OUI 批量删除，仅精确匹配 MAC 或其 related_mac
+        -- 避免误删同品牌其他设备
+
         if not should_remove then
             table.insert(new_devices, device)
         end
@@ -1324,23 +1567,20 @@ local function apply_iptables_block(mac)
     if not mac or mac == "" then return false end
     local safe_mac = safe_mac_validate(mac)
     if not safe_mac then return false end
-    
-    local formatted_mac = safe_mac:sub(1,2) .. ":" .. safe_mac:sub(3,4) .. ":" .. 
-                          safe_mac:sub(5,6) .. ":" .. safe_mac:sub(7,8) .. ":" ..
-                          safe_mac:sub(9,10) .. ":" .. safe_mac:sub(11,12)
-    safe_exec_command("iptables", "-I INPUT -m mac --mac-source " .. formatted_mac .. " -j DROP")
-    safe_exec_command("iptables", "-I FORWARD -m mac --mac-source " .. formatted_mac .. " -j DROP")
-    return true
+
+    local formatted_mac = format_mac_colon(safe_mac)
+    local ok1 = safe_exec_command("iptables", "-I INPUT -m mac --mac-source " .. formatted_mac .. " -j DROP")
+    local ok2 = safe_exec_command("iptables", "-I FORWARD -m mac --mac-source " .. formatted_mac .. " -j DROP")
+    -- 修复问题#7：至少有一条规则成功就认为成功
+    return ok1 or ok2
 end
 
 local function remove_iptables_block(mac)
     if not mac or mac == "" then return false end
     local safe_mac = safe_mac_validate(mac)
     if not safe_mac then return false end
-    
-    local formatted_mac = safe_mac:sub(1,2) .. ":" .. safe_mac:sub(3,4) .. ":" .. 
-                          safe_mac:sub(5,6) .. ":" .. safe_mac:sub(7,8) .. ":" ..
-                          safe_mac:sub(9,10) .. ":" .. safe_mac:sub(11,12)
+
+    local formatted_mac = format_mac_colon(safe_mac)
     safe_exec_command("iptables", "-D INPUT -m mac --mac-source " .. formatted_mac .. " -j DROP")
     safe_exec_command("iptables", "-D FORWARD -m mac --mac-source " .. formatted_mac .. " -j DROP")
     return true
@@ -1356,6 +1596,11 @@ local HOURLY_SNAPSHOT_FILE = "traffic_hourly.json"
 -- 获取或创建月度流量快照基准
 -- 新月份开始时自动记录每个设备的当前 history 作为本月起始基准
 -- 返回：{ devices: { mac: { rx, tx }, ... }, created_at }
+--
+-- 注意（基准漂移问题）：
+-- 如果月初首个访问页面之前有其他进程/设备产生流量，这些流量会计入 history 累计值
+-- 但快照建立时把当前 history 作为基准，导致本月流量显示偏小（差值接近0）
+-- 这是按需创建快照的固有限制；如需精确月度统计，应在每月1日零点自动创建快照
 local function get_or_update_monthly_snapshot(current_month, current_history)
     local data = load_json_file(MONTHLY_SNAPSHOT_FILE) or {}
     local snapshot = data[current_month]
@@ -1364,13 +1609,27 @@ local function get_or_update_monthly_snapshot(current_month, current_history)
     -- 1. 月份变化了（新月份开始）
     -- 2. 当前月份的快照不存在（首次创建或被删除）
     -- 3. 快照格式不对（旧格式没有 devices 字段）
+    -- 4. MAC key 格式不对（旧格式是无冒号，需要迁移到带冒号格式）
     local needs_rebuild = (data.last_month ~= current_month) or (not snapshot) or (snapshot and not snapshot.devices)
+    if not needs_rebuild and snapshot and snapshot.devices then
+        -- 检测旧快照 MAC key 格式（无冒号格式如 AABBCCDDEEFF）
+        for mac_key in pairs(snapshot.devices) do
+            if mac_key:match("^[A-F0-9]{12}$") then
+                -- 发现旧格式 key（无冒号），需要重建
+                needs_rebuild = true
+                pcall(nixio.syslog, "info", "[RouterAssistant] Month " .. current_month .. ", old MAC format snapshot detected, rebuilding...")
+                break
+            end
+        end
+    end
 
     if needs_rebuild then
         -- 记录每个设备的当前 history 作为本月起始基准
+        -- 统一使用带冒号大写格式（AA:BB:CC:DD:EE:FF）存储 MAC key，避免格式不一致导致查询失败
         local devices = {}
         for mac, dev_data in pairs(current_history) do
-            devices[mac] = {
+            local mac_colon = format_mac_colon(mac)
+            devices[mac_colon] = {
                 rx = dev_data.rx or 0,
                 tx = dev_data.tx or 0
             }
@@ -1393,9 +1652,12 @@ end
 
 -- 获取设备本月流量（当前 history - 月初基准）
 -- 返回：{ rx, tx }，无基准时使用当前值作为本月流量（新设备当月流量=当月累计）
+-- 注意：snapshot 中的 MAC key 统一使用带冒号大写格式（AA:BB:CC:DD:EE:FF）
 local function get_device_monthly_flow(mac, current_rx, current_tx, snapshot)
+    -- 统一将 MAC key 转换为带冒号格式（与快照存储格式一致）
+    local mac_colon = format_mac_colon(mac)
     if snapshot and snapshot.devices then
-        local baseline = snapshot.devices[mac]
+        local baseline = snapshot.devices[mac_colon]
         if baseline then
             -- 有基准，正常计算差值
             local rx = math.max(0, current_rx - (baseline.rx or 0))
@@ -1420,6 +1682,23 @@ local function calculate_hourly_realtime(current_hour, current_total_rx, current
             created_at = os.time()
         }
         data.last_hour = current_hour
+
+        -- 修复问题#8：清理超过25小时的旧小时快照数据，防止文件无限累积
+        -- 只保留最近25小时的数据（给一个小时缓冲）
+        local MAX_HOURS_TO_KEEP = 25
+        for hour_key, hour_data in pairs(data) do
+            if hour_key and #hour_key >= 10 and hour_key ~= "last_hour" then
+                -- 简单比较：只保留与当前小时差距在MAX_HOURS_TO_KEEP以内的
+                -- 小时key格式：YYYYMMDDHH，如2026041520
+                if hour_key < current_hour then
+                    local hour_diff = tonumber(current_hour) - tonumber(hour_key)
+                    if hour_diff > MAX_HOURS_TO_KEEP then
+                        data[hour_key] = nil
+                    end
+                end
+            end
+        end
+
         save_json_file(HOURLY_SNAPSHOT_FILE, data)
     end
 
@@ -1496,24 +1775,81 @@ end
 
 function api_get_traffic()
     local response_data = nil
+    local _debug_step = "init"
 
     local ok, err = pcall(function()
         local util = require("luci.util")
         local json = require("luci.jsonc")
+        _debug_step = "require_modules"
 
+        -- 防御性：确保存储路径可用（提前检测，避免后续写入失败）
         local history_file = get_storage_path()
+        _debug_step = "get_storage_path=" .. tostring(history_file)
+
+        -- 读取历史数据（带防御：读取失败不影响返回设备列表）
         local history = {}
-        local history_fd = io.open(history_file, "r")
-        if history_fd then
-            local content = history_fd:read("*all")
-            history_fd:close()
-            if content and content ~= "" then
-                local parse_ok, parsed = pcall(json.parse, content)
-                if parse_ok and parsed then
-                    history = parsed
+        local read_ok = true
+        _debug_step = "read_history_start"
+        do
+            local history_fd = io.open(history_file, "r")
+            if history_fd then
+                local content = history_fd:read("*all")
+                history_fd:close()
+                if content and content ~= "" then
+                    _debug_step = "parse_history"
+                    local parse_ok, parsed = pcall(json.parse, content)
+                    if parse_ok and parsed then
+                        history = parsed
+                    else
+                        read_ok = false
+                        -- 防御：nixio.syslog 可能不存在
+                        pcall(nixio.syslog, "warning", "traffic: JSON parse error for " .. history_file)
+                    end
                 end
+            else
+                read_ok = false
+                pcall(nixio.syslog, "info", "traffic: no history file at " .. history_file)
             end
         end
+
+        -- 数据迁移：从根源上修复MAC key格式不一致问题
+        -- 将所有带冒号或小写的旧格式key迁移为无冒号大写格式
+        -- 这样即使history文件中有旧格式数据，也会在加载时自动修复
+        _debug_step = "migrate_history_keys"
+        do
+            local migrated_count = 0
+            local needs_rewrite = false
+            local migrated_history = {}
+            for old_mac, dev_data in pairs(history) do
+                -- 统一转换为无冒号大写格式
+                local new_mac = old_mac:gsub(":", ""):upper()
+                if new_mac ~= old_mac then
+                    -- key格式不一致，需要迁移
+                    migrated_history[new_mac] = dev_data
+                    migrated_count = migrated_count + 1
+                    needs_rewrite = true
+                else
+                    migrated_history[new_mac] = dev_data
+                end
+            end
+            if needs_rewrite then
+                history = migrated_history
+                _debug_step = "save_migrated_history"
+                -- 重新保存为统一格式
+                pcall(function()
+                    local history_fd = io.open(history_file, "w")
+                    if history_fd then
+                        local json_str = json.stringify(history)
+                        if json_str then
+                            history_fd:write(json_str)
+                        end
+                        history_fd:close()
+                        pcall(nixio.syslog, "info", "traffic: migrated " .. migrated_count .. " MAC keys to unified format")
+                    end
+                end)
+            end
+        end
+
         local current_traffic = {}
         local online_devices = {}
         local offline_devices = {}
@@ -1521,11 +1857,19 @@ function api_get_traffic()
         local total_tx = 0
         local online_count = 0
         local offline_count = 0
+
+        _debug_step = "load_dhcp_leases"
         local dhcp_leases = load_dhcp_leases()
+
+        _debug_step = "load_device_notes"
         local device_notes = load_json_file(NOTES_FILE_NAME) or {}
 
+        _debug_step = "ubus_cmd_prepare"
+
         local cmd = "ubus call infocd terminal 2>/dev/null"
+        _debug_step = "before_ubus_exec"
         local output = util.exec(cmd)
+        _debug_step = "after_ubus_exec, output_len=" .. tostring(output and #output or 0)
         if output and output ~= "" then
             local parse_ok, data = pcall(json.parse, output)
             if parse_ok and data and data.client then
@@ -1582,13 +1926,14 @@ function api_get_traffic()
                         local matched_count = 0
                         for _ in pairs(matched_devices) do matched_count = matched_count + 1 end
                         if matched_count == 1 then
-                            -- 只有1台匹配，直接复用
+                            -- 只有1台OUI+hostname匹配，直接复用
                             for hist_mac, _ in pairs(matched_devices) do
                                 device_id = hist_mac
                                 break
                             end
                         elseif matched_count > 1 then
-                            -- 有2+台匹配，根据IP判断
+                            -- 有2+台OUI+hostname匹配（如同品牌多设备），必须IP也匹配才复用
+                            -- 如果IP也不匹配，说明是新房客设备，创建新记录
                             local ip_matched = false
                             for hist_mac, hist_data in pairs(matched_devices) do
                                 if hist_data.ip == ip then
@@ -1597,17 +1942,29 @@ function api_get_traffic()
                                     break
                                 end
                             end
-                            -- 如果没有IP匹配的，创建新记录（不复用任何历史）
+                            -- 如果IP不匹配，保持device_id为新MAC，不复用历史
                         else
+                            -- 没有任何OUI+hostname匹配，使用hostname+IP兜底
+                            -- 但必须该组合在历史中只有1台设备时才复用（避免多设备误判）
+                            local hp_matched_devices = {}
                             for hist_mac, hist_data in pairs(history) do
                                 if hist_data.hostname == hostname and hist_data.ip == ip then
                                     local age = current_time - ((hist_data.last_seen) or 0)
                                     if age < SECONDS_PER_WEEK then
-                                        device_id = hist_mac
-                                        break
+                                        hp_matched_devices[hist_mac] = hist_data
                                     end
                                 end
                             end
+                            local hp_count = 0
+                            for _ in pairs(hp_matched_devices) do hp_count = hp_count + 1 end
+                            -- 只有当该hostname+IP组合在历史中只有1台设备时才复用
+                            if hp_count == 1 then
+                                for hist_mac, _ in pairs(hp_matched_devices) do
+                                    device_id = hist_mac
+                                    break
+                                end
+                            end
+                            -- 如果hp_count > 1，说明有多台设备使用相同hostname+IP，保持device_id为新MAC
                         end
                     end
                     local ifname = (client.ifname and type(client.ifname) == "string") and client.ifname or ""
@@ -1619,7 +1976,7 @@ function api_get_traffic()
                     if client.rxbytes then
                         router_rx_bytes = (type(client.rxbytes) == "number") and client.rxbytes or (tonumber(client.rxbytes) or 0)
                     end
-                    if ifname ~= "eth1" and ifname ~= "eth3" then
+                    if not is_upstream_interface(ifname) then
                         local hist = history[device_id] or {}
                         local last_rx = (hist.rx and type(hist.rx) == "number") and hist.rx or 0 -- 历史下载总量
                         local last_tx = (hist.tx and type(hist.tx) == "number") and hist.tx or 0 -- 历史上传总量
@@ -1649,8 +2006,19 @@ function api_get_traffic()
                             local delta_rx = router_tx_bytes - last_raw_rx
                             local delta_tx = router_rx_bytes - last_raw_tx
                             -- 防御：增量不应为负(正常情况下 raw 值应单调递增)
-                            device_total_rx = last_rx + math.max(delta_rx, 0)
-                            device_total_tx = last_tx + math.max(delta_tx, 0)
+                            local new_rx = last_rx + math.max(delta_rx, 0)
+                            local new_tx = last_tx + math.max(delta_tx, 0)
+                            -- 修复问题6：防止极端值（驱动bug或浮点精度问题）
+                            -- 单设备流量上限：100TB（远超正常值，但防止极端情况）
+                            local MAX_DEVICE_BYTES = 100 * 1024 * 1024 * 1024 * 1024
+                            if new_rx > MAX_DEVICE_BYTES then new_rx = last_rx end
+                            if new_tx > MAX_DEVICE_BYTES then new_tx = last_tx end
+                            device_total_rx = new_rx
+                            device_total_tx = new_tx
+                            -- 修复问题7：计数器恢复正常后，重置 reset_count 避免语义混乱
+                            if current_reset_count > 0 then
+                                current_reset_count = 0
+                            end
                         end
                         
                         device_total_rx = is_valid_number(device_total_rx) and device_total_rx or 0
@@ -1679,9 +2047,12 @@ function api_get_traffic()
                         if rx_delta < 0 then rx_delta = 0 end
                         if tx_delta < 0 then tx_delta = 0 end
 
+                        -- 确保 MAC 格式一致：使用 normalizeMacKey 保证 key 格式统一
+                        local mac_key = mac_normalized  -- 统一使用无冒号大写格式作为 key
                         table.insert(online_devices, {
-                            mac = device_id,
-                            hostname = hostname,
+                            mac = mac_key,
+                            -- 修复问题10：对hostname进行HTML转义，防止XSS
+                            hostname = sanitize_input(hostname),
                             ip = ip,
                             rx = device_total_rx,
                             tx = device_total_tx,
@@ -1699,18 +2070,19 @@ function api_get_traffic()
                             ifname = ifname,
                             device_type = device_type,
                             frequency_band = frequency_band,
-                            blocked = is_device_blocked(device_id) or is_device_blocked(mac_upper)
+                            blocked = is_device_blocked(mac_key) or is_device_blocked(mac_upper)
                         })
-                        current_traffic[device_id] = {
+                        current_traffic[mac_key] = {
                             rx = device_total_rx,
                             tx = device_total_tx,
                             raw_rx = router_tx_bytes,
                             raw_tx = router_rx_bytes,
                             reset_count = current_reset_count,
                             ip = ip,
-                            hostname = hostname,
+                            -- 修复问题10：对hostname进行HTML转义，防止XSS（存储时转义）
+                            hostname = sanitize_input(hostname),
                             mac = mac_upper,
-                            real_mac = real_mac,
+                            real_mac = real_mac_raw,
                             last_seen = current_time,
                             first_seen = hist.first_seen or current_time
                         }
@@ -1758,12 +2130,61 @@ function api_get_traffic()
                 end
             end
         end
+
+        -- 修复问题6：限制条目数量，避免JSON文件无限增长
+        -- 规则：保留在线设备 + 最多 MAX_TRAFFIC_DEVICES 个离线设备（按 last_seen 排序，保留最新的）
+        local device_count = 0
+        for _ in pairs(current_traffic) do device_count = device_count + 1 end
+        if device_count > MAX_TRAFFIC_DEVICES then
+            -- 收集所有离线设备并按 last_seen 降序排序
+            local offline_list = {}
+            for dev_id, data in pairs(current_traffic) do
+                -- 判断是否为当前在线设备（online_devices 中存在）
+                local is_online = false
+                for _, online_dev in ipairs(online_devices) do
+                    if online_dev.mac == dev_id then
+                        is_online = true
+                        break
+                    end
+                end
+                if not is_online then
+                    table.insert(offline_list, {dev_id = dev_id, last_seen = (data and data.last_seen) or 0})
+                end
+            end
+            -- 按 last_seen 降序排序
+            table.sort(offline_list, function(a, b) return a.last_seen > b.last_seen end)
+            -- 删除超出上限的离线设备
+            local kept_offline = 0
+            local max_offline = MAX_TRAFFIC_DEVICES - #online_devices
+            local to_remove = {}
+            for i, item in ipairs(offline_list) do
+                if i > max_offline then
+                    table.insert(to_remove, item.dev_id)
+                end
+            end
+            for _, dev_id in ipairs(to_remove) do
+                current_traffic[dev_id] = nil
+            end
+            nixio.syslog("info", "traffic: pruned " .. #to_remove .. " old offline devices, kept " .. math.min(#offline_list, max_offline) .. " recent offline devices")
+        end
+
+        -- 保存流量数据（带防御：写入失败不阻断返回）
         local json_str = "{}"
         local serialize_ok, serialize_err = pcall(json.stringify, current_traffic)
         if serialize_ok then
             json_str = serialize_err or "{}"
+        else
+            nixio.syslog("err", "traffic: JSON serialize failed: " .. tostring(serialize_err))
+            json_str = "{}"
         end
-        local save_ok, save_path = save_with_file_lock(history_file, json_str)
+
+        local save_ok, save_path = pcall(function()
+            return save_with_file_lock(history_file, json_str)
+        end)
+        if not save_ok or not save_path then
+            nixio.syslog("warning", "traffic: failed to save data, err=" .. tostring(save_path))
+            -- 保存失败不影响本次返回，下次会重新从零开始统计
+        end
 
         -- 使用快照机制（仅用于新月检测和标记）
         -- 月度统计 = 当前总量 - 月初快照基准（差值法，正确反映本月新增流量）
@@ -1783,6 +2204,9 @@ function api_get_traffic()
         end
 
         -- 第二遍：更新所有设备的本月流量（基于月度快照）
+        -- 修复问题2：累加月度流量到月度总量，用于页面底部"总流量"显示
+        local display_total_rx = 0
+        local display_total_tx = 0
         for _, dev in ipairs(online_devices) do
             local mac = dev.mac
             local dev_data = current_traffic[mac]
@@ -1794,6 +2218,8 @@ function api_get_traffic()
                 dev.rx_display = format_bytes(monthly.rx)
                 dev.tx_display = format_bytes(monthly.tx)
                 dev.total_display = format_bytes(monthly.rx + monthly.tx)
+                display_total_rx = display_total_rx + monthly.rx
+                display_total_tx = display_total_tx + monthly.tx
             end
         end
         for _, dev in ipairs(offline_devices) do
@@ -1807,6 +2233,8 @@ function api_get_traffic()
                 dev.rx_display = format_bytes(monthly.rx)
                 dev.tx_display = format_bytes(monthly.tx)
                 dev.total_display = format_bytes(monthly.rx + monthly.tx)
+                display_total_rx = display_total_rx + monthly.rx
+                display_total_tx = display_total_tx + monthly.tx
             end
         end
 
@@ -1832,9 +2260,13 @@ function api_get_traffic()
             online_devices = online_devices,
             offline_devices = offline_devices,
             stats = {
-                -- 所有设备的历史累计总量（在线+离线）
-                total_rx = total_rx,
-                total_tx = total_tx,
+                -- 修复问题2：页面底部"总流量"使用月度值，与设备列表月度流量保持一致
+                -- 历史累计总量保留在 history_total_rx/tx（用于历史对比）
+                total_rx = display_total_rx,
+                total_tx = display_total_tx,
+                -- 保留历史累计总量（本月度值 vs 历史累计的对比）
+                history_total_rx = total_rx,
+                history_total_tx = total_tx,
                 -- 本月累计流量（差值法：当前总量 - 月初快照基准）
                 monthly_total_rx = monthly_total_rx,
                 monthly_total_tx = monthly_total_tx,
@@ -1850,7 +2282,8 @@ function api_get_traffic()
         }
     end)
     if not ok then
-        response_data = error_response(-1, "获取流量统计失败", tostring(err))
+        response_data = error_response(-1, "获取流量统计失败",
+            "step=" .. tostring(_debug_step) .. " | err=" .. tostring(err))
         response_data.online_devices = {}
         response_data.offline_devices = {}
         response_data.stats = {}
@@ -1883,34 +2316,37 @@ function api_get_wifi()
         end)
 
         for _, wifi_info in ipairs(wifi_ifaces) do
-            local ifname = wifi_info.ifname
+            local ifname = safe_ifname(wifi_info.ifname)
+            -- 修复问题#2：跳过不安全的接口名，防止命令注入
+            if not ifname then
+                -- 跳过不安全的接口
+            else
+                -- 使用iw dev获取真实SSID（使用已验证的ifname）
+                local iw_dev_output = sys.exec("iw dev " .. ifname .. " info 2>/dev/null")
+                local real_ssid = iw_dev_output:match("ssid%s+([^\n]+)")
+                if real_ssid then
+                    real_ssid = real_ssid:gsub("^%s+", ""):gsub("%s+$", "")
+                end
 
-            -- 使用iw dev获取真实SSID
-            local iw_dev_output = sys.exec("iw dev " .. ifname .. " info 2>/dev/null")
-            local real_ssid = iw_dev_output:match("ssid%s+([^\n]+)")
-            if real_ssid then
-                real_ssid = real_ssid:gsub("^%s+", ""):gsub("%s+$", "")
-            end
+                -- 使用iwinfo获取详细信息
+                local iwinfo_output = sys.exec("iwinfo " .. ifname .. " info 2>/dev/null")
 
-            -- 使用iwinfo获取详细信息
-            local iwinfo_output = sys.exec("iwinfo " .. ifname .. " info 2>/dev/null")
+                -- 解析信道: "Channel: 12 (2.467 GHz)"
+                local channel = "-"
+                local channel_line = iwinfo_output:match("Channel:%s*([^\n]+)")
+                if channel_line then
+                    local ch = channel_line:match("(%d+)%s*%(")
+                    if ch then channel = ch end
+                end
 
-            -- 解析信道: "Channel: 12 (2.467 GHz)"
-            local channel = "-"
-            local channel_line = iwinfo_output:match("Channel:%s*([^\n]+)")
-            if channel_line then
-                local ch = channel_line:match("(%d+)%s*%(")
-                if ch then channel = ch end
-            end
+                -- 解析信号: "Signal: -54 dBm"
+                local signal = "-"
+                local signal_val = iwinfo_output:match("Signal:%s*([%-%d]+)%s*dBm")
+                if signal_val then
+                    signal = signal_val .. " dBm"
+                end
 
-            -- 解析信号: "Signal: -54 dBm"
-            local signal = "-"
-            local signal_val = iwinfo_output:match("Signal:%s*([%-%d]+)%s*dBm")
-            if signal_val then
-                signal = signal_val .. " dBm"
-            end
-
-            -- 解析工作模式: "Mode: Master"
+                -- 解析工作模式: "Mode: Master"
             local mode = "AP"
             local mode_val = iwinfo_output:match("Mode:%s*(%w+)")
             if mode_val then
@@ -1958,6 +2394,7 @@ function api_get_wifi()
                     status = status
                 })
             end
+            end  -- 闭合 if not ifname then ... else ... end
         end
     end)
 
@@ -2027,7 +2464,8 @@ function api_save_device_note()
     if not ok then
         result = error_response(-1, "保存设备备注失败", tostring(err))
     else
-        result = success_response(result)
+        -- 修复问题#7：直接设置code=0，不使用success_response嵌套，保持响应结构一致性
+        result.code = 0
     end
     luci.http.prepare_content("application/json")
     luci.http.write_json(result)
@@ -2065,27 +2503,13 @@ function api_delete_device_note()
     luci.http.write_json(result)
 end
 
+-- DEPRECATED: collect.lua 已废弃，流量采集已完全由 ubus 接管
+-- 此API仅作向后兼容保留，实际无任何作用
 function api_collect_traffic()
     if not require_csrf_token() then return end
-    local result = {code = 0, message = "流量采集完成"}
-    local ok, err = pcall(function()
-        -- 调用 /usr/lib/traffic_stats/collect.lua collect 执行实际流量采集
-        local collect_cmd = "lua /usr/lib/traffic_stats/collect.lua collect 2>&1"
-        local handle = io.popen(collect_cmd)
-        if handle then
-            local output = handle:read("*all")
-            handle:close()
-            -- 捕获 collect.lua 的输出（包含 print 调试信息）
-            if output and output ~= "" then
-                require("nixio").syslog("info", "[RouterAssistant] collect.lua output: " .. output:gsub("\n", " "))
-            end
-        end
-    end)
-    if not ok then
-        result = error_response(-1, "流量采集失败", tostring(err))
-    else
-        result = success_response(result)
-    end
+    -- 直接返回成功，因为流量采集现在完全由 api_get_traffic 在每次调用时自动完成
+    -- 不再需要独立的采集进程
+    local result = {code = 0, message = "流量采集已由系统自动完成，无需手动采集"}
     luci.http.prepare_content("application/json")
     luci.http.write_json(result)
 end
@@ -2125,13 +2549,28 @@ function api_save_alert()
             result.message = "阈值不能为负数"
             return
         end
-        
+        -- 修复问题#3：添加阈值上限检查，防止设置极端值导致告警永不触发
+        local MAX_THRESHOLD = 1000000000  -- 1GB/s，物理网络不太可能超过此值
+        if threshold_num > MAX_THRESHOLD then
+            result.code = -1
+            result.message = "阈值不能超过 " .. MAX_THRESHOLD .. " MB/s"
+            return
+        end
+
+        -- 验证颜色级别范围 [0, 100]
+        local function validate_level(val, default)
+            local num = tonumber(val) or default
+            if num < 0 then num = 0 end
+            if num > 100 then num = 100 end
+            return num
+        end
+
         local alerts = {
             global_threshold = threshold_num,
             color_levels = {
-                warning = tonumber(warning_level) or 50,
-                danger = tonumber(danger_level) or 80,
-                critical = tonumber(critical_level) or 100
+                warning = validate_level(warning_level, 50),
+                danger = validate_level(danger_level, 80),
+                critical = validate_level(critical_level, 100)
             },
             updated = os.time()
         }
@@ -2196,9 +2635,11 @@ function api_get_wifi_status()
                 connected_stations = {}
             }
 
-            if ifname and ifname ~= "" then
+            -- 修复问题#2：使用safe_ifname验证接口名，防止命令注入
+            local safe_ifname_val = safe_ifname(ifname)
+            if safe_ifname_val then
                 -- 优先使用iw dev获取真实SSID（iwinfo可能显示错误的SSID）
-                local iw_dev_output = sys.exec("iw dev " .. ifname .. " info 2>/dev/null")
+                local iw_dev_output = sys.exec("iw dev " .. safe_ifname_val .. " info 2>/dev/null")
                 local real_ssid = iw_dev_output:match("ssid%s+([^\n]+)")
                 if real_ssid then
                     real_ssid = real_ssid:gsub("^%s+", ""):gsub("%s+$", "")
@@ -2212,7 +2653,7 @@ function api_get_wifi_status()
                 end
                 
                 -- 使用iwinfo命令获取其他详细信息
-                local iwinfo_output = sys.exec("iwinfo " .. ifname .. " info 2>/dev/null")
+                local iwinfo_output = sys.exec("iwinfo " .. safe_ifname_val .. " info 2>/dev/null")
                 
                 -- 解析实际运行的加密方式: Encryption: xxx
                 local actual_enc = iwinfo_output:match("Encryption:%s*([^\n]+)")
@@ -2248,7 +2689,7 @@ function api_get_wifi_status()
                     status.signal = signal_val .. " dBm"
                 else
                     -- AP模式下可能显示unknown，尝试从iw dev获取
-                    local iw_output = sys.exec("iw dev " .. ifname .. " link 2>/dev/null")
+                    local iw_output = sys.exec("iw dev " .. safe_ifname_val .. " link 2>/dev/null")
                     local iw_signal = iw_output:match("signal:%s*([%-%d]+)%s*dBm")
                     if iw_signal then
                         status.signal = iw_signal .. " dBm"
@@ -2274,7 +2715,7 @@ function api_get_wifi_status()
                 end
 
                 -- 获取连接的客户端
-                local stations_output = sys.exec("iwinfo " .. ifname .. " assoclist 2>/dev/null")
+                local stations_output = sys.exec("iwinfo " .. safe_ifname_val .. " assoclist 2>/dev/null")
                 if stations_output and stations_output ~= "" and not stations_output:match("No station") then
                     -- iwinfo assoclist 实际输出格式：AA:BB:CC:DD:EE:FF  -49 dBm / unknown (SNR -49)  4000 ms ago
                     -- MAC地址后直接跟 "-XX dBm"，不是 "Signal:"
@@ -2427,9 +2868,7 @@ function api_kick_device()
     -- ========== 全后台执行策略（避免uhttpd CGI超时导致502） ==========
     -- 核心优化：将 iptables/conntrack 放在脚本最前面，nohup 启动后按顺序执行
     -- 延迟 ≈ 写文件(~1ms) + nohup启动(~1ms) + iptables执行(~1-2ms) ≈ 3-5ms（人类不可感知）
-    local formatted_mac = safe_mac:sub(1,2) .. ":" .. safe_mac:sub(3,4) .. ":" ..
-                          safe_mac:sub(5,6) .. ":" .. safe_mac:sub(7,8) .. ":" ..
-                          safe_mac:sub(9,10) .. ":" .. safe_mac:sub(11,12)
+    local formatted_mac = format_mac_colon(safe_mac)
 
     local script_parts = {}
 
@@ -2458,8 +2897,21 @@ function api_kick_device()
     table.insert(script_parts, "if [ -x /usr/bin/access_ctl.sh ]; then timeout 5 access_ctl.sh -m " .. mac_lower .. " -a 0 2>/dev/null || true; fi")
 
     -- 写入脚本并后台执行（按顺序：iptables→conntrack→iw→access_ctl）
+    -- 先写入黑名单文件（同步操作，成功后才执行 iptables）
+    -- 这样确保：文件记录存在 → iptables 才生效；文件记录失败 → 跳过 iptables
+    local add_ok = pcall(add_to_blocklist, mac_colon, device_hostname, device_ip)
+    if not add_ok then
+        nixio.syslog("err", "[RouterAssistant] kick_device: add_to_blocklist FAILED for " .. mac_colon .. ", skip iptables")
+        _blocked_macs_cache = nil
+        return
+    end
+    _blocked_macs_cache = nil
+    _blocked_macs_cache_time = 0
+    clear_blocked_macs_cache_file()  -- 清除缓存文件，确保其他进程同步
+
+    -- 文件写入成功，执行 iptables 脚本（后台运行）
     local script_content = "#!/bin/sh\n" .. table.concat(script_parts, "\n")
-    local script_file = "/tmp/router_assistant_kick_" .. os.time() .. ".sh"
+    local script_file = "/tmp/router_assistant_kick_" .. os.time() .. "_" .. mac_no_colon .. ".sh"
     local sfd = io.open(script_file, "w")
     if sfd then
         sfd:write(script_content .. "\n")
@@ -2474,13 +2926,6 @@ function api_kick_device()
     end
 
     nixio.syslog("info", "[RouterAssistant] kick_device: background script started for " .. mac_colon)
-
-    -- 更新黑名单（纯Lua文件操作，不会阻塞）
-    pcall(add_to_blocklist, mac_colon, device_hostname, device_ip)
-    _blocked_macs_cache = nil
-    _blocked_macs_cache_time = 0
-
-    nixio.syslog("info", "[RouterAssistant] kick_device: background script started, returning response")
 
     -- 返回成功响应（后台脚本已在运行，iptables将在数ms内执行）
     luci.http.prepare_content("application/json")
@@ -2530,9 +2975,7 @@ function api_enable_device()
     nixio.syslog("info", "[RouterAssistant] enable_device validated, mac=" .. mac_colon)
 
     -- ========== 所有耗时操作后台异步执行 ==========
-    local formatted_mac = safe_mac:sub(1,2) .. ":" .. safe_mac:sub(3,4) .. ":" ..
-                          safe_mac:sub(5,6) .. ":" .. safe_mac:sub(7,8) .. ":" ..
-                          safe_mac:sub(9,10) .. ":" .. safe_mac:sub(11,12)
+    local formatted_mac = format_mac_colon(safe_mac)
 
     local script_parts = {}
 
@@ -2540,7 +2983,8 @@ function api_enable_device()
     table.insert(script_parts, "iptables -D INPUT -m mac --mac-source " .. formatted_mac .. " -j DROP 2>/dev/null || true")
     table.insert(script_parts, "iptables -D FORWARD -m mac --mac-source " .. formatted_mac .. " -j DROP 2>/dev/null || true")
 
-    -- 2. 删除同OUI设备的iptables规则
+    -- 2. 仅删除指定 MAC 的 iptables 规则（不再按 OUI 批量清理，保持与添加操作对称）
+    --[[ 已禁用 OUI 联动删除（避免误删其他同品牌设备）
     local blocklist = nil
     pcall(function()
         blocklist = load_blocklist()
@@ -2560,13 +3004,14 @@ function api_enable_device()
             end
         end
     end
+    ]]
 
     -- 3. access_ctl.sh 恢复（如果存在）
     table.insert(script_parts, "if [ -x /usr/bin/access_ctl.sh ]; then timeout 5 access_ctl.sh -m " .. mac_lower .. " -a 1 2>/dev/null || true; fi")
 
-    -- 将所有操作写入临时脚本并后台执行
+    -- 将所有操作写入临时脚本并后台执行（使用 MAC 唯一定位，避免并发覆盖）
     local script_content = table.concat(script_parts, "\n")
-    local script_file = "/tmp/router_assistant_enable.sh"
+    local script_file = "/tmp/router_assistant_enable_" .. mac_no_colon .. ".sh"
     local sfd = io.open(script_file, "w")
     if sfd then
         sfd:write("#!/bin/sh\n")
@@ -2585,6 +3030,7 @@ function api_enable_device()
     pcall(remove_from_blocklist, mac_colon)
     _blocked_macs_cache = nil
     _blocked_macs_cache_time = 0
+    clear_blocked_macs_cache_file()  -- 清除缓存文件，确保其他进程同步
 
     nixio.syslog("info", "[RouterAssistant] enable_device completed (background tasks running)")
 

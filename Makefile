@@ -67,6 +67,19 @@ endef
 define Package/luci-app-router-assistant/postinst
 #!/bin/sh
 [ -n "$${IPKG_INSTROOT}" ] || {
+	# 清除所有残留数据（确保重装时干净）
+	for dir in /tmp/storage /mnt/mmcblk0p1 /mnt/sdcard /tmp; do
+		[ -d "${dir}" ] || continue
+		for subdir in router_assistant tmp/router_assistant; do
+			if [ -d "${dir}/${subdir}" ]; then
+				rm -f "${dir}/${subdir}/traffic_stats.json" \
+				       "${dir}/${subdir}/traffic_monthly.json" \
+				       "${dir}/${subdir}/traffic_hourly.json" \
+				       "${dir}/${subdir}/mac_blocklist.json" \
+				       "${dir}/${subdir}/blocked_macs_cache.json" 2>/dev/null
+			fi
+		done
+	done
 	rm -f /tmp/luci-indexcache
 	/etc/init.d/traffic-stats enable 2>/dev/null
 	/etc/init.d/traffic-stats start 2>/dev/null

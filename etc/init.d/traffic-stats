@@ -11,10 +11,10 @@ CHAIN_RX="TRAFFIC_STATS_RX"
 CHAIN_TX="TRAFFIC_STATS_TX"
 DATA_DIR_NAME="router_assistant"
 
-# 存储路径搜索顺序（与 collect.lua 和 router_assistant.lua 保持一致）
+# 存储路径搜索顺序（与 router_assistant.lua 保持一致）
 STORAGE_BASE_PATHS="/tmp/storage/mmcblk0p1 /mnt/mmcblk0p1 /mnt/sdcard /tmp/mnt/mmcblk0p1 /overlay"
 
-# 动态获取数据目录（与 collect.lua 逻辑一致）
+# 动态获取数据目录（与 router_assistant.lua 逻辑一致）
 get_data_dir() {
     for base_path in ${STORAGE_BASE_PATHS}; do
         local data_dir="${base_path}/${DATA_DIR_NAME}"
@@ -219,23 +219,9 @@ restore_from_stats() {
 }
 
 setup_cron() {
-    local cron_file="/etc/crontabs/root"
-    local lua_script="/usr/lib/traffic_stats/collect.lua"
-    local cron_entry="0 * * * * /usr/bin/lua ${lua_script} >/dev/null 2>&1"
-
-    if [ -f "${cron_file}" ]; then
-        if grep -q "collect_traffic" "${cron_file}" 2>/dev/null; then
-            echo "traffic-stats: Cron 任务已存在"
-        else
-            echo "${cron_entry}" >> "${cron_file}"
-            /etc/init.d/cron restart 2>/dev/null
-            echo "traffic-stats: 已添加 Cron 任务（每小时流量采集）"
-        fi
-    else
-        echo "${cron_entry}" > "${cron_file}"
-        /etc/init.d/cron restart 2>/dev/null
-        echo "traffic-stats: 已创建 Cron 文件并添加每小时流量采集任务"
-    fi
+    # collect.lua 已废弃，流量统计由 router_assistant.lua 接管，不再需要 cron 采集
+    # 注意：如果将来需要定期任务，可在此添加
+    return 0
 }
 
 remove_cron() {
@@ -255,13 +241,14 @@ start() {
     restore_blocklist
 
     # ipset 流量统计功能（可选，需要 ipset 支持）
+    # 注意：collect.lua 已废弃，流量统计完全依赖 router_assistant.lua 的 ubus 采集
     if check_ipset; then
         echo "traffic-stats: ipset 可用，启动流量统计功能..."
         init_ipset
         init_iptables
         restore_devices
         restore_from_stats
-        setup_cron
+        -- setup_cron  -- 已禁用：collect.lua 已废弃，流量统计由 router_assistant.lua 接管
         echo "traffic-stats: 流量统计功能已启动"
     else
         echo "traffic-stats: ipset 未安装，跳过流量统计功能（黑名单功能正常）"
@@ -353,7 +340,7 @@ purge_data() {
 
     # 2. 清理数据目录中的流量统计文件
     # baseline.json 也会被删除，下次采集时会重新初始化（从当时的 WAN 接口字节数开始计算增量）
-    # 路由器重启后如果 baseline 尚未重建，collect.lua 的重启检测会重新初始化
+    # 路由器重启后如果 baseline 尚未重建，router_assistant.lua 会自动重建
     local data_dirs="${DATA_DIR} /tmp/router_assistant"
     for dir in ${data_dirs}; do
         if [ -d "${dir}" ]; then
@@ -371,14 +358,16 @@ purge_data() {
 
     # 3. 清理 ipset 条目并重启服务以恢复设备列表
     # 警告：先 stop，避免 restart 时仍有进程持有 ipset 引用
+    # 修复问题#5：增加等待时间到3秒，确保规则清理完成后再start，避免出现规则真空期
     if check_ipset; then
         stop
-        sleep 1
+        sleep 3
         ipset flush ${IPSET_RX} 2>/dev/null
         ipset flush ${IPSET_TX} 2>/dev/null
         echo "traffic-stats: ipset 已清空"
     else
         stop
+        sleep 1
     fi
     start
     echo "traffic-stats: 服务已重启，设备列表已从 dhcp.leases 恢复"
@@ -391,18 +380,26 @@ purge_data() {
                 mkdir -p "${base_path}/${DATA_DIR_NAME}"
                 cp "${BLOCKLIST_BACKUP}" "${base_path}/${DATA_DIR_NAME}/mac_blocklist.json" 2>/dev/null
                 echo "traffic-stats: 黑名单已恢复到 ${base_path}/${DATA_DIR_NAME}/mac_blocklist.json"
+                # 修复问题#2：cp覆盖黑名单文件后需要再次恢复规则
+                # 因为start()中的restore_blocklist()读取的是旧文件
+                if find_blocklist_file && [ -f "${BLOCKLIST_FILE}" ]; then
+                    local mac_list=$(grep -oE '"mac"[[:space:]]*:[[:space:]]*"[0-9A-Fa-f:]+"' "${BLOCKLIST_FILE}" 2>/dev/null | sed 's/.*"mac"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
+                    for mac in ${mac_list}; do
+                        if [ -n "${mac}" ] && [ "${mac}" != "00:00:00:00:00:00" ] && [ "${mac}" != "FF:FF:FF:FF:FF:FF" ]; then
+                            local lower_mac=$(echo "${mac}" | tr '[:upper:]' '[:lower:]')
+                            iptables -I INPUT -m mac --mac-source "${lower_mac}" -j DROP 2>/dev/null
+                            iptables -I FORWARD -m mac --mac-source "${lower_mac}" -j DROP 2>/dev/null
+                        fi
+                    done
+                fi
                 break
             fi
         done
         rm -f "${BLOCKLIST_BACKUP}" 2>/dev/null
     fi
 
-    # 5. 执行首次流量采集
-    if [ -f "/usr/lib/traffic_stats/collect.lua" ]; then
-        echo "traffic-stats: 正在执行首次流量采集..."
-        /usr/bin/lua /usr/lib/traffic_stats/collect.lua collect >/dev/null 2>&1
-        echo "traffic-stats: 首次流量采集完成"
-    fi
+    # 5. 执行首次流量采集（collect.lua 已废弃，跳过）
+    # 流量统计由 router_assistant.lua 在用户访问页面时实时采集
 
     echo "traffic-stats: 流量数据清理完成（黑名单已保留）"
 }

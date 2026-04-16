@@ -22,13 +22,28 @@ local CONFIG_NAME = "router_assistant"
 function M.get_config()
     local uci = get_uci()
     if not uci then return {} end
-    
+    -- 只读操作：不创建 section，不保存配置
+    -- 如果配置不存在，返回空表
+    return uci:get_all(CONFIG_NAME) or {}
+end
+
+-- 初始化配置（仅在首次设置时调用，不应在 get_config 中调用）
+function M.init_config()
+    local uci = get_uci()
+    if not uci then return end
+
+    -- 检查是否已有配置
+    local current = uci:get_all(CONFIG_NAME)
+    if current and next(current) then
+        return  -- 已存在配置，无需初始化
+    end
+
+    -- 创建默认配置
     uci:section(CONFIG_NAME, "global", nil, {
         enabled = "1",
         refresh_interval = "5"
     })
-    uci:save("router_assistant")
-    return uci:get_all(CONFIG_NAME)
+    uci:save(CONFIG_NAME)
 end
 
 function M.set_enabled(enabled)
