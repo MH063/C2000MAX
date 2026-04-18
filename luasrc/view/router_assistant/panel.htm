@@ -162,18 +162,24 @@
         align-items: center;
         gap: 6px;
         margin-top: 8px;
-        padding: 6px 12px;
+        padding: 6px 14px;
         background: rgba(0, 0, 0, 0.2);
         border-radius: 12px;
         font-size: 11px;
+        max-width: 280px;
+        flex-wrap: nowrap;
     }
 
     .rm-storage-icon {
         font-size: 14px;
+        flex-shrink: 0;
     }
 
     .rm-storage-text {
         color: var(--text-secondary);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
     }
 
     .rm-storage-status.tf-card {
@@ -986,6 +992,12 @@
             gap: 8px;
         }
 
+        .rm-storage-status {
+            max-width: 100%;
+            font-size: 11px;
+            padding: 5px 10px;
+        }
+
         .rm-header-title {
             font-size: 20px;
             white-space: nowrap;
@@ -1058,7 +1070,7 @@
         }
 
         .rm-badge {
-            font-size: 10px;
+            font-size: 11px;
             padding: 2px 6px;
         }
 
@@ -1280,6 +1292,7 @@
         .rm-header {
             flex-direction: row;
             justify-content: space-between;
+            padding: 12px 16px;
         }
 
         .rm-header-status {
@@ -1288,6 +1301,52 @@
 
         .rm-stats {
             grid-template-columns: repeat(3, 1fr);
+        }
+
+        .rm-container {
+            padding: 12px;
+        }
+
+        .rm-modal {
+            min-width: auto;
+            max-width: 80%;
+            width: auto;
+        }
+
+        .rm-card {
+            padding: 10px;
+        }
+    }
+
+    /* ========== 纯横屏模式（更窄的屏幕） ========== */
+    @media (max-width: 600px) and (orientation: landscape) {
+        .rm-stats {
+            grid-template-columns: repeat(4, 1fr);
+        }
+
+        .rm-stat-card {
+            padding: 8px;
+        }
+
+        .rm-stat-value {
+            font-size: 18px;
+        }
+
+        .rm-stat-header {
+            margin-bottom: 4px;
+        }
+
+        .rm-header {
+            flex-direction: row;
+            gap: 12px;
+        }
+
+        .rm-header-title {
+            font-size: 14px;
+        }
+
+        .rm-container {
+            min-height: auto;
         }
     }
 
@@ -1299,6 +1358,97 @@
 
         .rm-modal {
             padding-bottom: calc(24px + env(safe-area-inset-bottom));
+        }
+    }
+
+    /* ========== 无障碍支持：减少动画 (prefers-reduced-motion) ========== */
+    @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+            animation-duration: 0.01ms !important;
+            animation-iteration-count: 1 !important;
+            transition-duration: 0.01ms !important;
+            scroll-behavior: auto !important;
+        }
+    }
+
+    /* ========== 无障碍支持：键盘导航焦点样式 ========== */
+    :focus-visible {
+        outline: 2px solid var(--accent-cyan);
+        outline-offset: 2px;
+    }
+
+    /* 确保可点击元素有足够的焦点指示 */
+    .rm-btn:focus-visible,
+    .rm-kick-btn:focus-visible,
+    .rm-tab:focus-visible,
+    .rm-modal-close:focus-visible,
+    .rm-page-btn:focus-visible {
+        outline: 2px solid var(--accent-cyan);
+        outline-offset: 2px;
+        box-shadow: 0 0 0 4px rgba(0, 212, 255, 0.3);
+    }
+
+    /* 跳转到主内容链接（屏幕阅读器用户） */
+    .sr-only {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+        border: 0;
+    }
+
+    /* ========== 打印样式优化 ========== */
+    @media print {
+        body {
+            background: white !important;
+            color: black !important;
+        }
+
+        .rm-container {
+            max-width: 100% !important;
+            padding: 20px !important;
+        }
+
+        .rm-header-status,
+        .rm-toast-container,
+        .rm-modal-overlay,
+        .rm-kick-btn,
+        .rm-btn-danger,
+        .rm-tabs {
+            display: none !important;
+        }
+
+        .rm-tab-content {
+            display: block !important;
+            page-break-inside: avoid;
+        }
+
+        .rm-card {
+            border: 1px solid #ccc !important;
+            box-shadow: none !important;
+            break-inside: avoid;
+        }
+
+        .rm-table {
+            font-size: 10pt !important;
+            min-width: auto !important;
+        }
+
+        .rm-stat-card {
+            border: 1px solid #ccc !important;
+            box-shadow: none !important;
+        }
+
+        a[href]:after {
+            content: " (" attr(href) ")";
+            font-size: 9pt;
+            color: #666;
         }
     }
 
@@ -1799,7 +1949,7 @@
             </svg>
             设备列表
         </button>
-        <button class="rm-tab" data-tab="traffic">
+        <button class="rm-tab" data-tab="traffic" aria-label="流量统计标签">
             <!-- 流量统计图标 - 更专业的设计 -->
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="margin-right:6px;">
                 <path d="M3 3v18h18"/>
@@ -1808,7 +1958,7 @@
             </svg>
             流量统计
         </button>
-        <button class="rm-tab" data-tab="wifi">
+        <button class="rm-tab" data-tab="wifi" aria-label="WiFi管理标签">
             <!-- WiFi图标 - 更专业的设计 -->
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="margin-right:6px;">
                 <path d="M5 12.55a11 11 0 0 1 14.08 0" stroke-width="1.5"/>
@@ -2266,7 +2416,10 @@ function showToast(message, type, duration) {
 
     var toast = document.createElement('div');
     toast.className = 'rm-toast ' + type;
-    toast.innerHTML = icons[type] + '<span>' + message + '</span>';
+    var msgSpan = document.createElement('span');
+    msgSpan.textContent = message;  // 使用textContent防止XSS
+    toast.innerHTML = icons[type];
+    toast.appendChild(msgSpan);
 
     container.appendChild(toast);
 
@@ -2292,7 +2445,9 @@ function loadVersion() {
                     document.getElementById('version-info').innerHTML =
                         '路由管家 v' + version + ' | 作者：' + author;
                 }
-            } catch (e) {}
+            } catch (e) {
+                if (window.DEBUG_MODE) console.error('[loadVersion] 版本加载失败:', e);
+            }
         }
     );
 }
@@ -2308,16 +2463,52 @@ var currentTrafficOffline = [];
 var currentTrafficStats = {};
 
 function loadDeviceNotes() {
+    // 优先从localStorage恢复本地缓存（离线支持）
+    try {
+        var cachedNotes = localStorage.getItem('rm_device_notes_backup');
+        if (cachedNotes) {
+            deviceNotes = JSON.parse(cachedNotes);
+            if (window.DEBUG_MODE) console.log('[loadDeviceNotes] 从本地缓存恢复设备备注:', Object.keys(deviceNotes).length);
+        }
+    } catch (e) {
+        if (window.DEBUG_MODE) console.warn('[loadDeviceNotes] 本地缓存恢复失败:', e);
+    }
+
+    // 从后端获取最新数据
     safeXHR(
         '<%=luci.dispatcher.build_url("admin/status/router_assistant/get_device_notes")%>',
         function(res) {
             if (res.code === 0) {
                 var data = extractData(res);
-                deviceNotes = (data && data.notes) || res.notes || {};
+                var serverNotes = (data && data.notes) || res.notes || {};
+                // 合并：后端数据优先，但保留本地更新的备注
+                for (var mac in serverNotes) {
+                    deviceNotes[mac] = serverNotes[mac];
+                }
+                // 同步到localStorage作为备份
+                backupDeviceNotes();
             }
         },
-        function(error) {}
+        function(error) {
+            // 后端加载失败时，保留本地缓存继续使用
+            if (window.DEBUG_MODE) console.warn('[loadDeviceNotes] 后端加载失败，使用本地缓存:', error);
+        }
     );
+}
+
+// 备份设备备注到localStorage
+function backupDeviceNotes() {
+    try {
+        localStorage.setItem('rm_device_notes_backup', JSON.stringify(deviceNotes));
+    } catch (e) {
+        // localStorage已满，尝试清理
+        try {
+            localStorage.removeItem('rm_device_notes_backup');
+            localStorage.setItem('rm_device_notes_backup', JSON.stringify(deviceNotes));
+        } catch (e2) {
+            if (window.DEBUG_MODE) console.warn('[backupDeviceNotes] 备份失败:', e2);
+        }
+    }
 }
 
 function loadAlerts() {
@@ -2361,7 +2552,16 @@ function normalizeMacKey(mac) {
     return upper.replace(/(.{2})(?=.)/g, '$1:');
 }
 
+var isNoteSubmitting = false;
+
 function saveNote() {
+    // 防重复提交检查
+    if (isNoteSubmitting) {
+        showToast('正在保存中，请稍候...', 'warning');
+        return;
+    }
+    isNoteSubmitting = true;
+
     var mac = document.getElementById('note-mac').value;
     var note = document.getElementById('note-content').value;
     var deviceType = document.getElementById('note-device-type').value;
@@ -2385,10 +2585,14 @@ function saveNote() {
 
     safeXHRpost('<%=luci.dispatcher.build_url("admin/status/router_assistant/save_device_note")%>', params,
         function(res) {
+            isNoteSubmitting = false;  // 请求完成，重置标志
             if (res.code === 0) {
                 // 服务器保存成功，更新时间戳
                 deviceNotes[macKey].updated = Date.now() / 1000;
                 showToast('✓ 设备信息已保存', 'success');
+
+                // 同步备份到localStorage
+                backupDeviceNotes();
 
                 // 立即同步更新全局设备数据（确保数据一致性）
                 syncDeviceDataGlobally(macKey, note, deviceType);
@@ -2412,6 +2616,7 @@ function saveNote() {
             }
         },
         function(error) {
+            isNoteSubmitting = false;  // 请求完成，重置标志
             // 网络错误，回滚到旧数据
             if (oldNoteData) {
                 deviceNotes[macKey] = oldNoteData;
@@ -2664,7 +2869,7 @@ function syncDeviceDataGlobally(mac, newNote, newDeviceType) {
         }
     }
 
-    console.log('[RouterAssistant] 已同步全局设备数据:', normalizedMac, {note: newNote, deviceType: newDeviceType});
+    if (window.DEBUG_MODE) console.log('[RouterAssistant] 已同步全局设备数据:', normalizedMac, {note: newNote, deviceType: newDeviceType});
 }
 
 // 后台静默刷新单个设备数据（确保与服务器一致）
@@ -2697,7 +2902,7 @@ function loadDevicesSilent() {
             }
         },
         function(error) {
-            console.log('静默刷新失败（可忽略）:', error);
+            if (window.DEBUG_MODE) console.log('静默刷新失败（可忽略）:', error);
         }
     );
 }
@@ -2745,7 +2950,7 @@ function retrySaveNote(mac) {
     }
 
     retryInfo.retryCount++;
-    console.log('重试保存设备备注 (' + retryInfo.retryCount + '/' + retryInfo.maxRetries + '):', macKey);
+    if (window.DEBUG_MODE) console.log('重试保存设备备注 (' + retryInfo.retryCount + '/' + retryInfo.maxRetries + '):', macKey);
 
     var params = 'mac=' + encodeURIComponent(macKey) +
                  '&note=' + encodeURIComponent(retryInfo.data.note || '') +
@@ -2993,7 +3198,6 @@ function enableDevice(mac) {
     );
 }
 
-var blockedDevicesTimer = null;
 var localBlockedDevices = [];
 
 function loadBlockedDevices() {
@@ -3527,7 +3731,31 @@ function initPageState(tableId) {
 }
 
 function savePageState(tableId) {
-    localStorage.setItem('rm_page_' + tableId, JSON.stringify(pageStates[tableId]));
+    try {
+        var data = JSON.stringify(pageStates[tableId]);
+        localStorage.setItem('rm_page_' + tableId, data);
+    } catch (e) {
+        // localStorage配额超出（通常是5MB限制）
+        if (window.DEBUG_MODE) console.warn('[savePageState] localStorage已满，尝试清理:', e);
+        // 清理旧的页面状态数据
+        try {
+            var keysToRemove = [];
+            for (var i = 0; i < localStorage.length; i++) {
+                var key = localStorage.key(i);
+                if (key && key.startsWith('rm_page_') && key !== 'rm_page_' + tableId) {
+                    keysToRemove.push(key);
+                }
+            }
+            // 清除最旧的3个
+            for (var j = 0; j < Math.min(3, keysToRemove.length); j++) {
+                localStorage.removeItem(keysToRemove[j]);
+            }
+            // 重试保存
+            localStorage.setItem('rm_page_' + tableId, JSON.stringify(pageStates[tableId]));
+        } catch (e2) {
+            if (window.DEBUG_MODE) console.error('[savePageState] 存储失败:', e2);
+        }
+    }
 }
 
 function renderPagination(tableId, totalItems) {
@@ -3710,8 +3938,12 @@ function renderStorageStatus(data) {
         statusEl.className = 'rm-storage-status tf-card';
         iconEl.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>';
         var availGB = (data.tf_card.available / (1024 * 1024 * 1024)).toFixed(1);
+        var usedGB = (data.tf_card.used / (1024 * 1024 * 1024)).toFixed(1);
+        var totalGB = (data.tf_card.total / (1024 * 1024 * 1024)).toFixed(1);
         var percent = parseFloat(data.tf_card.percent) || 0;
-        textEl.textContent = 'TF卡: ' + availGB + 'GB可用 / ' + percent + '已用';
+
+        textEl.textContent = 'TF卡: ' + availGB + 'GB可用';
+        textEl.title = '总容量: ' + totalGB + 'GB | 已用: ' + usedGB + 'GB (' + percent.toFixed(1) + '%)';
     } else {
         statusEl.className = 'rm-storage-status memory';
         // 内存存储图标 - 更专业的设计
@@ -3745,11 +3977,11 @@ var lastDataHash = {
 };
 
 var dataCache = {
-    // 修复问题8：TTL应大于轮询间隔(5000ms)，避免频繁缓存失效
+    // 修复问题13：统一TTL值（都使用6000ms），避免缓存失效不一致
     devices: { data: null, timestamp: 0, ttl: 6000 },
     traffic: { data: null, timestamp: 0, ttl: 6000 },
     wifi: { data: null, timestamp: 0, ttl: 6000 },
-    wifiStatus: { data: null, timestamp: 0, ttl: 5000 },
+    wifiStatus: { data: null, timestamp: 0, ttl: 6000 },
     deviceNotes: { data: null, timestamp: 0, ttl: 30000 },
     storageStatus: { data: null, timestamp: 0, ttl: 60000 }
 };
@@ -3938,7 +4170,7 @@ function updateGlobalStatus(success) {
 // 调试模式下会输出实际使用了哪一层数据，便于排查 API 格式问题
 function extractData(res, key) {
     if (!res || res.code !== 0) {
-        console.warn('[extractData] non-success response:', res);
+        if (window.DEBUG_MODE) console.warn('[extractData] non-success response:', res);
         return null;
     }
     // 新的数据结构：res.data.xxx
@@ -4299,6 +4531,19 @@ function stopAllTimers() {
     if (blockedDevicesTimer) { clearInterval(blockedDevicesTimer); blockedDevicesTimer = null; }
 }
 
+function abortPendingRequests() {
+    // 标记所有pending请求为已取消，不再处理回调
+    pendingRequests.devices = false;
+    pendingRequests.traffic = false;
+    pendingRequests.wifi = false;
+}
+
+// 页面卸载时清理资源
+window.addEventListener('beforeunload', function() {
+    stopAllTimers();
+    abortPendingRequests();
+});
+
 var globalRefreshLock = false;
 
 function refreshAll() {
@@ -4346,6 +4591,23 @@ document.addEventListener('DOMContentLoaded', function() {
     loadDeviceNotes();
     loadAlerts();
     startRefresh();
+
+    // 模态框事件冒泡控制：防止点击模态框内容时触发关闭
+    var noteModal = document.getElementById('note-modal');
+    if (noteModal) {
+        noteModal.addEventListener('click', function(e) {
+            // 阻止事件冒泡到overlay
+            e.stopPropagation();
+        });
+    }
+
+    // 模态框overlay点击时关闭（点击内容区域不会关闭）
+    var alertModal = document.getElementById('alert-modal');
+    if (alertModal) {
+        alertModal.addEventListener('click', function(e) {
+            e.stopPropagation();
+        });
+    }
 });
 </script>
 

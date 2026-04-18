@@ -1165,14 +1165,16 @@ local function get_ip_by_mac_arp(mac)
     return nil
 end
 
--- HTML转义函数，防止XSS
+-- HTML转义函数，防止XSS（顺序：先&后<>引号，避免二次编码）
 local function sanitize_input(str)
     if not str or type(str) ~= "string" then return "" end
+    -- 先替换&（避免后续转义的&被二次编码）
+    str = str:gsub("&", "&amp;")
+    -- 再替换<>和引号
     str = str:gsub("<", "&lt;")
     str = str:gsub(">", "&gt;")
     str = str:gsub('"', "&quot;")
     str = str:gsub("'", "&#39;")
-    str = str:gsub("&", "&amp;")
     str = str:sub(1, 64)
     return str
 end
@@ -3690,6 +3692,7 @@ end
 
 -- 获取路由器 IP 地址
 local function get_router_ip()
+    -- 方法1：获取默认路由IP
     local fd = io.popen("ip route show default 2>/dev/null | awk '/src/ {print $NF}' | head -1")
     if fd then
         local ip = fd:read("*l")
@@ -3698,7 +3701,7 @@ local function get_router_ip()
             return ip
         end
     end
-    -- 备用方案：获取 br-lan IP
+    -- 方法2：获取 br-lan IP
     fd = io.popen("ip addr show br-lan 2>/dev/null | grep 'inet ' | awk '{print $2}' | cut -d'/' -f1")
     if fd then
         local ip = fd:read("*l")
@@ -3707,7 +3710,20 @@ local function get_router_ip()
             return ip
         end
     end
-    return "192.168.1.1"
+    -- 方法3：遍历所有LAN接口尝试获取IP
+    local lan_ifs = {"eth0", "eth1", "lan0", "lan1", "br-lan.1", "eth0.1"}
+    for _, lan_if in ipairs(lan_ifs) do
+        fd = io.popen("ip addr show " .. lan_if .. " 2>/dev/null | grep 'inet ' | awk '{print $2}' | cut -d'/' -f1")
+        if fd then
+            local ip = fd:read("*l")
+            fd:close()
+            if ip and ip ~= "" then
+                return ip
+            end
+        end
+    end
+    -- 方法4：返回nil而非硬编码值，让调用方决定如何处理
+    return nil
 end
 
 -- 启动 Homebox 服务
@@ -3796,7 +3812,11 @@ function api_speed_test()
 
         -- 获取路由器 IP
         local router_ip = get_router_ip()
-        result.url = "http://" .. router_ip .. ":" .. HOMEBOX_PORT
+        if router_ip then
+            result.url = "http://" .. router_ip .. ":" .. HOMEBOX_PORT
+        else
+            result.url = nil
+        end
         result.status = "ready"
         result.message = "Homebox 测速服务已就绪"
     end)
@@ -3828,7 +3848,11 @@ function api_speed_test_status()
         if is_homebox_running() then
             local router_ip = get_router_ip()
             result.status = "ready"
-            result.url = "http://" .. router_ip .. ":" .. HOMEBOX_PORT
+            if router_ip then
+                result.url = "http://" .. router_ip .. ":" .. HOMEBOX_PORT
+            else
+                result.url = nil
+            end
             result.message = "Homebox 测速服务运行中"
         else
             result.status = "stopped"

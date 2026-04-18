@@ -188,10 +188,20 @@ function kick_device(mac, device) {
     let mac_lower = mac_normalized.toLowerCase();
     let formatted_mac = mac_normalized;
 
+    // 二次验证：确保MAC只包含合法字符（防止验证函数被绕过）
+    if (!formatted_mac.match('^[0-9A-F:]{17}$')) {
+        return { code: -1, message: 'MAC地址包含非法字符' };
+    }
+
     // 获取设备 IP（如果提供）
     let device_ip = device && device.ip ? device.ip : '';
 
-    // 构建踢出命令脚本
+    // 验证IP格式（如果提供）
+    if (device_ip && !device_ip.match('^\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}$')) {
+        device_ip = '';  // 无效IP则忽略
+    }
+
+    // 构建踢出命令脚本（MAC和IP都经过验证）
     let cmds = [
         'iptables -I INPUT -m mac --mac-source ' + formatted_mac + ' -j DROP 2>/dev/null',
         'iptables -I FORWARD -m mac --mac-source ' + formatted_mac + ' -j DROP 2>/dev/null'
@@ -203,7 +213,7 @@ function kick_device(mac, device) {
     }
     cmds.push('conntrack -D -m ' + mac_lower.replace(/:/g, '') + ' 2>/dev/null');
 
-    // 踢出无线连接
+    // 踢出无线连接（接口名硬编码防止注入）
     let ifaces = ['ra0', 'rai0', 'ra1', 'rai1', 'apcli0', 'apcli1'];
     for (let i = 0; i < length(ifaces); i++) {
         cmds.push('timeout 3 iw dev ' + ifaces[i] + ' station del ' + formatted_mac + ' 2>/dev/null || true');
