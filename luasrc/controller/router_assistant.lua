@@ -19,6 +19,12 @@ SECONDS_PER_WEEK = 604800
 STORAGE_CACHE_TTL = SECONDS_PER_HOUR
 BLOCKED_MACS_CACHE_TTL = 30
 
+-- ipset 流量统计相关常量
+IPSET_RX_NAME = "traffic_stats_rx"
+IPSET_TX_NAME = "traffic_stats_tx"
+IPSET_RX_IP_NAME = "traffic_stats_rx_ip"
+IPSET_CACHE_TTL = 5  -- ipset 数据缓存5秒
+
 -- 历史记录保留常量
 MAX_HOURLY_RECORDS = 168
 MAX_DAILY_RECORDS = 30
@@ -666,7 +672,67 @@ function index()
     entry({"admin", "status", "router_assistant", "collect_traffic"}, call("api_collect_traffic")).leaf = true
 end
 
-local function is_wifi_device(client)
+-- 缓存：所有无线接口的关联客户端 MAC 集合（无冒号大写格式）
+-- 用于在 infocd 未上报 type/rssi 时，作为最终的无线设备判断依据
+local _wifi_assoc_macs_cache = nil
+local _wifi_assoc_cache_time = 0
+local WIFI_ASSOC_CACHE_TTL = 10  -- 缓存10秒
+
+-- 获取当前所有无线接口的关联客户端 MAC 列表
+-- 优先使用 hostapd_cli（更可靠），fallback 到 iwinfo assoclist
+local function get_wifi_assoc_macs()
+    local now = os.time()
+    if _wifi_assoc_macs_cache and (now - _wifi_assoc_cache_time) < WIFI_ASSOC_CACHE_TTL then
+        return _wifi_assoc_macs_cache
+    end
+
+    local util = require("luci.util")
+    local macs = {}
+    local wifi_ifaces = {
+        "ra0", "rai0", "ra1", "rai1", "ra2", "rai2",
+        "wlan0", "wlan1", "wlan2", "wlan3"
+    }
+
+    -- 方法1：使用 hostapd_cli list_sta（更可靠，能正确显示所有客户端）
+    for _, iface in ipairs(wifi_ifaces) do
+        local output = util.exec("hostapd_cli -i " .. iface .. " list_sta 2>/dev/null")
+        if output and output ~= "" then
+            for line in output:gmatch("[^\r\n]+") do
+                local mac = line:match("^(%x%x:%x%x:%x%x:%x%x:%x%x:%x%x)")
+                if mac then
+                    local normalized = mac:gsub(":", ""):upper()
+                    macs[normalized] = true
+                end
+            end
+        end
+    end
+
+    -- 方法2：如果 hostapd_cli 没有结果，fallback 到 iwinfo assoclist
+    if next(macs) == nil then
+        for _, iface in ipairs(wifi_ifaces) do
+            local output = util.exec("iwinfo " .. iface .. " assoclist 2>/dev/null")
+            if output and output ~= "" and not output:match("No station") then
+                for line in output:gmatch("[^\r\n]+") do
+                    local mac = line:match("^(%x%x:%x%x:%x%x:%x%x:%x%x:%x%x)")
+                    if mac then
+                        local normalized = mac:gsub(":", ""):upper()
+                        macs[normalized] = true
+                    end
+                end
+            end
+        end
+    end
+
+    _wifi_assoc_macs_cache = macs
+    _wifi_assoc_cache_time = now
+    return macs
+end
+
+-- 判断设备是否为 WiFi 无线连接
+-- @param client  infocd 返回的设备对象
+-- @param mac     设备的 MAC 地址字符串（来自 data.client 的 key），用于 assoclist 查询
+local function is_wifi_device(client, mac)
+    -- 优先根据 client.type 判断，infocd 上报的 type 字段通常准确
     if client.type == "wireless" then
         return true
     end
@@ -683,6 +749,7 @@ local function is_wifi_device(client)
         end
     end
 
+    -- 通过 rssi 判断：有有效信号强度即为无线设备
     local rssi = client.rssi
     if rssi and type(rssi) == "string" and rssi ~= "" and rssi ~= "0" then
         return true
@@ -691,7 +758,117 @@ local function is_wifi_device(client)
         return true
     end
 
+    -- 最终兜底：通过 hostapd_cli / iwinfo assoclist 查询该 MAC 是否出现在无线客户端列表中
+    -- 这可以解决 infocd 误判 type 为 wired，或 rssi 为空但仍通过 WiFi 连接的问题
+    if mac and tostring(mac) ~= "" then
+        local mac_normalized = tostring(mac):gsub(":", ""):upper()
+        local assoc_macs = get_wifi_assoc_macs()
+        if assoc_macs[mac_normalized] then
+            return true
+        end
+    end
+
+    -- 以上检查都不匹配，且 type 明确为 wired，则判定为有线设备
+    if client.type == "wired" then
+        return false
+    end
+
     return false
+end
+
+-- 缓存：ipset 流量数据（避免频繁执行命令）
+local _ipset_traffic_cache = nil
+local _ipset_cache_time = 0
+
+-- 从 ipset 获取流量数据（TX 按 MAC，RX 按 IP）
+-- @param mac_colon  带冒号格式的 MAC 地址（如 "26:DB:98:07:CA:A0"）
+-- @param ip         设备的 IP 地址（用于 RX 流量统计）
+-- @return rx_bytes, tx_bytes  下行和上行字节数（若不在列表中则返回 nil, nil）
+local function get_ipset_traffic(mac_colon, ip)
+    local now = os.time()
+    local cache_key = mac_colon .. "|" .. (ip or "")
+    
+    if _ipset_traffic_cache and (now - _ipset_cache_time) < IPSET_CACHE_TTL then
+        local cached = _ipset_traffic_cache[cache_key]
+        if cached then
+            return cached.rx, cached.tx
+        end
+    end
+
+    local util = require("luci.util")
+    local new_cache = {}
+
+    -- 获取 TX ipset（上行流量：设备→互联网）- 按 MAC 统计
+    local tx_output = util.exec("ipset list " .. IPSET_TX_NAME .. " 2>/dev/null")
+    if tx_output then
+        for line in tx_output:gmatch("[^\r\n]+") do
+            local mac, bytes = line:match("^(%x%x:%x%x:%x%x:%x%x:%x%x:%x%x)%s+packets%s+%d+%s+bytes%s+(%d+)")
+            if mac and bytes then
+                local mac_upper = mac:upper()
+                new_cache[mac_upper] = new_cache[mac_upper] or {}
+                new_cache[mac_upper].tx = tonumber(bytes) or 0
+            end
+        end
+    end
+
+    -- 获取 RX 流量：按 IP 统计
+    -- 直接使用传入的 IP 查询，不需要 ARP 表映射
+    local rx_ip_output = util.exec("ipset list " .. IPSET_RX_IP_NAME .. " 2>/dev/null")
+    if rx_ip_output then
+        -- 建立 IP 到 RX 流量的映射
+        local ip_to_rx = {}
+        for line in rx_ip_output:gmatch("[^\r\n]+") do
+            local rx_ip, bytes = line:match("^(%d+%.%d+%.%d+%.%d+)%s+packets%s+%d+%s+bytes%s+(%d+)")
+            if rx_ip and bytes then
+                ip_to_rx[rx_ip] = tonumber(bytes) or 0
+            end
+        end
+        
+        -- 建立 ARP 表映射（IP -> MAC），用于缓存
+        local ip_to_mac = {}
+        local arp_output = util.exec("cat /proc/net/arp 2>/dev/null")
+        if arp_output then
+            for line in arp_output:gmatch("[^\r\n]+") do
+                local arp_ip, arp_mac = line:match("^(%d+%.%d+%.%d+%.%d+)%s+%S+%s+%S+%s+(%x%x:%x%x:%x%x:%x%x:%x%x:%x%x)")
+                if arp_ip and arp_mac then
+                    ip_to_mac[arp_ip] = arp_mac:upper()
+                end
+            end
+        end
+        
+        -- 将 IP 流量映射到 MAC（用于缓存）
+        for rx_ip, bytes in pairs(ip_to_rx) do
+            local mac_from_arp = ip_to_mac[rx_ip]
+            if mac_from_arp then
+                new_cache[mac_from_arp] = new_cache[mac_from_arp] or {}
+                new_cache[mac_from_arp].rx = bytes
+            end
+        end
+        
+        -- 同时建立 IP 级别的缓存（用于直接 IP 查询）
+        for rx_ip, bytes in pairs(ip_to_rx) do
+            new_cache["|" .. rx_ip] = { rx = bytes }
+        end
+    end
+
+    _ipset_traffic_cache = new_cache
+    _ipset_cache_time = now
+
+    -- 优先使用 MAC + IP 组合键查询（直接使用传入的 IP）
+    if ip and ip ~= "" then
+        local ip_result = new_cache["|" .. ip]
+        if ip_result and ip_result.rx then
+            local tx_result = new_cache[mac_colon]
+            return ip_result.rx, tx_result and tx_result.tx or 0
+        end
+    end
+
+    -- Fallback：使用 MAC 查询
+    local result = new_cache[mac_colon]
+    if result then
+        return result.rx or 0, result.tx or 0
+    end
+    return nil, nil
 end
 
 -- 判断接口是否为上游接口（非LAN/非网桥成员）
@@ -1368,8 +1545,7 @@ function api_get_devices()
                 -- 统一 device_id：无冒号格式，用于备注查找
                 local device_id = (real_mac_raw_fmt ~= "" and real_mac_raw_fmt ~= mac_normalized) and real_mac_raw_fmt or mac_normalized
 
-                local is_wifi = is_wifi_device(client)
-
+                local is_wifi = is_wifi_device(client, mac)
                 local hostname = "Unknown"
                 if client.hostname and type(client.hostname) == "string" and client.hostname ~= "" and client.hostname ~= "*" then
                     hostname = client.hostname
@@ -2007,11 +2183,26 @@ function api_get_traffic()
                     local ifname = (client.ifname and type(client.ifname) == "string") and client.ifname or ""
                     local router_tx_bytes = 0 -- 路由器发送 = 用户下载 (RX)
                     local router_rx_bytes = 0 -- 路由器接收 = 用户上传 (TX)
-                    if client.txbytes then
-                        router_tx_bytes = (type(client.txbytes) == "number") and client.txbytes or (tonumber(client.txbytes) or 0)
+                    
+                    -- 优先从 ipset 获取流量数据（iptables 直接统计，最准确）
+                    -- 这适用于所有设备，确保流量统计的一致性和准确性
+                    local mac_colon = mac_str:upper()
+                    local ipset_rx, ipset_tx = get_ipset_traffic(mac_colon, ip)
+                    if ipset_rx and ipset_rx > 0 then
+                        router_tx_bytes = ipset_rx
                     end
-                    if client.rxbytes then
-                        router_rx_bytes = (type(client.rxbytes) == "number") and client.rxbytes or (tonumber(client.rxbytes) or 0)
+                    if ipset_tx and ipset_tx > 0 then
+                        router_rx_bytes = ipset_tx
+                    end
+                    
+                    -- Fallback：如果 ipset 没有数据，使用 infocd 的数据
+                    if router_tx_bytes == 0 and router_rx_bytes == 0 then
+                        if client.txbytes then
+                            router_tx_bytes = (type(client.txbytes) == "number") and client.txbytes or (tonumber(client.txbytes) or 0)
+                        end
+                        if client.rxbytes then
+                            router_rx_bytes = (type(client.rxbytes) == "number") and client.rxbytes or (tonumber(client.rxbytes) or 0)
+                        end
                     end
                     if not is_upstream_interface(ifname) then
                         local hist = history[device_id] or {}
@@ -2066,7 +2257,7 @@ function api_get_traffic()
                         total_tx = total_tx + device_total_tx
                         online_count = online_count + 1
 
-                        local is_wifi = is_wifi_device(client)
+                        local is_wifi = is_wifi_device(client, mac)
                         local device_type = get_device_type(hostname, mac_upper, is_wifi)
 
                         local note_data = device_notes[device_id] or device_notes[mac_upper]

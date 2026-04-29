@@ -7,8 +7,10 @@ STOP=15
 
 IPSET_RX="traffic_stats_rx"
 IPSET_TX="traffic_stats_tx"
+IPSET_RX_IP="traffic_stats_rx_ip"
 CHAIN_RX="TRAFFIC_STATS_RX"
 CHAIN_TX="TRAFFIC_STATS_TX"
+CHAIN_RX_IP="TRAFFIC_STATS_RX_IP"
 DATA_DIR_NAME="router_assistant"
 
 # 存储路径搜索顺序（与 router_assistant.lua 保持一致）
@@ -138,10 +140,13 @@ init_ipset() {
 
     ipset create ${IPSET_RX} hash:mac counters 2>/dev/null
     ipset create ${IPSET_TX} hash:mac counters 2>/dev/null
+    # 创建按 IP 统计 RX 流量的 ipset（用于准确统计下行流量）
+    ipset create ${IPSET_RX_IP} hash:ip counters 2>/dev/null
     local existing_rx=$(ipset list ${IPSET_RX} 2>/dev/null | grep -c "^[0-9a-fA-F][0-9a-fA-F]:")
     local existing_tx=$(ipset list ${IPSET_TX} 2>/dev/null | grep -c "^[0-9a-fA-F][0-9a-fA-F]:")
+    local existing_rx_ip=$(ipset list ${IPSET_RX_IP} 2>/dev/null | grep -c "^[0-9]")
 
-    echo "traffic-stats: ipset ${IPSET_RX}: ${existing_rx} 条记录, ${IPSET_TX}: ${existing_tx} 条记录"
+    echo "traffic-stats: ipset ${IPSET_RX}: ${existing_rx} 条记录, ${IPSET_TX}: ${existing_tx} 条记录, ${IPSET_RX_IP}: ${existing_rx_ip} 条记录"
 }
 
 init_iptables() {
@@ -151,6 +156,9 @@ init_iptables() {
     iptables -t mangle -F ${CHAIN_RX}
     iptables -t mangle -N ${CHAIN_TX} 2>/dev/null
     iptables -t mangle -F ${CHAIN_TX}
+    # 创建按 IP 统计 RX 流量的链
+    iptables -t mangle -N ${CHAIN_RX_IP} 2>/dev/null
+    iptables -t mangle -F ${CHAIN_RX_IP}
 
     # 挂载到 FORWARD 链（确保在链首部）
     iptables -t mangle -D FORWARD -j ${CHAIN_RX} 2>/dev/null
@@ -168,19 +176,32 @@ init_iptables() {
             echo "traffic-stats: TX规则已添加: -i ${iface}"
     done
 
-    # === RX 下行规则：互联网→LAN设备 的流量，按目的MAC匹配ipset计数器累加 ===
-    # 匹配转发到局域网接口出去的数据包，用目的MAC查ipset
-    for iface in $(ls /sys/class/net/ 2>/dev/null | grep -E '^(br-lan|eth[0-9]|ra0|rai0|wlan0|wlan1|wwan0)' ); do
-        [ -d "/sys/class/net/${iface}" ] || continue
-        # -o 出接口：往LAN出的包，dst-mac就是接收方设备MAC
-        iptables -t mangle -A ${CHAIN_RX} -o "${iface}" \
-            -m set --match-set ${IPSET_RX} dst -j RETURN 2>/dev/null && \
-            echo "traffic-stats: RX规则已添加: -o ${iface}"
-    done
+    # === RX 下行规则：按目的 IP 统计（最可靠的方式）===
+    # 在 POSTROUTING 链中，数据包的目的 IP 是最终设备的 IP
+    # 挂载到 POSTROUTING 链
+    iptables -t mangle -D POSTROUTING -j ${CHAIN_RX_IP} 2>/dev/null
+    iptables -t mangle -I POSTROUTING -j ${CHAIN_RX_IP}
+    # 匹配发往 br-lan 的数据包，按目的 IP 统计
+    iptables -t mangle -A ${CHAIN_RX_IP} -o br-lan \
+        -m set --match-set ${IPSET_RX_IP} dst -j RETURN 2>/dev/null && \
+        echo "traffic-stats: RX_IP规则已添加: -o br-lan (按目的IP统计)"
+
+    # 保留 ebtables 作为备用（用于网桥内部流量）
+    if command -v ebtables >/dev/null 2>&1 && [ -d /sys/class/net/br-lan ]; then
+        echo "traffic-stats: 初始化 ebtables 备用规则..."
+        ebtables -t filter -F TRAFFIC_STATS_RX 2>/dev/null
+        ebtables -t filter -X TRAFFIC_STATS_RX 2>/dev/null
+        ebtables -t filter -N TRAFFIC_STATS_RX 2>/dev/null || true
+        ebtables -t filter -F TRAFFIC_STATS_RX 2>/dev/null
+        ebtables -t filter -D FORWARD -j TRAFFIC_STATS_RX 2>/dev/null
+        ebtables -t filter -I FORWARD -j TRAFFIC_STATS_RX
+        echo "traffic-stats: ebtables 备用规则已初始化"
+    fi
 
     # 兜底：未命中的包直接放行
     iptables -t mangle -A ${CHAIN_RX} -j RETURN
     iptables -t mangle -A ${CHAIN_TX} -j RETURN
+    iptables -t mangle -A ${CHAIN_RX_IP} -j RETURN
 
     echo "traffic-stats: iptables 规则初始化完成"
 }
@@ -188,18 +209,30 @@ init_iptables() {
 restore_devices() {
     local lease_file="/tmp/dhcp.leases"
     local count=0
+    local count_ip=0
 
     if [ -f "${lease_file}" ]; then
         while read -r line; do
             mac=$(echo "${line}" | awk '{print $2}' | tr '[:lower:]' '[:upper:]')
+            ip=$(echo "${line}" | awk '{print $3}')
             if [ -n "${mac}" ] && [ "${mac}" != "MAC" ] && [ "${mac}" != "00:00:00:00:00:00" ]; then
                 ipset -q add ${IPSET_RX} ${mac}
                 ipset -q add ${IPSET_TX} ${mac}
+                # 添加 IP 到 RX_IP ipset（用于按 IP 统计下行流量）
+                if [ -n "${ip}" ] && [ "${ip}" != "0.0.0.0" ]; then
+                    ipset -q add ${IPSET_RX_IP} ${ip}
+                    count_ip=$((count_ip + 1))
+                fi
+                # 同时为 ebtables 添加 RX 规则（备用）
+                if command -v ebtables >/dev/null 2>&1; then
+                    ebtables -t filter -C TRAFFIC_STATS_RX -d "${mac}" -j CONTINUE 2>/dev/null || \
+                    ebtables -t filter -A TRAFFIC_STATS_RX -d "${mac}" -j CONTINUE 2>/dev/null
+                fi
                 count=$((count + 1))
             fi
         done < "${lease_file}"
     fi
-    echo "traffic-stats: 从 dhcp.leases 恢复了 ${count} 个设备"
+    echo "traffic-stats: 从 dhcp.leases 恢复了 ${count} 个设备 (MAC), ${count_ip} 个 IP"
 }
 
 restore_from_stats() {
@@ -213,6 +246,11 @@ restore_from_stats() {
         local upper_mac=$(echo "${mac}" | tr '[:lower:]' '[:upper:]')
         ipset -q add ${IPSET_RX} ${upper_mac}
         ipset -q add ${IPSET_TX} ${upper_mac}
+        # 同时为 ebtables 添加 RX 规则（用于准确统计下行流量）
+        if command -v ebtables >/dev/null 2>&1; then
+            ebtables -t filter -C TRAFFIC_STATS_RX -d "${upper_mac}" -j CONTINUE 2>/dev/null || \
+            ebtables -t filter -A TRAFFIC_STATS_RX -d "${upper_mac}" -j CONTINUE 2>/dev/null
+        fi
         count=$((count + 1))
     done
     echo "traffic-stats: 从历史统计恢复了 ${count} 个设备"
