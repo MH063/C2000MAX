@@ -672,6 +672,14 @@ function index()
     entry({"admin", "status", "router_assistant", "speed_test_status"}, call("api_speed_test_status")).leaf = true
     entry({"admin", "status", "router_assistant", "collect_traffic"}, call("api_collect_traffic")).leaf = true
     entry({"admin", "status", "router_assistant", "create_monthly_snapshot"}, call("api_create_monthly_snapshot")).leaf = true
+
+    -- 网络诊断工具
+    entry({"admin", "status", "router_assistant", "network_diagnose"}, post("api_network_diagnose")).leaf = true
+
+    -- 设备限速（QoS）
+    entry({"admin", "status", "router_assistant", "get_rate_limits"}, call("api_get_rate_limits")).leaf = true
+    entry({"admin", "status", "router_assistant", "set_rate_limit"}, post("api_set_rate_limit")).leaf = true
+    entry({"admin", "status", "router_assistant", "remove_rate_limit"}, post("api_remove_rate_limit")).leaf = true
 end
 
 -- 缓存：所有无线接口的关联客户端 MAC 集合（无冒号大写格式）
@@ -4583,8 +4591,8 @@ function api_network_diagnose()
 
     local diagnose_type = luci.http.formvalue("type") or "ping"
     local target = luci.http.formvalue("target") or ""
-    local count = tonumber(lucy.http.formvalue("count")) or 4
-    local port = tonumber(lucy.http.formvalue("port")) or 0
+    local count = tonumber(luci.http.formvalue("count")) or 4
+    local port = tonumber(luci.http.formvalue("port")) or 0
 
     local safe_target = safe_target_validate(target)
     if not safe_target then
@@ -4678,29 +4686,40 @@ end
 
 local function apply_tc_rules(mac, download_kbps, upload_kbps)
     local mac_no_colon = mac:gsub(":", ""):upper()
-    local download_classid = "1" .. mac_no_colon:sub(1, 4)
-    local upload_classid = "2" .. mac_no_colon:sub(1, 4)
+    local download_classid = mac_no_colon:sub(1, 4)
+    local upload_classid = mac_no_colon:sub(1, 4)
 
-    os.execute("tc filter del dev " .. QOS_IFACE .. " parent 1: protocol ip pref 100 handle ::" .. download_classid .. " flowid 1:" .. download_classid .. " 2>/dev/null")
-    os.execute("tc filter del dev " .. QOS_IFACE .. " parent 2: protocol ip pref 100 handle ::" .. upload_classid .. " flowid 2:" .. upload_classid .. " 2>/dev/null")
+    luci.sys.exec("tc filter del dev " .. QOS_IFACE .. " parent 1: protocol ip pref 100 handle ::" .. download_classid .. " flowid 1:" .. download_classid .. " 2>/dev/null")
+    luci.sys.exec("tc filter del dev " .. QOS_IFACE .. " parent 2: protocol ip pref 100 handle ::" .. upload_classid .. " flowid 2:" .. upload_classid .. " 2>/dev/null")
 
     if download_kbps > 0 then
-        os.execute("tc class add dev " .. QOS_IFACE .. " parent 1: classid 1:" .. download_classid .. " htb rate " .. download_kbps .. "kbit ceil " .. download_kbps .. "kbit 2>/dev/null || tc class change dev " .. QOS_IFACE .. " parent 1: classid 1:" .. download_classid .. " htb rate " .. download_kbps .. "kbit ceil " .. download_kbps .. "kbit")
-        os.execute("tc filter add dev " .. QOS_IFACE .. " parent 1: protocol ip prio 5 u32 match ip dst 0.0.0.0/0 match ether dst " .. mac .. " flowid 1:" .. download_classid .. " 2>/dev/null")
+        local class_cmd = "tc class add dev " .. QOS_IFACE .. " parent 1: classid 1:" .. download_classid .. " htb rate " .. download_kbps .. "kbit ceil " .. download_kbps .. "kbit"
+        local ret = luci.sys.exec(class_cmd .. " 2>&1") or ""
+        if ret:match("File exists") or ret ~= "" then
+            luci.sys.exec("tc class change dev " .. QOS_IFACE .. " parent 1: classid 1:" .. download_classid .. " htb rate " .. download_kbps .. "kbit ceil " .. download_kbps .. "kbit 2>/dev/null")
+        end
+        luci.sys.exec("tc filter add dev " .. QOS_IFACE .. " parent 1: protocol ip prio 5 u32 match ip dst 0.0.0.0/0 match ether dst " .. mac .. " flowid 1:" .. download_classid .. " 2>/dev/null")
     end
 
     if upload_kbps > 0 then
-        os.execute("tc class add dev " .. QOS_IFACE .. " parent 2: classid 2:" .. upload_classid .. " htb rate " .. upload_kbps .. "kbit ceil " .. upload_kbps .. "kbit 2>/dev/null || tc class change dev " .. QOS_IFACE .. " parent 2: classid 2:" .. upload_classid .. " htb rate " .. upload_kbps .. "kbit ceil " .. upload_kbps .. "kbit")
-        os.execute("tc filter add dev " .. QOS_IFACE .. " parent 2: protocol ip prio 5 u32 match ip src 0.0.0.0/0 match ether src " .. mac .. " flowid 2:" .. upload_classid .. " 2>/dev/null")
+        local class_cmd = "tc class add dev " .. QOS_IFACE .. " parent 2: classid 2:" .. upload_classid .. " htb rate " .. upload_kbps .. "kbit ceil " .. upload_kbps .. "kbit"
+        local ret = luci.sys.exec(class_cmd .. " 2>&1") or ""
+        if ret:match("File exists") or ret ~= "" then
+            luci.sys.exec("tc class change dev " .. QOS_IFACE .. " parent 2: classid 2:" .. upload_classid .. " htb rate " .. upload_kbps .. "kbit ceil " .. upload_kbps .. "kbit 2>/dev/null")
+        end
+        luci.sys.exec("tc filter add dev " .. QOS_IFACE .. " parent 2: protocol ip prio 5 u32 match ip src 0.0.0.0/0 match ether src " .. mac .. " flowid 2:" .. upload_classid .. " 2>/dev/null")
     end
 
     return true
 end
 
 local function init_qos()
-    os.execute("tc qdisc add dev " .. QOS_IFACE .. " root handle 1: htb default 10 2>/dev/null")
-    os.execute("tc class add dev " .. QOS_IFACE .. " parent 1: classid 1:10 htb rate 1000mbit 2>/dev/null")
-    os.execute("tc qdisc add dev " .. QOS_IFACE .. " parent 1:10 handle 10: sfq perturb 10 2>/dev/null")
+    luci.sys.exec("tc qdisc add dev " .. QOS_IFACE .. " root handle 1: htb default 10 2>/dev/null")
+    luci.sys.exec("tc class add dev " .. QOS_IFACE .. " parent 1: classid 1:10 htb rate 1000mbit 2>/dev/null")
+    luci.sys.exec("tc qdisc add dev " .. QOS_IFACE .. " parent 1:10 handle 10: sfq perturb 10 2>/dev/null")
+    luci.sys.exec("tc qdisc add dev " .. QOS_IFACE .. " root handle 2: htb default 20 2>/dev/null")
+    luci.sys.exec("tc class add dev " .. QOS_IFACE .. " parent 2: classid 2:20 htb rate 1000mbit 2>/dev/null")
+    luci.sys.exec("tc qdisc add dev " .. QOS_IFACE .. " parent 2:20 handle 20: sfq perturb 10 2>/dev/null")
 end
 
 function api_get_rate_limits()
@@ -4715,8 +4734,8 @@ function api_set_rate_limit()
     collectgarbage("collect")
 
     local mac = luci.http.formvalue("mac") or ""
-    local download_limit = tonumber(lucy.http.formvalue("download_limit")) or 0
-    local upload_limit = tonumber(lucy.http.formvalue("upload_limit")) or 0
+    local download_limit = tonumber(luci.http.formvalue("download_limit")) or 0
+    local upload_limit = tonumber(luci.http.formvalue("upload_limit")) or 0
     local enabled = luci.http.formvalue("enabled") == "true" or luci.http.formvalue("enabled") == "1"
 
     local safe_mac = safe_mac_validate(mac)
