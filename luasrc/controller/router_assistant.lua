@@ -23,6 +23,7 @@ BLOCKED_MACS_CACHE_TTL = 30
 IPSET_RX_NAME = "traffic_stats_rx"
 IPSET_TX_NAME = "traffic_stats_tx"
 IPSET_RX_IP_NAME = "traffic_stats_rx_ip"
+IPSET_RX_IP6_NAME = "traffic_stats_rx_ip6"
 IPSET_CACHE_TTL = 5  -- ipset 数据缓存5秒
 
 -- 历史记录保留常量
@@ -670,6 +671,7 @@ function index()
     entry({"admin", "status", "router_assistant", "speed_test"}, post("api_speed_test")).leaf = true
     entry({"admin", "status", "router_assistant", "speed_test_status"}, call("api_speed_test_status")).leaf = true
     entry({"admin", "status", "router_assistant", "collect_traffic"}, call("api_collect_traffic")).leaf = true
+    entry({"admin", "status", "router_assistant", "create_monthly_snapshot"}, call("api_create_monthly_snapshot")).leaf = true
 end
 
 -- 缓存：所有无线接口的关联客户端 MAC 集合（无冒号大写格式）
@@ -780,13 +782,67 @@ end
 local _ipset_traffic_cache = nil
 local _ipset_cache_time = 0
 
+-- ipset 计数器回绕检测常量
+local COUNTER_MAX = 4294967296
+local _counter_snapshot_file = "/tmp/router_assistant/counter_snapshots.json"
+local _counter_snapshots = nil
+
+-- 加载上一次的计数器快照（用于增量计算和回绕检测）
+local function load_counter_snapshots()
+    if _counter_snapshots then return _counter_snapshots end
+    local fd = io.open(_counter_snapshot_file, "r")
+    if fd then
+        local content = fd:read("*a")
+        fd:close()
+        if content and content ~= "" then
+            local json = require("luci.jsonc")
+            local ok, data = pcall(json.parse, content)
+            if ok and data then
+                _counter_snapshots = data
+                return _counter_snapshots
+            end
+        end
+    end
+    _counter_snapshots = {}
+    return _counter_snapshots
+end
+
+-- 保存计数器快照（异步写入，避免阻塞）
+local function save_counter_snapshots_async()
+    if not _counter_snapshots then return end
+    local json = require("luci.jsonc")
+    local json_str = json.stringify(_counter_snapshots) or "{}"
+    local dir = _counter_snapshot_file:match("^(.+)/[^/]+$")
+    if dir then os.execute("mkdir -p '" .. dir .. "' 2>/dev/null") end
+    local fd = io.open(_counter_snapshot_file, "w")
+    if fd then
+        fd:write(json_str)
+        fd:close()
+    end
+end
+
+-- 安全计算流量增量（处理 32 位计数器回绕）
+-- @param current_val  当前计数值
+-- @param prev_val     上一次计数值（可为 nil）
+-- @return delta       增量值（已处理回绕）
+local function safe_counter_delta(current_val, prev_val)
+    local curr = tonumber(current_val) or 0
+    if not prev_val or prev_val == 0 then return curr end
+    local prev = tonumber(prev_val) or 0
+    if curr >= prev then return curr - prev end
+    -- 回绕检测：当前值 < 上次值，说明发生了回绕
+    -- 增量 = (最大值 - 上次值) + 当前值 + 1
+    return (COUNTER_MAX - prev) + curr + 1
+end
+
 -- 从 ipset 获取流量数据（TX 按 MAC，RX 按 IP）
 -- @param mac_colon  带冒号格式的 MAC 地址（如 "26:DB:98:07:CA:A0"）
--- @param ip         设备的 IP 地址（用于 RX 流量统计）
+-- @param ip         设备的 IPv4 地址（用于 RX 流量统计）
+-- @param ipv6_list  设备的 IPv6 地址列表（用于 IPv6 RX 流量统计）
 -- @return rx_bytes, tx_bytes  下行和上行字节数（若不在列表中则返回 nil, nil）
-local function get_ipset_traffic(mac_colon, ip)
+local function get_ipset_traffic(mac_colon, ip, ipv6_list)
     local now = os.time()
-    local cache_key = mac_colon .. "|" .. (ip or "")
+    local cache_key = mac_colon .. "|" .. (ip or "") .. "|" .. (ipv6_list and table.concat(ipv6_list, ",") or "")
     
     if _ipset_traffic_cache and (now - _ipset_cache_time) < IPSET_CACHE_TTL then
         local cached = _ipset_traffic_cache[cache_key]
@@ -811,64 +867,219 @@ local function get_ipset_traffic(mac_colon, ip)
         end
     end
 
-    -- 获取 RX 流量：按 IP 统计
-    -- 直接使用传入的 IP 查询，不需要 ARP 表映射
+    -- 获取 RX 流量：按 IP 统计（IPv4 + IPv6）
+    local total_rx_by_ip = {}
+    
+    -- IPv4 RX 流量
     local rx_ip_output = util.exec("ipset list " .. IPSET_RX_IP_NAME .. " 2>/dev/null")
     if rx_ip_output then
-        -- 建立 IP 到 RX 流量的映射
-        local ip_to_rx = {}
         for line in rx_ip_output:gmatch("[^\r\n]+") do
             local rx_ip, bytes = line:match("^(%d+%.%d+%.%d+%.%d+)%s+packets%s+%d+%s+bytes%s+(%d+)")
             if rx_ip and bytes then
-                ip_to_rx[rx_ip] = tonumber(bytes) or 0
+                total_rx_by_ip[rx_ip] = (total_rx_by_ip[rx_ip] or 0) + (tonumber(bytes) or 0)
             end
         end
-        
-        -- 建立 ARP 表映射（IP -> MAC），用于缓存
-        local ip_to_mac = {}
-        local arp_output = util.exec("cat /proc/net/arp 2>/dev/null")
-        if arp_output then
-            for line in arp_output:gmatch("[^\r\n]+") do
-                local arp_ip, arp_mac = line:match("^(%d+%.%d+%.%d+%.%d+)%s+%S+%s+%S+%s+(%x%x:%x%x:%x%x:%x%x:%x%x:%x%x)")
-                if arp_ip and arp_mac then
-                    ip_to_mac[arp_ip] = arp_mac:upper()
-                end
+    end
+    
+    -- IPv6 RX 流量
+    local rx_ip6_output = util.exec("ipset list " .. IPSET_RX_IP6_NAME .. " 2>/dev/null")
+    if rx_ip6_output then
+        for line in rx_ip6_output:gmatch("[^\r\n]+") do
+            local rx_ip6, bytes = line:match("^([0-9a-fA-F:.]+)%s+packets%s+%d+%s+bytes%s+(%d+)")
+            if rx_ip6 and bytes and not rx_ip6:match("^fe80:") then
+                total_rx_by_ip[rx_ip6] = (total_rx_by_ip[rx_ip6] or 0) + (tonumber(bytes) or 0)
             end
         end
-        
-        -- 将 IP 流量映射到 MAC（用于缓存）
-        for rx_ip, bytes in pairs(ip_to_rx) do
-            local mac_from_arp = ip_to_mac[rx_ip]
-            if mac_from_arp then
-                new_cache[mac_from_arp] = new_cache[mac_from_arp] or {}
-                new_cache[mac_from_arp].rx = bytes
+    end
+    
+    -- 建立 ARP/邻居表映射（IP -> MAC），用于缓存
+    local ip_to_mac = {}
+    local arp_output = util.exec("cat /proc/net/arp 2>/dev/null")
+    if arp_output then
+        for line in arp_output:gmatch("[^\r\n]+") do
+            local arp_ip, arp_mac = line:match("^(%d+%.%d+%.%d+%.%d+)%s+%S+%s+%S+%s+(%x%x:%x%x:%x%x:%x%x:%x%x:%x%x)")
+            if arp_ip and arp_mac then
+                ip_to_mac[arp_ip] = arp_mac:upper()
             end
         end
-        
+    end
+    -- IPv6 邻居表映射
+    local neigh6_output = util.exec("timeout 3 ip -6 neigh show 2>/dev/null")
+    if neigh6_output then
+        for line in neigh6_output:gmatch("[^\r\n]+") do
+            local neigh_ip, neigh_mac = line:match("^([0-9a-fA-F:.]+)%s+lladdr%s+(%x%x:%x%x:%x%x:%x%x:%x%x:%x%x)")
+            if neigh_ip and neigh_mac and not neigh_ip:match("^fe80:") then
+                ip_to_mac[neigh_ip] = neigh_mac:upper()
+            end
+        end
+    end
+    
+    -- 将 IP 流量映射到 MAC（用于缓存）
+    for rx_ip, bytes in pairs(total_rx_by_ip) do
+        local mac_from_neigh = ip_to_mac[rx_ip]
+        if mac_from_neigh then
+            new_cache[mac_from_neigh] = new_cache[mac_from_neigh] or {}
+            new_cache[mac_from_neigh].rx = (new_cache[mac_from_neigh].rx or 0) + bytes
+        end
         -- 同时建立 IP 级别的缓存（用于直接 IP 查询）
-        for rx_ip, bytes in pairs(ip_to_rx) do
-            new_cache["|" .. rx_ip] = { rx = bytes }
-        end
+        new_cache["|" .. rx_ip] = { rx = (new_cache["|" .. rx_ip] and new_cache["|" .. rx_ip].rx or 0) + bytes }
     end
 
     _ipset_traffic_cache = new_cache
     _ipset_cache_time = now
 
-    -- 优先使用 MAC + IP 组合键查询（直接使用传入的 IP）
+    -- 计算总 RX 流量（IPv4 + IPv6）
+    local total_rx = 0
+    
+    -- 先按 IPv4 查询
     if ip and ip ~= "" then
         local ip_result = new_cache["|" .. ip]
         if ip_result and ip_result.rx then
-            local tx_result = new_cache[mac_colon]
-            return ip_result.rx, tx_result and tx_result.tx or 0
+            total_rx = total_rx + ip_result.rx
+        end
+    end
+    
+    -- 再按 IPv6 列表查询
+    if ipv6_list and type(ipv6_list) == "table" then
+        for _, ipv6 in ipairs(ipv6_list) do
+            if ipv6 and ipv6 ~= "" then
+                local ip6_result = new_cache["|" .. ipv6]
+                if ip6_result and ip6_result.rx then
+                    total_rx = total_rx + ip6_result.rx
+                end
+            end
+        end
+    end
+    
+    -- 获取 TX 流量
+    local tx_result = new_cache[mac_colon]
+    local total_tx = tx_result and tx_result.tx or 0
+    
+    if total_rx > 0 or total_tx > 0 then
+        return total_rx, total_tx
+    end
+    
+    return nil, nil
+end
+
+-- 批量数据采集（减少 shell 命令调用次数）
+-- 一次性获取所有需要的外部数据，避免重复执行命令
+local _batch_data_cache = nil
+local _batch_data_time = 0
+local BATCH_DATA_TTL = 5
+
+local function get_batch_data()
+    local now = os.time()
+    if _batch_data_cache and (now - _batch_data_time) < BATCH_DATA_TTL then
+        return _batch_data_cache
+    end
+
+    local util = require("luci.util")
+    local batch = {}
+
+    -- 批量获取 ipset 数据（TX + RX IPv4 + RX IPv6）
+    local tx_output = util.exec("ipset list " .. IPSET_TX_NAME .. " 2>/dev/null")
+    batch.tx_data = {}
+    if tx_output then
+        for line in tx_output:gmatch("[^\r\n]+") do
+            local mac, bytes = line:match("^(%x%x:%x%x:%x%x:%x%x:%x%x:%x%x)%s+packets%s+%d+%s+bytes%s+(%d+)")
+            if mac and bytes then
+                batch.tx_data[mac:upper()] = tonumber(bytes) or 0
+            end
         end
     end
 
-    -- Fallback：使用 MAC 查询
-    local result = new_cache[mac_colon]
-    if result then
-        return result.rx or 0, result.tx or 0
+    local rx_ip_output = util.exec("ipset list " .. IPSET_RX_IP_NAME .. " 2>/dev/null")
+    batch.rx_ip_data = {}
+    if rx_ip_output then
+        for line in rx_ip_output:gmatch("[^\r\n]+") do
+            local ip, bytes = line:match("^(%d+%.%d+%.%d+%.%d+)%s+packets%s+%d+%s+bytes%s+(%d+)")
+            if ip and bytes then
+                batch.rx_ip_data[ip] = tonumber(bytes) or 0
+            end
+        end
     end
-    return nil, nil
+
+    local rx_ip6_output = util.exec("ipset list " .. IPSET_RX_IP6_NAME .. " 2>/dev/null")
+    batch.rx_ip6_data = {}
+    if rx_ip6_output then
+        for line in rx_ip6_output:gmatch("[^\r\n]+") do
+            local ip6, bytes = line:match("^([0-9a-fA-F:.]+)%s+packets%s+%d+%s+bytes%s+(%d+)")
+            if ip6 and bytes and not ip6:match("^fe80:") then
+                batch.rx_ip6_data[ip6] = tonumber(bytes) or 0
+            end
+        end
+    end
+
+    -- 批量获取 ARP 表和 IPv6 邻居表
+    batch.arp_table = {}
+    local arp_output = util.exec("cat /proc/net/arp 2>/dev/null")
+    if arp_output then
+        for line in arp_output:gmatch("[^\r\n]+") do
+            local arp_ip, arp_mac = line:match("^(%d+%.%d+%.%d+%.%d+)%s+%S+%s+%S+%s+(%x%x:%x%x:%x%x:%x%x:%x%x:%x%x)")
+            if arp_ip and arp_mac then
+                batch.arp_table[arp_ip] = arp_mac:upper()
+            end
+        end
+    end
+
+    batch.neigh6_table = {}
+    local neigh6_output = util.exec("timeout 3 ip -6 neigh show 2>/dev/null")
+    if neigh6_output then
+        for line in neigh6_output:gmatch("[^\r\n]+") do
+            local neigh_ip, neigh_mac = line:match("^([0-9a-fA-F:.]+)%s+lladdr%s+(%x%x:%x%x:%x%x:%x%x:%x%x:%x%x)")
+            if neigh_ip and neigh_mac and not neigh_ip:match("^fe80:") then
+                batch.neigh6_table[neigh_ip] = neigh_mac:upper()
+            end
+        end
+    end
+
+    -- 批量获取无线客户端列表（hostapd_cli）
+    batch.wifi_macs = {}
+    local wifi_ifaces = { "ra0", "rai0", "ra1", "rai1", "ra2", "rai2", "wlan0", "wlan1" }
+    for _, iface in ipairs(wifi_ifaces) do
+        local sta_output = util.exec("hostapd_cli -i " .. iface .. " list_sta 2>/dev/null")
+        if sta_output and sta_output ~= "" then
+            for line in sta_output:gmatch("[^\r\n]+") do
+                local mac = line:match("^(%x%x:%x%x:%x%x:%x%x:%x%x:%x%x)")
+                if mac then
+                    batch.wifi_macs[mac:upper()] = true
+                end
+            end
+        end
+    end
+
+    _batch_data_cache = batch
+    _batch_data_time = now
+
+    -- 更新计数器快照（用于下次回绕检测）
+    local snapshots = load_counter_snapshots()
+    local need_save = false
+    for mac, bytes in pairs(batch.tx_data) do
+        local key = "tx_" .. mac
+        if not snapshots[key] or snapshots[key] ~= bytes then
+            snapshots[key] = bytes
+            need_save = true
+        end
+    end
+    for ip, bytes in pairs(batch.rx_ip_data) do
+        local key = "rx_" .. ip
+        if not snapshots[key] or snapshots[key] ~= bytes then
+            snapshots[key] = bytes
+            need_save = true
+        end
+    end
+    for ip6, bytes in pairs(batch.rx_ip6_data) do
+        local key = "rx6_" .. ip6
+        if not snapshots[key] or snapshots[key] ~= bytes then
+            snapshots[key] = bytes
+            need_save = true
+        end
+    end
+    -- 异步保存快照（避免频繁写入）
+    if need_save then pcall(save_counter_snapshots_async) end
+
+    return batch
 end
 
 -- 判断接口是否为上游接口（非LAN/非网桥成员）
@@ -1064,140 +1275,277 @@ local function get_wifi_frequency_band(ifname)
     return nil
 end
 
+-- 外部 OUI 数据库缓存（避免重复读取文件）
+local _oui_database_cache = nil
+local _oui_cache_time = 0
+local OUI_CACHE_TTL = 3600  -- 缓存1小时
+
+-- 从外部 JSON 文件加载 OUI 数据库（支持动态更新）
+local function load_oui_database()
+    local now = os.time()
+    if _oui_database_cache and (now - _oui_cache_time) < OUI_CACHE_TTL then
+        return _oui_database_cache
+    end
+
+    local json = require("luci.jsonc")
+    local oui_file_path = package.searchpath("oui_database", "luasrc") or (luci.util.exec("echo $LUASRC" .. "/oui_database.json"):gsub("\n", ""))
+    
+    -- 尝试多个可能的路径
+    local search_paths = {
+        luci.util.exec("echo $LUASRC/oui_database.json 2>/dev/null"):gsub("[\r\n]", ""),
+        "/usr/lib/lua/luci/oui_database.json",
+        "/usr/share/lua/luci/oui_database.json",
+        "oui_database.json"
+    }
+    
+    for _, path in ipairs(search_paths) do
+        if path and path ~= "" then
+            local fd = io.open(path, "r")
+            if fd then
+                local content = fd:read("*all")
+                fd:close()
+                if content and content ~= "" then
+                    local ok, parsed = pcall(json.parse, content)
+                    if ok and parsed and parsed.brands then
+                        _oui_database_cache = parsed.brands
+                        _oui_cache_time = now
+                        return _oui_database_cache
+                    end
+                end
+            end
+        end
+    end
+    
+    -- Fallback：返回内置的硬编码 OUI 映射表
+    return nil
+end
+
+-- 扁平化 OUI 缓存（与 BUILTIN_OUI_MAP 格式兼容）
+local _oui_flat_cache = nil
+
+-- 将嵌套 JSON brands 格式转换为扁平化 OUI 映射表
+local function flatten_oui_database(brands)
+    if not brands or type(brands) ~= "table" then return {} end
+    local flat = {}
+    for brand_key, brand_data in pairs(brands) do
+        if brand_data and type(brand_data) == "table" and brand_data.ouis then
+            local device_type = brand_data.type or "unknown"
+            for _, oui in ipairs(brand_data.ouis) do
+                if oui and type(oui) == "string" and #oui >= 8 then
+                    flat[oui:upper()] = { brand = brand_key, type = device_type }
+                end
+            end
+        end
+    end
+    return flat
+end
+
+-- 获取完整 OUI 映射表（外部文件优先，fallback 到内置表）
+local function get_full_oui_map()
+    if _oui_flat_cache then return _oui_flat_cache end
+    local json = require("luci.jsonc")
+    local paths = { "/usr/share/router-assistant/oui_database.json", "/usr/lib/lua/luci/oui_database.json" }
+    for _, path in ipairs(paths) do
+        local fd = io.open(path, "r")
+        if fd then
+            local content = fd:read("*a")
+            fd:close()
+            if content and content ~= "" then
+                local ok, parsed = pcall(json.parse, content)
+                if ok and parsed and parsed.brands then
+                    _oui_flat_cache = flatten_oui_database(parsed.brands)
+                    return _oui_flat_cache
+                end
+            end
+        end
+    end
+    return BUILTIN_OUI_MAP
+end
+
+-- 内置 OUI 映射表（作为 fallback）
+local BUILTIN_OUI_MAP = {
+    ["00:03:93"] = { brand = "apple", type = "phone" },
+    ["00:1E:C2"] = { brand = "apple", type = "phone" },
+    ["00:0A:27"] = { brand = "apple", type = "phone" },
+    ["00:1F:F3"] = { brand = "apple", type = "phone" },
+    ["04:0C:CE"] = { brand = "apple", type = "phone" },
+    ["14:99:29"] = { brand = "apple", type = "phone" },
+    ["18:65:90"] = { brand = "apple", type = "phone" },
+    ["28:CF:DA"] = { brand = "apple", type = "phone" },
+    ["34:15:9E"] = { brand = "apple", type = "phone" },
+    ["40:D8:55"] = { brand = "apple", type = "phone" },
+    ["44:00:10"] = { brand = "apple", type = "phone" },
+    ["58:1F:AA"] = { brand = "apple", type = "phone" },
+    ["64:DB:50"] = { brand = "apple", type = "phone" },
+    ["78:4F:43"] = { brand = "apple", type = "phone" },
+    ["88:66:FA"] = { brand = "apple", type = "phone" },
+    ["A0:99:82"] = { brand = "apple", type = "phone" },
+    ["AC:DE:48"] = { brand = "apple", type = "phone" },
+    ["B0:19:C6"] = { brand = "apple", type = "phone" },
+    ["C8:2A:14"] = { brand = "apple", type = "phone" },
+    ["D0:03:4B"] = { brand = "apple", type = "phone" },
+    ["DC:41:95"] = { brand = "apple", type = "phone" },
+    ["E0:AC:CB"] = { brand = "apple", type = "phone" },
+    ["F0:18:98"] = { brand = "apple", type = "phone" },
+    ["FC:E9:83"] = { brand = "apple", type = "phone" },
+    ["00:05:69"] = { brand = "vmware", type = "pc" },
+    ["00:0C:29"] = { brand = "vmware", type = "pc" },
+    ["00:50:56"] = { brand = "vmware", type = "pc" },
+    ["08:00:27"] = { brand = "virtualbox", type = "pc" },
+    ["0A:00:27"] = { brand = "virtualbox", type = "pc" },
+    ["52:54:00"] = { brand = "qemu", type = "pc" },
+    ["00:15:5D"] = { brand = "hyperv", type = "pc" },
+    ["00:1D:92"] = { brand = "parallels", type = "pc" },
+    ["00:21:6A"] = { brand = "samsung", type = "phone" },
+    ["00:23:4E"] = { brand = "samsung", type = "phone" },
+    ["38:BC:1A"] = { brand = "samsung", type = "phone" },
+    ["88:C6:63"] = { brand = "huawei", type = "phone" },
+    ["34:CE:00"] = { brand = "xiaomi", type = "phone" },
+    ["50:7E:5D"] = { brand = "xiaomi", type = "phone" },
+    ["64:16:66"] = { brand = "xiaomi", type = "phone" },
+    ["68:DF:DD"] = { brand = "xiaomi", type = "phone" },
+    ["78:11:DC"] = { brand = "xiaomi", type = "phone" },
+    ["7C:49:EB"] = { brand = "xiaomi", type = "phone" },
+    ["88:C3:97"] = { brand = "xiaomi", type = "phone" },
+    ["A4:86:01"] = { brand = "xiaomi", type = "phone" },
+    ["B4:E1:0F"] = { brand = "xiaomi", type = "phone" },
+    ["C8:0F:9E"] = { brand = "xiaomi", type = "phone" },
+    ["CC:22:3D"] = { brand = "xiaomi", type = "phone" },
+    ["D0:AE:AF"] = { brand = "xiaomi", type = "phone" },
+    ["E4:57:35"] = { brand = "xiaomi", type = "phone" },
+    ["F8:16:F1"] = { brand = "xiaomi", type = "phone" },
+    ["FC:64:8B"] = { brand = "xiaomi", type = "phone" },
+    ["FC:B4:08"] = { brand = "xiaomi", type = "phone" },
+    ["38:D6:7A"] = { brand = "xiaomi", type = "phone" },
+    ["38:D5:7A"] = { brand = "xiaomi", type = "phone" },
+    ["A4:CC:B3"] = { brand = "xiaomi", type = "phone" },
+    ["1E:8B:EF"] = { brand = "xiaomi", type = "phone" },
+    ["00:1A:11"] = { brand = "google", type = "phone" },
+    ["3C:5A:B4"] = { brand = "google", type = "phone" },
+    ["54:60:09"] = { brand = "google", type = "phone" },
+    ["94:EB:2C"] = { brand = "google", type = "phone" },
+    ["A4:77:33"] = { brand = "google", type = "phone" },
+    ["F4:F5:D8"] = { brand = "google", type = "phone" },
+    ["F4:F5:E8"] = { brand = "google", type = "phone" },
+    ["00:22:43"] = { brand = "hp", type = "pc" },
+    ["3C:4A:92"] = { brand = "hp", type = "pc" },
+    ["3C:D9:2E"] = { brand = "hp", type = "pc" },
+    ["F4:CE:46"] = { brand = "hp", type = "pc" },
+    ["00:1B:21"] = { brand = "lenovo", type = "pc" },
+    ["00:1E:67"] = { brand = "lenovo", type = "pc" },
+    ["00:21:CC"] = { brand = "lenovo", type = "pc" },
+    ["00:24:D1"] = { brand = "lenovo", type = "pc" },
+    ["00:30:52"] = { brand = "lenovo", type = "pc" },
+    ["08:9E:01"] = { brand = "lenovo", type = "pc" },
+    ["10:7B:44"] = { brand = "lenovo", type = "pc" },
+    ["14:91:52"] = { brand = "lenovo", type = "pc" },
+    ["18:87:96"] = { brand = "lenovo", type = "pc" },
+    ["1C:1B:0D"] = { brand = "lenovo", type = "pc" },
+    ["20:47:32"] = { brand = "lenovo", type = "pc" },
+    ["20:64:32"] = { brand = "lenovo", type = "pc" },
+    ["24:B6:FB"] = { brand = "lenovo", type = "pc" },
+    ["28:CF:E9"] = { brand = "lenovo", type = "pc" },
+    ["34:17:E9"] = { brand = "lenovo", type = "pc" },
+    ["38:EA:A7"] = { brand = "lenovo", type = "pc" },
+    ["40:8D:5C"] = { brand = "lenovo", type = "pc" },
+    ["44:37:E6"] = { brand = "lenovo", type = "pc" },
+    ["50:9A:4C"] = { brand = "lenovo", type = "pc" },
+    ["58:3D:77"] = { brand = "lenovo", type = "pc" },
+    ["5C:51:81"] = { brand = "lenovo", type = "pc" },
+    ["64:16:B0"] = { brand = "lenovo", type = "pc" },
+    ["68:B5:99"] = { brand = "lenovo", type = "pc" },
+    ["70:5A:0F"] = { brand = "lenovo", type = "pc" },
+    ["78:92:9C"] = { brand = "lenovo", type = "pc" },
+    ["88:6F:62"] = { brand = "lenovo", type = "pc" },
+    ["90:1A:50"] = { brand = "lenovo", type = "pc" },
+    ["A0:20:66"] = { brand = "lenovo", type = "pc" },
+    ["AC:85:3D"] = { brand = "lenovo", type = "pc" },
+    ["B8:27:EB"] = { brand = "raspberry", type = "iot" },
+    ["DC:A6:32"] = { brand = "raspberry", type = "iot" },
+    ["E4:5F:01"] = { brand = "raspberry", type = "iot" },
+    ["00:26:AB"] = { brand = "oppo", type = "phone" },
+    ["A4:45:19"] = { brand = "oppo", type = "phone" },
+    ["C8:BC:C8"] = { brand = "oppo", type = "phone" },
+    ["F0:97:C5"] = { brand = "oppo", type = "phone" },
+    ["00:1C:BF"] = { brand = "oneplus", type = "phone" },
+    ["00:24:93"] = { brand = "oneplus", type = "phone" },
+    ["2C:33:61"] = { brand = "oneplus", type = "phone" },
+    ["30:AE:A4"] = { brand = "oneplus", type = "phone" },
+    ["38:00:25"] = { brand = "oneplus", type = "phone" },
+    ["48:3C:0C"] = { brand = "oneplus", type = "phone" },
+    ["5C:93:A2"] = { brand = "oneplus", type = "phone" },
+    ["74:45:8A"] = { brand = "oneplus", type = "phone" },
+    ["78:02:F8"] = { brand = "oneplus", type = "phone" },
+    ["90:68:5C"] = { brand = "oneplus", type = "phone" },
+    ["A4:7B:9D"] = { brand = "oneplus", type = "phone" },
+    ["A8:5C:2C"] = { brand = "oneplus", type = "phone" },
+    ["C8:1E:3B"] = { brand = "oneplus", type = "phone" },
+    ["CC:0D:60"] = { brand = "oneplus", type = "phone" },
+    ["E8:4E:84"] = { brand = "oneplus", type = "phone" },
+    ["F4:8B:32"] = { brand = "oneplus", type = "phone" },
+    ["F8:36:C4"] = { brand = "realme", type = "phone" },
+    ["C4:0B:CB"] = { brand = "realme", type = "phone" },
+    ["00:23:7F"] = { brand = "vivo", type = "phone" },
+    ["00:25:6E"] = { brand = "vivo", type = "phone" },
+    ["9C:98:11"] = { brand = "vivo", type = "phone" },
+    ["BC:54:36"] = { brand = "vivo", type = "phone" },
+    ["D8:50:E6"] = { brand = "vivo", type = "phone" },
+    ["F8:D1:11"] = { brand = "vivo", type = "phone" },
+    ["D6:F9:C8"] = { brand = "vivo", type = "phone" },
+    ["00:17:AB"] = { brand = "nintendo", type = "console" },
+    ["00:23:CC"] = { brand = "nintendo", type = "console" },
+    ["04:9F:5E"] = { brand = "nintendo", type = "console" },
+    ["7C:BB:8F"] = { brand = "nintendo", type = "console" },
+    ["12:BD:6E"] = { brand = "tablet", type = "tablet" }
+}
+
+-- 根据 MAC 地址前缀和主机名识别设备类型
+-- @param hostname  设备主机名（如 "Redmi-K70"、"MH" 等）
+-- @param mac       设备 MAC 地址（带冒号格式，如 "56:1C:08:59:77:21"）
+-- @param is_wifi   是否为无线设备（可选，用于辅助判断）
+-- @return device_type 设备类型标识符
 local function get_device_type(hostname, mac, is_wifi)
     local mac_upper = mac and mac:upper() or ""
     local mac_prefix = mac_upper:sub(1, 8)
 
-    local oui_map = {
-        ["00:03:93"] = "apple", ["00:1E:C2"] = "apple", ["00:0A:27"] = "apple",
-        ["00:1F:F3"] = "apple", ["04:0C:CE"] = "apple", ["14:99:29"] = "apple",
-        ["18:65:90"] = "apple", ["28:CF:DA"] = "apple", ["34:15:9E"] = "apple",
-        ["40:D8:55"] = "apple", ["44:00:10"] = "apple", ["58:1F:AA"] = "apple",
-        ["64:DB:50"] = "apple", ["78:4F:43"] = "apple", ["88:66:FA"] = "apple",
-        ["A0:99:82"] = "apple", ["AC:DE:48"] = "apple", ["B0:19:C6"] = "apple",
-        ["C8:2A:14"] = "apple", ["D0:03:4B"] = "apple", ["DC:41:95"] = "apple",
-        ["E0:AC:CB"] = "apple", ["F0:18:98"] = "apple", ["FC:E9:83"] = "apple",
-        ["00:05:69"] = "vmware", ["00:0C:29"] = "vmware", ["00:1C:42"] = "vmware",
-        ["00:50:56"] = "vmware", ["08:00:27"] = "virtualbox", ["0A:00:27"] = "virtualbox",
-        ["52:54:00"] = "qemu", ["00:15:5D"] = "hyperv", ["00:1D:92"] = "parallels",
-        ["00:03:FF"] = "microsoft", ["00:0D:3A"] = "microsoft", ["00:12:5A"] = "microsoft",
-        ["00:17:FA"] = "microsoft", ["00:1D:D8"] = "microsoft", ["00:22:48"] = "microsoft",
-        ["00:25:AE"] = "microsoft", ["00:50:F2"] = "microsoft",
-        ["28:18:78"] = "microsoft", ["7C:ED:8D"] = "microsoft", ["DC:B4:C4"] = "microsoft",
-        ["F4:8E:38"] = "microsoft",
-        ["00:21:6A"] = "samsung", ["00:23:4E"] = "samsung", ["00:24:91"] = "samsung",
-        ["00:26:08"] = "samsung", ["00:26:AB"] = "samsung", ["38:BC:1A"] = "samsung",
-        ["40:A6:D7"] = "samsung", ["4C:02:92"] = "samsung", ["58:2D:34"] = "samsung",
-        ["70:A2:8E"] = "samsung", ["74:51:BA"] = "samsung", ["80:89:17"] = "samsung",
-        ["84:A8:E4"] = "samsung", ["8C:BE:BE"] = "samsung", ["94:CE:BF"] = "samsung",
-        ["A0:07:E0"] = "samsung", ["AC:85:3D"] = "samsung", ["B4:79:97"] = "samsung",
-        ["C0:FF:D4"] = "samsung", ["CC:B2:55"] = "samsung", ["D4:61:CD"] = "samsung",
-        ["E0:04:C5"] = "samsung", ["E4:FB:FD"] = "samsung", ["E8:4E:CE"] = "samsung",
-        ["EC:1A:59"] = "samsung", ["F0:27:09"] = "samsung", ["F4:8B:32"] = "samsung",
-        ["FC:64:2B"] = "samsung", ["FC:D9:E3"] = "samsung",
-        ["88:C6:63"] = "huawei", ["AC:9E:17"] = "huawei", ["B0:A2:DC"] = "huawei",
-        ["B4:15:13"] = "huawei", ["BC:62:0E"] = "huawei", ["C4:05:28"] = "huawei",
-        ["E0:19:1D"] = "huawei", ["E0:DB:10"] = "huawei", ["EC:08:6B"] = "huawei",
-        ["FC:2F:40"] = "huawei",
-        ["34:CE:00"] = "xiaomi", ["50:7E:5D"] = "xiaomi", ["64:16:66"] = "xiaomi",
-        ["68:DF:DD"] = "xiaomi", ["78:11:DC"] = "xiaomi", ["7C:49:EB"] = "xiaomi",
-        ["88:C3:97"] = "xiaomi", ["8C:BE:BE"] = "xiaomi", ["A0:20:60"] = "xiaomi",
-        ["A4:86:01"] = "xiaomi", ["B4:E1:0F"] = "xiaomi", ["C8:0F:9E"] = "xiaomi",
-        ["CC:22:3D"] = "xiaomi", ["D0:AE:AF"] = "xiaomi", ["E4:57:35"] = "xiaomi",
-        ["F8:16:F1"] = "xiaomi", ["FC:64:8B"] = "xiaomi", ["FC:B4:08"] = "xiaomi",
-        ["38:D6:7A"] = "xiaomi", ["38:D5:7A"] = "xiaomi", ["A4:CC:B3"] = "xiaomi", ["1E:8B:EF"] = "xiaomi",
-        ["00:1A:11"] = "google", ["3C:5A:B4"] = "google", ["54:60:09"] = "google",
-        ["64:16:66"] = "google", ["94:EB:2C"] = "google", ["A4:77:33"] = "google",
-        ["F4:F5:D8"] = "google", ["F4:F5:E8"] = "google",
-        ["00:22:43"] = "hp", ["00:26:BB"] = "hp", ["3C:4A:92"] = "hp",
-        ["3C:D9:2E"] = "hp", ["F4:CE:46"] = "hp",
-        ["00:1B:21"] = "lenovo", ["00:1E:67"] = "lenovo", ["00:21:CC"] = "lenovo",
-        ["00:24:D1"] = "lenovo", ["00:30:52"] = "lenovo", ["00:50:56"] = "lenovo",
-        ["08:9E:01"] = "lenovo", ["10:7B:44"] = "lenovo", ["14:91:52"] = "lenovo",
-        ["18:87:96"] = "lenovo", ["1C:1B:0D"] = "lenovo", ["20:47:32"] = "lenovo",
-        ["20:64:32"] = "lenovo", ["24:B6:FB"] = "lenovo", ["28:CF:E9"] = "lenovo",
-        ["34:17:E9"] = "lenovo", ["38:EA:A7"] = "lenovo", ["40:8D:5C"] = "lenovo",
-        ["44:37:E6"] = "lenovo", ["50:9A:4C"] = "lenovo", ["58:3D:77"] = "lenovo",
-        ["5C:51:81"] = "lenovo", ["64:16:B0"] = "lenovo", ["68:B5:99"] = "lenovo",
-        ["70:5A:0F"] = "lenovo", ["78:92:9C"] = "lenovo", ["88:6F:62"] = "lenovo",
-        ["90:1A:50"] = "lenovo", ["A0:20:66"] = "lenovo", ["AC:85:3D"] = "lenovo",
-        ["B8:27:EB"] = "lenovo", ["BC:AA:CA"] = "lenovo", ["C0:61:18"] = "lenovo",
-        ["C8:5B:76"] = "lenovo", ["CC:12:9D"] = "lenovo", ["D0:50:99"] = "lenovo",
-        ["D4:BE:D9"] = "lenovo", ["D8:BB:C1"] = "lenovo", ["DC:A6:32"] = "lenovo",
-        ["E0:94:4F"] = "lenovo", ["E4:67:EB"] = "lenovo", ["E8:B1:1C"] = "lenovo",
-        ["EC:F4:BB"] = "lenovo", ["F0:92:1C"] = "lenovo", ["F4:CF:E2"] = "lenovo",
-        ["F8:32:78"] = "lenovo", ["FC:58:FA"] = "lenovo", ["00:93:37"] = "lenovo",
-        ["00:04:4B"] = "nvidia", ["04:4B:80"] = "nvidia", ["30:9A:4C"] = "nvidia",
-        ["48:B0:2D"] = "nvidia", ["70:17:7F"] = "nvidia", ["8C:70:8A"] = "nvidia",
-        ["A4:C3:F0"] = "nvidia", ["AC:ED:5C"] = "nvidia", ["B4:2E:99"] = "nvidia",
-        ["DC:56:E7"] = "nvidia", ["E0:75:0A"] = "nvidia", ["F4:5C:40"] = "nvidia",
-        ["FC:0F:E8"] = "nvidia",
-        ["B8:27:EB"] = "raspberry", ["DC:A6:32"] = "raspberry", ["E4:5F:01"] = "raspberry",
-        ["00:0D:3A"] = "realtek", ["00:E0:4C"] = "realtek", ["00:04:5A"] = "realtek",
-        ["00:1A:A0"] = "realtek", ["00:24:7E"] = "realtek",
-        ["00:26:AB"] = "oppo", ["A4:45:19"] = "oppo", ["B0:19:C6"] = "oppo",
-        ["C8:BC:C8"] = "oppo", ["F0:97:C5"] = "oppo",
-        ["00:1C:BF"] = "oneplus", ["00:24:93"] = "oneplus", ["2C:33:61"] = "oneplus",
-        ["30:AE:A4"] = "oneplus", ["38:00:25"] = "oneplus", ["48:3C:0C"] = "oneplus",
-        ["5C:93:A2"] = "oneplus", ["74:45:8A"] = "oneplus", ["78:02:F8"] = "oneplus",
-        ["90:68:5C"] = "oneplus", ["A4:7B:9D"] = "oneplus", ["A8:5C:2C"] = "oneplus",
-        ["C8:1E:3B"] = "oneplus", ["CC:0D:60"] = "oneplus", ["E8:4E:84"] = "oneplus",
-        ["F4:8B:32"] = "oneplus",
-        ["F8:36:C4"] = "realme", ["C4:0B:CB"] = "xiaomi",
-        ["00:23:7F"] = "vivo", ["00:25:6E"] = "vivo", ["00:3A:79"] = "vivo",
-        ["9C:98:11"] = "vivo", ["BC:54:36"] = "vivo", ["D8:50:E6"] = "vivo",
-        ["F8:D1:11"] = "vivo", ["D6:F9:C8"] = "vivo",
-        ["12:BD:6E"] = "tablet"
-    }
+    -- 优先从完整 OUI 表查询（外部文件 > 内置表）
+    local oui_map = get_full_oui_map()
+    local device_type = oui_map and oui_map[mac_prefix]
+    if device_type then
+        return device_type
+    end
 
-    local mac_brand = oui_map[mac_prefix]
-
-    if mac_brand == "apple" then
-        return "phone"
-    elseif mac_brand == "samsung" then
-        return "phone"
-    elseif mac_brand == "huawei" then
-        return "phone"
-    elseif mac_brand == "xiaomi" then
-        return "phone"
-    elseif mac_brand == "oppo" then
-        return "phone"
-    elseif mac_brand == "oneplus" then
-        return "phone"
-    elseif mac_brand == "vivo" then
-        return "phone"
-    elseif mac_brand == "meizu" then
-        return "phone"
-    elseif mac_brand == "zte" or mac_brand == "nokia" then
-        return "phone"
-    elseif mac_brand == "honor" then
-        return "phone"
-    elseif mac_brand == "sony" then
-        return "phone"
-    elseif mac_brand == "tcl" or mac_brand == "hisense" then
-        return "tv"
-    elseif mac_brand == "tablet" then
-        return "tablet"
-    elseif mac_brand == "google" then
-        return "phone"
-    elseif mac_brand == "microsoft" then
-        return "desktop"
-    elseif mac_brand == "lenovo" then
-        return "desktop"
-    elseif mac_brand == "hp" or mac_brand == "dell" then
-        return "desktop"
-    elseif mac_brand == "nvidia" then
-        return "gaming"
-    elseif mac_brand == "raspberry" then
-        return "server"
-    elseif mac_brand == "realtek" then
+    -- 通过主机名关键词判断设备类型
+    if not hostname or hostname == "" then
         return "unknown"
-    elseif mac_brand == "smartwatch" then
+    end
+
+    local h = hostname:lower()
+
+    if h:match("ipad") or h:match("pad") or h:match("tab") or h:match("平板") then
+        return "tablet"
+    elseif h:match("watch") or h:match("band") or h:match("手环") or h:match("手表") then
         return "wearable"
-    elseif mac_brand == "philips" then
+    elseif h:match("tv") or h:match("电视") or h:match("盒子") or h:match("box") then
+        return "tv"
+    elseif h:match("printer") or h:match("打印") then
+        return "printer"
+    elseif h:match("camera") or h:match("摄像头") or h:match("相机") then
+        return "camera"
+    elseif h:match("nas") or h:match("存储") or h:match("群晖") then
+        return "nas"
+    elseif h:match("router") or h:match("路由") or h:match("ap") or h:match("网关") then
+        return "router"
+    elseif h:match("switch") or h:match("交换机") then
+        return "switch"
+    elseif h:match("server") or h:match("服务器") then
+        return "server"
+    elseif h:match("ps[34]") or h:match("xbox") or h:match("switch") or h:match("游戏机") then
+        return "console"
+    elseif h:match("smart") or h:match("智能") or h:match("灯") or h:match("插座") or h:match("sensor") then
         return "smart_home"
-    elseif mac_brand == "htc" then
-        return "phone"
+    elseif h:match("robot") or h:match("扫地") or h:match("roborock") or h:match("irobot") then
+        return "robot"
     else
         return "unknown"
     end
@@ -1494,6 +1842,8 @@ end
 
 function api_get_devices()
     local response_data = nil
+
+    collectgarbage("collect")
 
     local ok, err = pcall(function()
         local util = require("luci.util")
@@ -1806,14 +2156,82 @@ end
 local MONTHLY_SNAPSHOT_FILE = "traffic_monthly.json"
 local HOURLY_SNAPSHOT_FILE = "traffic_hourly.json"
 
+-- 创建月度流量快照（供 cron 或手动调用）
+-- 记录每个设备的当前流量作为本月起始基准
+-- @param current_month  当前月份（格式：YYYYMM）
+-- @param current_history  当前的 history 数据
+local function create_monthly_snapshot(current_month, current_history)
+    local devices = {}
+    
+    for mac, dev_data in pairs(current_history or {}) do
+        if dev_data.rx and dev_data.tx then
+            -- 统一 MAC key 格式为带冒号大写
+            local mac_colon = format_mac_colon(mac)
+            devices[mac_colon] = {
+                rx = dev_data.rx,
+                tx = dev_data.tx
+            }
+        end
+    end
+    
+    local snapshot = {
+        devices = devices,
+        created_at = os.time(),
+        device_count = 0
+    }
+    for _ in pairs(devices) do snapshot.device_count = snapshot.device_count + 1 end
+    
+    local data = load_json_file(MONTHLY_SNAPSHOT_FILE) or {}
+    data[current_month] = snapshot
+    data.last_month = current_month
+    data.last_created = os.time()
+    save_json_file(MONTHLY_SNAPSHOT_FILE, data)
+    
+    local nixio_log = require("nixio")
+    pcall(nixio_log.syslog, "info", "traffic: 月度快照已创建 - " .. current_month .. ", " .. snapshot.device_count .. " 台设备")
+    
+    return snapshot
+end
+
+-- API 接口：手动创建月度快照
+function api_create_monthly_snapshot()
+    local result = { code = 0, message = "" }
+    local ok, err = pcall(function()
+        local json = require("luci.jsonc")
+        local history_file = get_storage_path()
+        local history = {}
+        
+        local fd = io.open(history_file, "r")
+        if fd then
+            local content = fd:read("*all")
+            fd:close()
+            if content and content ~= "" then
+                local parse_ok, parsed = pcall(json.parse, content)
+                if parse_ok and parsed then
+                    history = parsed
+                end
+            end
+        end
+        
+        local current_month = os.date("%Y%m")
+        create_monthly_snapshot(current_month, history)
+        result.message = "月度快照创建成功: " .. current_month
+    end)
+    
+    if not ok then
+        result.code = -1
+        result.message = tostring(err)
+    end
+    
+    luci.http.prepare_content("application/json")
+    luci.http.write_json(result)
+end
+
 -- 获取或创建月度流量快照基准
 -- 新月份开始时自动记录每个设备的当前 history 作为本月起始基准
 -- 返回：{ devices: { mac: { rx, tx }, ... }, created_at }
 --
--- 注意（基准漂移问题）：
--- 如果月初首个访问页面之前有其他进程/设备产生流量，这些流量会计入 history 累计值
--- 但快照建立时把当前 history 作为基准，导致本月流量显示偏小（差值接近0）
--- 这是按需创建快照的固有限制；如需精确月度统计，应在每月1日零点自动创建快照
+-- 改进：优先使用 cron 定时创建的快照，避免基准漂移问题
 local function get_or_update_monthly_snapshot(current_month, current_history)
     local data = load_json_file(MONTHLY_SNAPSHOT_FILE) or {}
     local snapshot = data[current_month]
@@ -1995,6 +2413,9 @@ function api_get_traffic()
         local json = require("luci.jsonc")
         _debug_step = "require_modules"
 
+        -- 内存回收：在处理大量数据前主动清理缓存
+        collectgarbage("collect")
+
         -- 防御性：确保存储路径可用（提前检测，避免后续写入失败）
         local history_file = get_storage_path()
         _debug_step = "get_storage_path=" .. tostring(history_file)
@@ -2108,8 +2529,16 @@ function api_get_traffic()
                         hostname = dhcp_leases[device_id] and dhcp_leases[device_id].name or "Unknown"
                     end
                     local ip = "-"
+                    local ipv6_list = {}
                     if client.ipaddr and type(client.ipaddr) == "string" and client.ipaddr ~= "" then
-                        ip = client.ipaddr
+                        -- 解析 IPv4 和 IPv6 地址（可能包含多个地址，用空格分隔）
+                        for addr in client.ipaddr:gmatch("%S+") do
+                            if addr:match("^%d+%.%d+%.%d+%.%d+$") then
+                                ip = addr  -- 使用第一个 IPv4 作为主 IP
+                            elseif addr:match("^[0-9a-fA-F:.]+$") and not addr:match("^fe80:") then
+                                table.insert(ipv6_list, addr)
+                            end
+                        end
                     elseif client.ap_ipaddr and type(client.ap_ipaddr) == "string" and client.ap_ipaddr ~= "" then
                         ip = client.ap_ipaddr
                     end
@@ -2187,7 +2616,7 @@ function api_get_traffic()
                     -- 优先从 ipset 获取流量数据（iptables 直接统计，最准确）
                     -- 这适用于所有设备，确保流量统计的一致性和准确性
                     local mac_colon = mac_str:upper()
-                    local ipset_rx, ipset_tx = get_ipset_traffic(mac_colon, ip)
+                    local ipset_rx, ipset_tx = get_ipset_traffic(mac_colon, ip, #ipv6_list > 0 and ipv6_list or nil)
                     if ipset_rx and ipset_rx > 0 then
                         router_tx_bytes = ipset_rx
                     end
@@ -2213,7 +2642,20 @@ function api_get_traffic()
                         local current_time = os.time()
                         
                         -- 比较原始值是否重置 (路由器重启或网卡重启会导致计数器清零)
-                        local counter_reset = (router_tx_bytes < last_raw_rx) or (router_rx_bytes < last_raw_tx)
+                        -- 改进：增加阈值判断，避免因正常流量波动导致的误判
+                        local RESET_THRESHOLD = 1024 * 1024  -- 1MB 阈值：只有减少超过1MB才认为是重置
+                        local current_raw_total = router_tx_bytes + router_rx_bytes
+                        local last_raw_total = last_raw_rx + last_raw_tx
+                        local counter_reset = (last_raw_total > RESET_THRESHOLD) and 
+                            ((router_tx_bytes < last_raw_rx - RESET_THRESHOLD) or (router_rx_bytes < last_raw_tx - RESET_THRESHOLD))
+                        
+                        -- 额外检查：如果历史数据非常新（<5分钟），可能是数据不一致而非真正的重置
+                        if counter_reset and hist.last_seen then
+                            local time_since_last_seen = current_time - hist.last_seen
+                            if time_since_last_seen < 300 then  -- 5分钟内
+                                counter_reset = false  -- 太快了，可能是数据问题
+                            end
+                        end
                         
                         local device_total_rx, device_total_tx
                         local current_reset_count = (hist.reset_count and type(hist.reset_count) == "number") and hist.reset_count or 0
@@ -2363,11 +2805,14 @@ function api_get_traffic()
 
         -- 修复问题6：限制条目数量，避免JSON文件无限增长
         -- 规则：保留在线设备 + 最多 MAX_TRAFFIC_DEVICES 个离线设备（按 last_seen 排序，保留最新的）
+        -- 改进：重要设备（有备注、高流量、或被标记为重要的）不会被删除
         local device_count = 0
         for _ in pairs(current_traffic) do device_count = device_count + 1 end
         if device_count > MAX_TRAFFIC_DEVICES then
             -- 收集所有离线设备并按 last_seen 降序排序
             local offline_list = {}
+            local notes_data = load_json_file(NOTES_FILE_NAME) or {}
+            
             for dev_id, data in pairs(current_traffic) do
                 -- 判断是否为当前在线设备（online_devices 中存在）
                 local is_online = false
@@ -2377,25 +2822,48 @@ function api_get_traffic()
                         break
                     end
                 end
+                
                 if not is_online then
-                    table.insert(offline_list, {dev_id = dev_id, last_seen = (data and data.last_seen) or 0})
+                    -- 检查是否为重要设备（不会被删除）
+                    local is_important = false
+                    -- 有备注的设备是重要的
+                    if notes_data[dev_id] or notes_data[format_mac_colon(dev_id)] then
+                        is_important = true
+                    end
+                    -- 流量超过 1GB 的设备是重要的
+                    if data and ((data.rx and data.rx > 1073741824) or (data.tx and data.tx > 1073741824)) then
+                        is_important = true
+                    end
+                    -- 标记为重要的设备
+                    if data and data.important then
+                        is_important = true
+                    end
+                    
+                    table.insert(offline_list, {dev_id = dev_id, last_seen = (data and data.last_seen) or 0, important = is_important})
                 end
             end
-            -- 按 last_seen 降序排序
-            table.sort(offline_list, function(a, b) return a.last_seen > b.last_seen end)
-            -- 删除超出上限的离线设备
+            
+            -- 按 last_seen 降序排序，重要设备排在前面
+            table.sort(offline_list, function(a, b)
+                if a.important ~= b.important then return a.important end
+                return a.last_seen > b.last_seen 
+            end)
+            
+            -- 删除超出上限的非重要离线设备
             local kept_offline = 0
             local max_offline = MAX_TRAFFIC_DEVICES - #online_devices
             local to_remove = {}
             for i, item in ipairs(offline_list) do
-                if i > max_offline then
+                if i > max_offline and not item.important then
                     table.insert(to_remove, item.dev_id)
+                else
+                    kept_offline = kept_offline + 1
                 end
             end
             for _, dev_id in ipairs(to_remove) do
                 current_traffic[dev_id] = nil
             end
-            nixio.syslog("info", "traffic: pruned " .. #to_remove .. " old offline devices, kept " .. math.min(#offline_list, max_offline) .. " recent offline devices")
+            nixio.syslog("info", "traffic: pruned " .. #to_remove .. " old offline devices, kept " .. kept_offline .. " recent/important offline devices")
         end
 
         -- 保存流量数据（带防御：写入失败不阻断返回）
@@ -3005,13 +3473,45 @@ function api_get_wifi_status()
 end
 
 function api_get_version()
-    local result = {
-        version = "1.0.1",
+    local json = require("luci.jsonc")
+    local version_info = {
+        version = "unknown",
         author = "MH",
-        description = "路由助手 - 网络管理工具"
+        description = "路由管家 - 网络管理工具"
     }
 
-    result = success_response(result)
+    local ok, err = pcall(function()
+        local version_paths = {
+            "/usr/share/router-assistant/version.json",
+            "/usr/lib/lua/luci/../version.json"
+        }
+        for _, path in ipairs(version_paths) do
+            local fd = io.open(path, "r")
+            if fd then
+                local content = fd:read("*a")
+                fd:close()
+                if content and content ~= "" then
+                    local data = json.parse(content)
+                    if data then
+                        if data.version then version_info.version = data.version end
+                        if data.author then version_info.author = data.author end
+                        if data.name then version_info.name = data.name end
+                        if data.description then version_info.description = data.description end
+                    end
+                    break
+                end
+            end
+        end
+    end)
+
+    if not ok then
+        pcall(function()
+            local nixio = require("nixio")
+            nixio.syslog("warning", "[RouterAssistant] Failed to load version.json: " .. tostring(err))
+        end)
+    end
+
+    local result = success_response(version_info)
     luci.http.prepare_content("application/json")
     luci.http.write_json(result)
 end
@@ -3317,6 +3817,7 @@ function api_enable_device()
 end
 
 function api_get_blocked_devices()
+    collectgarbage("collect")
     local util = require "luci.util"
     local result = {code = 0, blocked = {}}
 
@@ -3762,6 +4263,7 @@ end
 
 function api_clear_all_data()
     if not require_csrf_token() then return end
+    collectgarbage("collect")
     local result = {
         code = 0,
         message = "",
@@ -3901,16 +4403,13 @@ local function get_router_ip()
             return ip
         end
     end
-    -- 方法3：遍历所有LAN接口尝试获取IP
-    local lan_ifs = {"eth0", "eth1", "lan0", "lan1", "br-lan.1", "eth0.1"}
-    for _, lan_if in ipairs(lan_ifs) do
-        fd = io.popen("ip addr show " .. lan_if .. " 2>/dev/null | grep 'inet ' | awk '{print $2}' | cut -d'/' -f1")
-        if fd then
-            local ip = fd:read("*l")
-            fd:close()
-            if ip and ip ~= "" then
-                return ip
-            end
+    -- 方法3：动态获取所有非 WAN 接口的 IP（避免硬编码）
+    local fd3 = io.popen("ip -o link show 2>/dev/null | grep -v 'lo:' | awk -F': ' '{print $2}' | while read iface; do ip addr show \"$iface\" 2>/dev/null | grep 'inet ' | head -1 | awk '{print $2}' | cut -d'/' -f1; done | head -1")
+    if fd3 then
+        local ip = fd3:read("*l")
+        fd3:close()
+        if ip and ip ~= "" then
+            return ip
         end
     end
     -- 方法4：返回nil而非硬编码值，让调用方决定如何处理
@@ -4059,4 +4558,232 @@ function api_speed_test_status()
 
     luci.http.prepare_content("application/json")
     luci.http.write_json(result)
+end
+
+-- ============================================================
+-- 网络诊断工具
+-- ============================================================
+
+local DIAGNOSE_TIMEOUT = 10
+local MAX_PING_COUNT = 10
+
+local function safe_target_validate(target)
+    if not target or type(target) ~= "string" then return nil end
+    target = target:gsub("[%s\r\n]", "")
+    if #target > 256 then return nil end
+    if target:match("^[a-zA-Z0-9%-%._]+$") or target:match("^[%d%.]+$") then
+        return target
+    end
+    return nil
+end
+
+function api_network_diagnose()
+    if not require_csrf_token() then return end
+    collectgarbage("collect")
+
+    local diagnose_type = luci.http.formvalue("type") or "ping"
+    local target = luci.http.formvalue("target") or ""
+    local count = tonumber(lucy.http.formvalue("count")) or 4
+    local port = tonumber(lucy.http.formvalue("port")) or 0
+
+    local safe_target = safe_target_validate(target)
+    if not safe_target then
+        luci.http.prepare_content("application/json")
+        luci.http.write_json(error_response(-1, "无效的目标地址"))
+        return
+    end
+
+    if count < 1 or count > MAX_PING_COUNT then count = 4 end
+
+    local result = {
+        type = diagnose_type,
+        target = safe_target,
+        output = "",
+        success = false,
+        timestamp = os.time()
+    }
+
+    local cmd = ""
+    local ok, err = pcall(function()
+        if diagnose_type == "ping" then
+            cmd = "timeout " .. DIAGNOSE_TIMEOUT .. " ping -c " .. count .. " -W 2 '" .. safe_target .. "' 2>&1"
+        elseif diagnose_type == "traceroute" then
+            if luci.sys.exec("which traceroute 2>/dev/null | wc -l"):gsub("%s+", "") == "1" then
+                cmd = "timeout " .. (DIAGNOSE_TIMEOUT * 2) .. " traceroute -m 20 '" .. safe_target .. "' 2>&1"
+            else
+                cmd = "timeout " .. (DIAGNOSE_TIMEOUT * 2) .. " traceroute -m 20 '" .. safe_target .. "' 2>&1"
+            end
+        elseif diagnose_type == "dns" then
+            cmd = "timeout " .. DIAGNOSE_TIMEOUT .. " nslookup '" .. safe_target .. "' 2>&1 || timeout " .. DIAGNOSE_TIMEOUT .. " dig '" .. safe_target .. "' +short 2>&1"
+        elseif diagnose_type == "port" then
+            if port < 1 or port > 65535 then
+                result.output = "错误：端口号必须在 1-65535 范围内"
+                result.success = false
+            else
+                cmd = "timeout " .. DIAGNOSE_TIMEOUT .. " nc -zv -w 3 '" .. safe_target .. "' " .. port .. " 2>&1 || echo '端口 " .. port .. " 不可达'"
+            end
+        else
+            result.output = "错误：不支持的诊断类型"
+            result.success = false
+        end
+
+        if cmd and cmd ~= "" then
+            local output = luci.sys.exec(cmd)
+            result.output = output or ""
+            result.success = true
+        end
+    end)
+
+    if not ok then
+        result.output = "诊断执行失败: " .. tostring(err)
+        result.success = false
+    end
+
+    luci.http.prepare_content("application/json")
+    luci.http.write_json(success_response(result))
+end
+
+-- ============================================================
+-- 设备限速（QoS）
+-- ============================================================
+
+local QOS_IFACE = "br-lan"
+local RATE_LIMIT_FILE = "/etc/router_assistant_rate_limits.json"
+
+local function load_rate_limits()
+    local fd = io.open(RATE_LIMIT_FILE, "r")
+    if fd then
+        local content = fd:read("*a")
+        fd:close()
+        if content and content ~= "" then
+            local json = require("luci.jsonc")
+            local ok, data = pcall(json.parse, content)
+            if ok and data then return data end
+        end
+    end
+    return {}
+end
+
+local function save_rate_limits(limits)
+    local json = require("luci.jsonc")
+    local content = json.stringify(limits) or "{}"
+    local fd = io.open(RATE_LIMIT_FILE, "w")
+    if fd then
+        fd:write(content)
+        fd:close()
+        return true
+    end
+    return false
+end
+
+local function apply_tc_rules(mac, download_kbps, upload_kbps)
+    local mac_no_colon = mac:gsub(":", ""):upper()
+    local download_classid = "1" .. mac_no_colon:sub(1, 4)
+    local upload_classid = "2" .. mac_no_colon:sub(1, 4)
+
+    os.execute("tc filter del dev " .. QOS_IFACE .. " parent 1: protocol ip pref 100 handle ::" .. download_classid .. " flowid 1:" .. download_classid .. " 2>/dev/null")
+    os.execute("tc filter del dev " .. QOS_IFACE .. " parent 2: protocol ip pref 100 handle ::" .. upload_classid .. " flowid 2:" .. upload_classid .. " 2>/dev/null")
+
+    if download_kbps > 0 then
+        os.execute("tc class add dev " .. QOS_IFACE .. " parent 1: classid 1:" .. download_classid .. " htb rate " .. download_kbps .. "kbit ceil " .. download_kbps .. "kbit 2>/dev/null || tc class change dev " .. QOS_IFACE .. " parent 1: classid 1:" .. download_classid .. " htb rate " .. download_kbps .. "kbit ceil " .. download_kbps .. "kbit")
+        os.execute("tc filter add dev " .. QOS_IFACE .. " parent 1: protocol ip prio 5 u32 match ip dst 0.0.0.0/0 match ether dst " .. mac .. " flowid 1:" .. download_classid .. " 2>/dev/null")
+    end
+
+    if upload_kbps > 0 then
+        os.execute("tc class add dev " .. QOS_IFACE .. " parent 2: classid 2:" .. upload_classid .. " htb rate " .. upload_kbps .. "kbit ceil " .. upload_kbps .. "kbit 2>/dev/null || tc class change dev " .. QOS_IFACE .. " parent 2: classid 2:" .. upload_classid .. " htb rate " .. upload_kbps .. "kbit ceil " .. upload_kbps .. "kbit")
+        os.execute("tc filter add dev " .. QOS_IFACE .. " parent 2: protocol ip prio 5 u32 match ip src 0.0.0.0/0 match ether src " .. mac .. " flowid 2:" .. upload_classid .. " 2>/dev/null")
+    end
+
+    return true
+end
+
+local function init_qos()
+    os.execute("tc qdisc add dev " .. QOS_IFACE .. " root handle 1: htb default 10 2>/dev/null")
+    os.execute("tc class add dev " .. QOS_IFACE .. " parent 1: classid 1:10 htb rate 1000mbit 2>/dev/null")
+    os.execute("tc qdisc add dev " .. QOS_IFACE .. " parent 1:10 handle 10: sfq perturb 10 2>/dev/null")
+end
+
+function api_get_rate_limits()
+    collectgarbage("collect")
+    local limits = load_rate_limits()
+    luci.http.prepare_content("application/json")
+    luci.http.write_json(success_response({limits = limits}))
+end
+
+function api_set_rate_limit()
+    if not require_csrf_token() then return end
+    collectgarbage("collect")
+
+    local mac = luci.http.formvalue("mac") or ""
+    local download_limit = tonumber(lucy.http.formvalue("download_limit")) or 0
+    local upload_limit = tonumber(lucy.http.formvalue("upload_limit")) or 0
+    local enabled = luci.http.formvalue("enabled") == "true" or luci.http.formvalue("enabled") == "1"
+
+    local safe_mac = safe_mac_validate(mac)
+    if not safe_mac then
+        luci.http.prepare_content("application/json")
+        luci.http.write_json(error_response(-1, "无效的MAC地址"))
+        return
+    end
+
+    local mac_colon = format_mac_colon(safe_mac)
+    local limits = load_rate_limits()
+
+    if enabled and (download_limit > 0 or upload_limit > 0) then
+        limits[safe_mac] = {
+            mac = mac_colon,
+            download_limit = download_limit,
+            upload_limit = upload_limit,
+            enabled = true,
+            created_at = limits[safe_mac] and limits[safe_mac].created_at or os.time(),
+            updated_at = os.time()
+        }
+        init_qos()
+        apply_tc_rules(mac_colon, download_limit, upload_limit)
+    else
+        if limits[safe_mac] then
+            apply_tc_rules(mac_colon, 0, 0)
+        end
+        limits[safe_mac] = nil
+    end
+
+    save_rate_limits(limits)
+
+    luci.http.prepare_content("application/json")
+    luci.http.write_json(success_response({
+        mac = mac_colon,
+        download_limit = download_limit,
+        upload_limit = upload_limit,
+        enabled = enabled and (download_limit > 0 or upload_limit > 0),
+        message = "限速设置已保存"
+    }))
+end
+
+function api_remove_rate_limit()
+    if not require_csrf_token() then return end
+    collectgarbage("collect")
+
+    local mac = luci.http.formvalue("mac") or ""
+    local safe_mac = safe_mac_validate(mac)
+
+    if not safe_mac then
+        luci.http.prepare_content("application/json")
+        luci.http.write_json(error_response(-1, "无效的MAC地址"))
+        return
+    end
+
+    local mac_colon = format_mac_colon(safe_mac)
+    local limits = load_rate_limits()
+
+    if limits[safe_mac] then
+        apply_tc_rules(mac_colon, 0, 0)
+        limits[safe_mac] = nil
+        save_rate_limits(limits)
+    end
+
+    luci.http.prepare_content("application/json")
+    luci.http.write_json(success_response({
+        mac = mac_colon,
+        message = "限速规则已移除"
+    }))
 end

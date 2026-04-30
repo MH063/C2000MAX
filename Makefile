@@ -1,7 +1,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-router-assistant
-PKG_VERSION:=1.0.0
+PKG_VERSION:=1.0.8
 PKG_RELEASE:=1
 PKG_ARCH:=aarch64_cortex-a53
 PKG_CATEGORIES:=luci
@@ -55,6 +55,7 @@ define Package/luci-app-router-assistant/install
 	$(CP) ./scripts/collect_traffic.lua $(1)/usr/libexec/router_assistant/
 	chmod 755 $(1)/usr/libexec/router_assistant/collect_traffic.lua
 	$(CP) ./version.json $(1)/usr/share/router-assistant/
+	$(CP) ./luasrc/oui_database.json $(1)/usr/share/router-assistant/
 	$(CP) ./usr/lib/traffic_stats/* $(1)/usr/lib/traffic_stats/
 	$(CP) ./usr/lib/json.lua $(1)/usr/lib/json/
 	$(CP) ./etc/init.d/traffic-stats $(1)/etc/init.d/
@@ -67,22 +68,30 @@ endef
 define Package/luci-app-router-assistant/postinst
 #!/bin/sh
 [ -n "$${IPKG_INSTROOT}" ] || {
-	# 清除所有残留数据（确保重装时干净）
+	# 平滑升级：只清理缓存，保留所有历史数据和配置
+	echo "router-assistant: 正在执行安装后处理..."
+
+	# 1. 清理 LuCI 缓存（确保新界面生效）
+	rm -f /tmp/luci-indexcache
+
+	# 2. 只清理临时缓存文件，保留核心数据
 	for dir in /tmp/storage /mnt/mmcblk0p1 /mnt/sdcard /tmp; do
 		[ -d "${dir}" ] || continue
 		for subdir in router_assistant tmp/router_assistant; do
 			if [ -d "${dir}/${subdir}" ]; then
-				rm -f "${dir}/${subdir}/traffic_stats.json" \
-				       "${dir}/${subdir}/traffic_monthly.json" \
-				       "${dir}/${subdir}/traffic_hourly.json" \
-				       "${dir}/${subdir}/mac_blocklist.json" \
-				       "${dir}/${subdir}/blocked_macs_cache.json" 2>/dev/null
+				# 只删除临时缓存，保留：current.json, traffic_monthly.json,
+				# mac_blocklist.json, baseline.json, daily/weekly/monthly/backup/
+				rm -f "${dir}/${subdir}/blocked_macs_cache.json" 2>/dev/null
+				rm -f "${dir}/${subdir}/traffic_stats.json" 2>/dev/null
+				rm -f "${dir}/${subdir}/traffic_hourly.json" 2>/dev/null
 			fi
 		done
 	done
-	rm -f /tmp/luci-indexcache
-	/etc/init.d/traffic-stats enable 2>/dev/null
-	/etc/init.d/traffic-stats start 2>/dev/null
+
+	# 3. 重启服务以加载新的脚本和规则
+	/etc/init.d/traffic-stats restart 2>/dev/null
+
+	echo "router-assistant: 安装完成（历史数据已保留）"
 }
 exit 0
 endef

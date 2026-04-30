@@ -61,7 +61,7 @@ cat > "$PKG_DIR/CONTROL/postinst" << 'ENDPOSTINST'
 #!/bin/sh
 
 # ============================================================
-# 路由管家 - 安装后脚本
+# 路由管家 - 安装后脚本 (版本: __PKG_VERSION__)
 # 功能：清理旧版数据 + 初始化新版本
 # ============================================================
 
@@ -224,7 +224,7 @@ PKG_SECTION=$(uci show appcenter 2>/dev/null | grep "路由管家" | head -1 | a
 if [ -n "$PKG_SECTION" ]; then
     echo "Found package section: $PKG_SECTION, updating..."
     uci set appcenter.$PKG_SECTION.name='路由管家'
-    uci set appcenter.$PKG_SECTION.version='路由管家1.0.2'
+    uci set appcenter.$PKG_SECTION.version="路由管家__PKG_VERSION__"
     uci set appcenter.$PKG_SECTION.icon='router_assistant.png'
     uci set appcenter.$PKG_SECTION.des='网络管理 - 设备列表、流量统计、WiFi管理'
     uci set appcenter.$PKG_SECTION.status='1'
@@ -235,7 +235,7 @@ else
     echo "Package section not found, adding new..."
     uci add appcenter package
     uci set appcenter.@package[-1].name='路由管家'
-    uci set appcenter.@package[-1].version='路由管家1.0.2'
+    uci set appcenter.@package[-1].version="路由管家__PKG_VERSION__"
     uci set appcenter.@package[-1].icon='router_assistant.png'
     uci set appcenter.@package[-1].des='网络管理 - 设备列表、流量统计、WiFi管理'
     uci set appcenter.@package[-1].status='1'
@@ -252,7 +252,7 @@ if [ -n "$PLIST_SECTION" ]; then
     uci set appcenter.$PLIST_SECTION.pkg_name='路由管家'
     uci set appcenter.$PLIST_SECTION.parent='路由管家'
     uci set appcenter.$PLIST_SECTION.icon='router_assistant.png'
-    uci set appcenter.$PLIST_SECTION.version='路由管家1.0.2'
+    uci set appcenter.$PLIST_SECTION.version="路由管家__PKG_VERSION__"
     uci set appcenter.$PLIST_SECTION.has_luci='1'
     uci set appcenter.$PLIST_SECTION.type='1'
     uci set appcenter.$PLIST_SECTION.luci_module_file='/usr/lib/lua/luci/controller/router_assistant.lua'
@@ -264,7 +264,7 @@ else
     uci set appcenter.@package_list[-1].pkg_name='路由管家'
     uci set appcenter.@package_list[-1].parent='路由管家'
     uci set appcenter.@package_list[-1].icon='router_assistant.png'
-    uci set appcenter.@package_list[-1].version='路由管家1.0.2'
+    uci set appcenter.@package_list[-1].version="路由管家__PKG_VERSION__"
     uci set appcenter.@package_list[-1].has_luci='1'
     uci set appcenter.@package_list[-1].type='1'
     uci set appcenter.@package_list[-1].luci_module_file='/usr/lib/lua/luci/controller/router_assistant.lua'
@@ -277,6 +277,10 @@ echo "路由管家: 安装后脚本执行完成"
 
 exit 0
 ENDPOSTINST
+
+# 替换版本号占位符
+sed -i "s/__PKG_VERSION__/${PKG_VERSION}/g" "$PKG_DIR/CONTROL/postinst"
+
 chmod 755 "$PKG_DIR/CONTROL/postinst"
 
 cat > "$PKG_DIR/CONTROL/prerm" << 'ENDPRERM'
@@ -297,16 +301,27 @@ echo "路由管家: 服务已停止"
 # 清理 ipset
 ipset destroy traffic_stats_rx 2>/dev/null
 ipset destroy traffic_stats_tx 2>/dev/null
+ipset destroy traffic_stats_rx_ip 2>/dev/null
+ipset destroy traffic_stats_rx_ip6 2>/dev/null
 echo "路由管家: ipset 已清理"
 
 # 清理 iptables mangle 链
 iptables -t mangle -D FORWARD -j TRAFFIC_STATS_RX 2>/dev/null
 iptables -t mangle -D FORWARD -j TRAFFIC_STATS_TX 2>/dev/null
+iptables -t mangle -D POSTROUTING -j TRAFFIC_STATS_RX_IP 2>/dev/null
 iptables -t mangle -F TRAFFIC_STATS_RX 2>/dev/null
 iptables -t mangle -F TRAFFIC_STATS_TX 2>/dev/null
+iptables -t mangle -F TRAFFIC_STATS_RX_IP 2>/dev/null
 iptables -t mangle -X TRAFFIC_STATS_RX 2>/dev/null
 iptables -t mangle -X TRAFFIC_STATS_TX 2>/dev/null
+iptables -t mangle -X TRAFFIC_STATS_RX_IP 2>/dev/null
 echo "路由管家: iptables 规则已清理"
+
+# 清理 ip6tables mangle 链
+ip6tables -t mangle -D POSTROUTING -j TRAFFIC_STATS_RX_IP 2>/dev/null
+ip6tables -t mangle -F TRAFFIC_STATS_RX_IP 2>/dev/null
+ip6tables -t mangle -X TRAFFIC_STATS_RX_IP 2>/dev/null
+echo "路由管家: ip6tables 规则已清理"
 
 # 清理 cron 任务
 CRON_FILE="/etc/crontabs/root"
@@ -403,6 +418,23 @@ if [ -f "$SCRIPT_DIR/usr/share/icons/router_assistant.png" ]; then
     echo "PNG icon for appcenter included"
 else
     echo "Note: PNG icon not found, appcenter may show default icon"
+fi
+
+# 复制 version.json
+mkdir -p "$PKG_DIR/data/usr/share/router-assistant"
+if [ -f "$SCRIPT_DIR/version.json" ]; then
+    cp "$SCRIPT_DIR/version.json" "$PKG_DIR/data/usr/share/router-assistant/"
+    echo "version.json included"
+else
+    echo "Warning: version.json not found"
+fi
+
+# 复制 oui_database.json
+if [ -f "$SCRIPT_DIR/luasrc/oui_database.json" ]; then
+    cp "$SCRIPT_DIR/luasrc/oui_database.json" "$PKG_DIR/data/usr/share/router-assistant/"
+    echo "oui_database.json included"
+else
+    echo "Warning: oui_database.json not found"
 fi
 
 echo "Data files copied"
