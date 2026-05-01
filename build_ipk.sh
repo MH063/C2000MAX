@@ -81,7 +81,7 @@ echo "路由管家: ipset 旧数据已清理"
 
 # 清理 iptables mangle 链（旧版规则可能与新版不兼容）
 iptables -t mangle -D FORWARD -j TRAFFIC_STATS_RX 2>/dev/null
-iptables -t mangle -d FORWARD -j TRAFFIC_STATS_TX 2>/dev/null
+iptables -t mangle -D FORWARD -j TRAFFIC_STATS_TX 2>/dev/null
 iptables -t mangle -F TRAFFIC_STATS_RX 2>/dev/null
 iptables -t mangle -F TRAFFIC_STATS_TX 2>/dev/null
 iptables -t mangle -X TRAFFIC_STATS_RX 2>/dev/null
@@ -165,14 +165,14 @@ chmod +x /etc/init.d/traffic-stats 2>/dev/null
 /etc/init.d/traffic-stats start 2>/dev/null
 echo "路由管家: 服务已启动"
 
-# --- 第五步：首次流量采集 ---
-if [ -f "/usr/lib/traffic_stats/collect.lua" ]; then
+# --- 第六步：首次流量采集 ---
+if [ -f "/usr/libexec/router_assistant/collect_traffic.lua" ]; then
     echo "路由管家: 正在执行首次流量采集..."
-    /usr/bin/lua /usr/lib/traffic_stats/collect.lua collect >/dev/null 2>&1
+    /usr/bin/lua /usr/libexec/router_assistant/collect_traffic.lua >/dev/null 2>&1
     echo "路由管家: 首次流量采集完成"
 fi
 
-# --- 第六步：配置应用中心 ---
+# --- 第七步：配置应用中心 ---
 OLD_NAME="luci-app-router-assistant"
 
 echo "路由管家: 正在清理旧版配置..."
@@ -273,6 +273,32 @@ fi
 
 uci commit appcenter
 
+# --- 第八步：创建防火墙重启钩子（自动重启流量统计）---
+echo "路由管家: 正在创建防火墙重启钩子..."
+
+# 方法1: 使用 firewall.user（最可靠）
+if ! grep -q "traffic-stats restart" /etc/firewall.user 2>/dev/null; then
+    echo "" >> /etc/firewall.user
+    echo "# 路由管家: 防火墙启动后自动重启流量统计" >> /etc/firewall.user
+    echo "/etc/init.d/traffic-stats restart &" >> /etc/firewall.user
+    echo "路由管家: firewall.user 钩子已添加"
+fi
+
+# 方法2: 使用 hotplug（备用）
+mkdir -p /etc/hotplug.d/firewall
+cat > /etc/hotplug.d/firewall/99-traffic-stats << 'HOTPLUG'
+#!/bin/sh
+# 防火墙重启后自动重启流量统计服务
+case "$ACTION" in
+    restart|start|ifup)
+        logger -t traffic-stats "Firewall $ACTION detected, restarting traffic-stats..."
+        /etc/init.d/traffic-stats restart &
+        ;;
+esac
+HOTPLUG
+chmod +x /etc/hotplug.d/firewall/99-traffic-stats
+echo "路由管家: 防火墙重启钩子已创建"
+
 echo "路由管家: 安装后脚本执行完成"
 
 exit 0
@@ -361,6 +387,16 @@ fi
 
 # 清理 /tmp 下的临时数据
 rm -rf /tmp/router_assistant 2>/dev/null
+
+# 清理防火墙重启钩子
+rm -f /etc/hotplug.d/firewall/99-traffic-stats 2>/dev/null
+rm -f /etc/hotplug.d/firewall/98-rate-limit-restore 2>/dev/null
+# 清理 firewall.user 中的钩子
+sed -i '/traffic-stats restart/d' /etc/firewall.user 2>/dev/null
+sed -i '/路由管家.*防火墙启动后自动重启流量统计/d' /etc/firewall.user 2>/dev/null
+sed -i '/flow_offloading/d' /etc/firewall.user 2>/dev/null
+sed -i '/路由管家.*关闭 Flow Offloading/d' /etc/firewall.user 2>/dev/null
+echo "路由管家: 防火墙钩子已清理"
 
 echo "路由管家: 卸载前脚本执行完成"
 

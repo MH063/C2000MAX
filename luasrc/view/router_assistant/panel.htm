@@ -1671,23 +1671,6 @@
         color: var(--accent-cyan);
     }
 
-    .rm-qos-btn {
-        background: none;
-        border: 1px solid var(--accent-purple);
-        color: var(--accent-purple);
-        cursor: pointer;
-        padding: 2px 8px;
-        font-size: 12px;
-        border-radius: 4px;
-        transition: all 0.2s;
-    }
-
-    .rm-qos-btn:hover {
-        background: rgba(156, 39, 176, 0.15);
-        color: #E040FB;
-        border-color: #E040FB;
-    }
-
     .rm-signal-excellent {
         color: #00E676;
         font-weight: 500;
@@ -1868,45 +1851,6 @@
                 <button class="rm-btn rm-btn-secondary" onclick="closeNoteModal()">取消</button>
                 <button class="rm-btn rm-btn-danger" id="note-delete-btn" onclick="deleteNote()" style="display:none;">删除备注</button>
                 <button class="rm-btn rm-btn-primary" onclick="saveNote()">保存</button>
-            </div>
-        </div>
-    </div>
-
-    <div class="rm-modal-overlay" id="qos-modal">
-        <div class="rm-modal">
-            <div class="rm-modal-header">
-                <div class="rm-modal-title">设备限速设置</div>
-                <button class="rm-modal-close" onclick="closeQoSModal()">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                        <line x1="18" y1="6" x2="6" y2="18"/>
-                        <line x1="6" y1="6" x2="18" y2="18"/>
-                    </svg>
-                </button>
-            </div>
-            <div class="rm-modal-body">
-                <div class="rm-form-group">
-                    <label class="rm-form-label">设备名称</label>
-                    <input type="text" class="rm-form-input" id="qos-device-name" readonly>
-                </div>
-                <div class="rm-form-group">
-                    <label class="rm-form-label">MAC地址</label>
-                    <input type="text" class="rm-form-input" id="qos-mac" readonly>
-                </div>
-                <div class="rm-form-group">
-                    <label class="rm-form-label">下载速度限制（Mbps）</label>
-                    <input type="number" class="rm-form-input" id="qos-download" placeholder="例如：10，留空或0表示不限速" min="0" max="1000">
-                    <small style="color: var(--text-secondary); font-size: 11px;">范围：1-1000 Mbps，0 或留空表示不限制下载速度</small>
-                </div>
-                <div class="rm-form-group">
-                    <label class="rm-form-label">上传速度限制（Mbps）</label>
-                    <input type="number" class="rm-form-input" id="qos-upload" placeholder="例如：5，留空或0表示不限速" min="0" max="1000">
-                    <small style="color: var(--text-secondary); font-size: 11px;">范围：1-1000 Mbps，0 或留空表示不限制上传速度</small>
-                </div>
-            </div>
-            <div class="rm-modal-footer">
-                <button class="rm-btn rm-btn-secondary" onclick="closeQoSModal()">取消</button>
-                <button class="rm-btn rm-btn-danger" id="qos-remove-btn" onclick="removeQoSRule()" style="display:none;">移除限速</button>
-                <button class="rm-btn rm-btn-primary" onclick="saveQoSSetting()">保存设置</button>
             </div>
         </div>
     </div>
@@ -2465,40 +2409,6 @@
                 <div id="diagnose-output" style="background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 8px; padding: 15px; font-family: monospace; font-size: 12px; color: var(--text-secondary); white-space: pre-wrap; max-height: 300px; overflow-y: auto; display: none;"></div>
             </div>
         </div>
-
-        <!-- 设备限速卡片 -->
-        <div class="rm-card" style="margin-top: 20px;">
-            <div class="rm-card-header">
-                <div class="rm-card-title">设备限速（QoS）</div>
-                <span style="font-size: 12px; color: var(--text-secondary);">限制特定设备的上传/下载速度</span>
-            </div>
-            <div class="rm-card-body">
-                <div id="rate-limits-loading" class="rm-loading">
-                    <div class="rm-loading-spinner"></div>
-                    <p>正在加载限速配置...</p>
-                </div>
-                <div id="rate-limits-empty" class="rm-empty" style="display:none;">
-                    <p>暂无限速配置，点击设备列表中的"限速"按钮添加</p>
-                </div>
-                <div id="rate-limits-table" style="display:none;">
-                    <div class="rm-table-wrapper">
-                        <table class="rm-table">
-                            <thead>
-                                <tr>
-                                    <th>设备</th>
-                                    <th>MAC地址</th>
-                                    <th>下载限速</th>
-                                    <th>上传限速</th>
-                                    <th>状态</th>
-                                    <th>操作</th>
-                                </tr>
-                            </thead>
-                            <tbody id="rate-limits-tbody"></tbody>
-                        </table>
-                    </div>
-                </div>
-            </div>
-        </div>
     </div>
 
     <div class="rm-footer" id="version-info">
@@ -2650,76 +2560,6 @@ function openNoteModal(mac, hostname) {
 
 function closeNoteModal() {
     document.getElementById('note-modal').classList.remove('active');
-}
-
-function openQoSModal(mac, hostname) {
-    document.getElementById('qos-mac').value = mac;
-    document.getElementById('qos-device-name').value = hostname || '未知设备';
-    document.getElementById('qos-download').value = '';
-    document.getElementById('qos-upload').value = '';
-
-    var removeBtn = document.getElementById('qos-remove-btn');
-
-    safeXHR(
-        '<%=luci.dispatcher.build_url("admin/status/router_assistant/get_rate_limits")%>',
-        function(res) {
-            if (res.code === 0 && res.data && res.data.limits) {
-                var limits = res.data.limits;
-                var macKey = normalizeMacKey(mac);
-                if (limits[macKey]) {
-                    var limit = limits[macKey];
-                    document.getElementById('qos-download').value = limit.download_limit > 0 ? Math.round(limit.download_limit / 1000) : '';
-                    document.getElementById('qos-upload').value = limit.upload_limit > 0 ? Math.round(limit.upload_limit / 1000) : '';
-                    removeBtn.style.display = 'inline-block';
-                } else {
-                    removeBtn.style.display = 'none';
-                }
-            }
-        },
-        function(error) {}
-    );
-
-    document.getElementById('qos-modal').classList.add('active');
-}
-
-function closeQoSModal() {
-    document.getElementById('qos-modal').classList.remove('active');
-}
-
-function saveQoSSetting() {
-    var mac = document.getElementById('qos-mac').value.trim();
-    var downloadMbps = parseFloat(document.getElementById('qos-download').value) || 0;
-    var uploadMbps = parseFloat(document.getElementById('qos-upload').value) || 0;
-
-    if (!mac) {
-        showToast('MAC地址无效', 'error');
-        return;
-    }
-
-    if (downloadMbps < 0 || downloadMbps > 1000) {
-        showToast('下载速度限制范围：0-1000 Mbps', 'warning');
-        return;
-    }
-    if (uploadMbps < 0 || uploadMbps > 1000) {
-        showToast('上传速度限制范围：0-1000 Mbps', 'warning');
-        return;
-    }
-
-    var downloadKbps = Math.round(downloadMbps * 1000);
-    var uploadKbps = Math.round(uploadMbps * 1000);
-
-    setRateLimit(mac, downloadKbps, uploadKbps);
-    closeQoSModal();
-}
-
-function removeQoSRule() {
-    var mac = document.getElementById('qos-mac').value.trim();
-    if (!mac) return;
-
-    if (!confirm('确定要移除该设备的限速规则吗？')) return;
-
-    removeRateLimit(mac);
-    closeQoSModal();
 }
 
 // 统一MAC格式：大写带冒号（AA:BB:CC:DD:EE:FF），与后端 device_notes 存储格式一致
@@ -3327,7 +3167,11 @@ function kickDevice(mac, device) {
 
                 // 后台刷新完整数据（所有视图）
                 refreshAll();
-                loadBlockedDevices();
+
+                // 延迟加载屏蔽设备列表，等待服务器端更新
+                setTimeout(function() {
+                    loadBlockedDevices();
+                }, 2000);
             } else {
                 var errData = extractData(res) || res;
                 showToast('踢出失败：' + escapeHtml(errData.message || '未知错误'), 'error');
@@ -3535,7 +3379,6 @@ function renderDevices(devices, checkOnly) {
         var isWifi = isWifiDevice(dev);
         var kickBtn = '<button class="rm-kick-btn" onclick="kickDevice(\'' + escapeHtml(dev.mac) + '\', \'' + escapeHtml(dev.iface || '') + '\')">踢出</button>';
         var noteBtn = '<button class="rm-note-btn" onclick="openNoteModal(\'' + escapeHtml(dev.mac) + '\', \'' + escapeHtml(dev.hostname || '') + '\')" title="编辑备注">编辑</button>';
-        var qosBtn = '<button class="rm-qos-btn" onclick="openQoSModal(\'' + escapeHtml(dev.mac) + '\', \'' + escapeHtml(dev.hostname || '未知设备') + '\')" title="设备限速">限速</button>';
 
         var noteInfo = deviceNotes[normalizeMacKey(dev.mac)];
         var hostname = dev.hostname || 'Unknown';
@@ -3571,7 +3414,7 @@ function renderDevices(devices, checkOnly) {
             '<td style="text-align:center;"><span class="rm-badge ' + (isWifi ? 'rm-badge-wifi' : 'rm-badge-wired') + '">' +
             (isWifi ? 'WiFi' : '有线') + '</span></td>' +
             '<td style="text-align:center;">' + signalDisplay + '</td>' +
-            '<td style="text-align:center;"><div class="rm-action-cell">' + noteBtn + ' ' + qosBtn + ' ' + kickBtn + '</div></td>' +
+            '<td style="text-align:center;"><div class="rm-action-cell">' + noteBtn + ' ' + kickBtn + '</div></td>' +
             '</tr>';
     });
 
@@ -4116,7 +3959,7 @@ function renderStorageStatus(data) {
         showToast(changeMsg, data.previous_type === 'memory' ? 'info' : 'warning', 5000);
     }
 
-    if (data.tf_card && data.tf_card.exists) {
+    if (data.tf_card && data.tf_card.exists && data.tf_card.available > 0) {
         statusEl.className = 'rm-storage-status tf-card';
         iconEl.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>';
         var availGB = (data.tf_card.available / (1024 * 1024 * 1024)).toFixed(1);
@@ -4778,131 +4621,6 @@ function runDiagnose() {
     xhr.send(params);
 }
 
-// ============================================================
-// 设备限速（QoS）
-// ============================================================
-
-function loadRateLimits() {
-    var loading = document.getElementById('rate-limits-loading');
-    var empty = document.getElementById('rate-limits-empty');
-    var table = document.getElementById('rate-limits-table');
-
-    loading.style.display = 'block';
-    empty.style.display = 'none';
-    table.style.display = 'none';
-
-    var xhr = new XMLHttpRequest();
-    xhr.open('GET', '<%=luci.dispatcher.build_url("admin/status/router_assistant/get_rate_limits")%>', true);
-    xhr.timeout = 10000;
-
-    xhr.onload = function() {
-        loading.style.display = 'none';
-
-        if (xhr.status >= 200 && xhr.status < 300) {
-            try {
-                var res = JSON.parse(xhr.responseText);
-                if (res.code === 0 && res.data && res.data.limits) {
-                    var limits = res.data.limits;
-                    var keys = Object.keys(limits);
-
-                    if (keys.length === 0) {
-                        empty.style.display = 'block';
-                    } else {
-                        table.style.display = 'block';
-                        var tbody = document.getElementById('rate-limits-tbody');
-                        tbody.innerHTML = '';
-
-                        keys.forEach(function(key) {
-                            var item = limits[key];
-                            var tr = document.createElement('tr');
-                            tr.innerHTML = 
-                                '<td>' + escapeHtml(item.mac) + '</td>' +
-                                '<td>' + escapeHtml(item.mac) + '</td>' +
-                                '<td>' + (item.download_limit > 0 ? (item.download_limit / 1000).toFixed(1) + ' Mbps' : '不限') + '</td>' +
-                                '<td>' + (item.upload_limit > 0 ? (item.upload_limit / 1000).toFixed(1) + ' Mbps' : '不限') + '</td>' +
-                                '<td><span class="rm-status-badge ' + (item.enabled ? 'online' : 'offline') + '">' + (item.enabled ? '已启用' : '已禁用') + '</span></td>' +
-                                '<td><button class="rm-btn rm-btn-danger" onclick="removeRateLimit(\'' + escapeHtml(item.mac) + '\')">移除</button></td>';
-                            tbody.appendChild(tr);
-                        });
-                    }
-                } else {
-                    empty.style.display = 'block';
-                }
-            } catch (e) {
-                empty.style.display = 'block';
-            }
-        } else {
-            empty.style.display = 'block';
-        }
-    };
-
-    xhr.onerror = function() {
-        loading.style.display = 'none';
-        empty.style.display = 'block';
-    };
-
-    xhr.send();
-}
-
-function setRateLimit(mac, downloadKbps, uploadKbps) {
-    var params = 'mac=' + encodeURIComponent(mac) + 
-                 '&download_limit=' + encodeURIComponent(downloadKbps) + 
-                 '&upload_limit=' + encodeURIComponent(uploadKbps) + 
-                 '&enabled=true&token=' + encodeURIComponent(LUCI_TOKEN);
-
-    var xhr = new XMLHttpRequest();
-    xhr.open('POST', '<%=luci.dispatcher.build_url("admin/status/router_assistant/set_rate_limit")%>', true);
-    xhr.timeout = 10000;
-    xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
-
-    xhr.onload = function() {
-        if (xhr.status >= 200 && xhr.status < 300) {
-            try {
-                var res = JSON.parse(xhr.responseText);
-                if (res.code === 0) {
-                    showToast('限速设置已保存', 'success');
-                    loadRateLimits();
-                } else {
-                    showToast('设置失败: ' + (res.message || '未知错误'), 'error');
-                }
-            } catch (e) {
-                showToast('解析响应失败', 'error');
-            }
-        }
-    };
-
-    xhr.send(params);
-}
-
-function removeRateLimit(mac) {
-    if (!confirm('确定要移除该设备的限速规则吗？')) return;
-
-    var params = 'mac=' + encodeURIComponent(mac) + '&token=' + encodeURIComponent(LUCI_TOKEN);
-
-    var xhr = new XMLHttpRequest();
-    xhr.open('POST', '<%=luci.dispatcher.build_url("admin/status/router_assistant/remove_rate_limit")%>', true);
-    xhr.timeout = 10000;
-    xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
-
-    xhr.onload = function() {
-        if (xhr.status >= 200 && xhr.status < 300) {
-            try {
-                var res = JSON.parse(xhr.responseText);
-                if (res.code === 0) {
-                    showToast('限速规则已移除', 'success');
-                    loadRateLimits();
-                } else {
-                    showToast('移除失败: ' + (res.message || '未知错误'), 'error');
-                }
-            } catch (e) {
-                showToast('解析响应失败', 'error');
-            }
-        }
-    };
-
-    xhr.send(params);
-}
-
 function stopAllTimers() {
     if (mainRefreshTimer) { clearInterval(mainRefreshTimer); mainRefreshTimer = null; }
     if (timeTimer) { clearInterval(timeTimer); timeTimer = null; }
@@ -4968,7 +4686,6 @@ document.addEventListener('DOMContentLoaded', function() {
     loadStorageStatus();
     loadDeviceNotes();
     loadAlerts();
-    loadRateLimits();
     startRefresh();
 
     // 模态框事件冒泡控制：防止点击模态框内容时触发关闭

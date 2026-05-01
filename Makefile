@@ -1,7 +1,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-router-assistant
-PKG_VERSION:=1.0.8
+PKG_VERSION:=$(shell grep '"version"' $(CURDIR)/version.json 2>/dev/null | sed 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/' || echo "1.0.44")
 PKG_RELEASE:=1
 PKG_ARCH:=aarch64_cortex-a53
 PKG_CATEGORIES:=luci
@@ -36,28 +36,21 @@ define Package/luci-app-router-assistant/install
 	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/controller
 	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/view
 	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/model
-	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/ucode
 	$(INSTALL_DIR) $(1)/usr/libexec/router_assistant
 	$(INSTALL_DIR) $(1)/usr/share/router-assistant
-	$(INSTALL_DIR) $(1)/usr/lib/traffic_stats
-	$(INSTALL_DIR) $(1)/usr/lib/json
 	$(INSTALL_DIR) $(1)/etc/init.d
 	$(INSTALL_DIR) $(1)/www/lu-static
-	$(INSTALL_DIR) $(1)/usr/share/icons
 	$(INSTALL_DIR) $(1)/usr/share/luci/menu.d
 
 	$(CP) ./luasrc/controller/* $(1)/usr/lib/lua/luci/controller/
 	$(CP) ./luasrc/view/* $(1)/usr/lib/lua/luci/view/
 	$(CP) ./luasrc/model/* $(1)/usr/lib/lua/luci/model/
-	$(CP) ./luasrc/ucode/* $(1)/usr/lib/lua/luci/ucode/
 	$(CP) ./htdocs/* $(1)/www/lu-static/
 	$(CP) ./rootfs/* $(1)/
 	$(CP) ./scripts/collect_traffic.lua $(1)/usr/libexec/router_assistant/
 	chmod 755 $(1)/usr/libexec/router_assistant/collect_traffic.lua
 	$(CP) ./version.json $(1)/usr/share/router-assistant/
 	$(CP) ./luasrc/oui_database.json $(1)/usr/share/router-assistant/
-	$(CP) ./usr/lib/traffic_stats/* $(1)/usr/lib/traffic_stats/
-	$(CP) ./usr/lib/json.lua $(1)/usr/lib/json/
 	$(CP) ./etc/init.d/traffic-stats $(1)/etc/init.d/
 	$(CP) ./usr/share/luci/menu.d/* $(1)/usr/share/luci/menu.d/
 

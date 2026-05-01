@@ -8,15 +8,21 @@
                                 "/etc/hosts": [ "read" ],
                                 "/etc/ethers": [ "read" ],
                                 "/tmp/dhcp.leases": [ "read" ],
-                                "/usr/share/router-assistant/version.json": [ "read" ]
+                                "/usr/share/router-assistant/version.json": [ "read" ],
+                                "/usr/share/router-assistant/oui_database.json": [ "read" ]
                         },
                         "exec": {
                                 "/usr/bin/iw": [ "exec" ],
-                                "/usr/sbin/nmblookup": [ "exec" ],
                                 "/usr/sbin/iptables": [ "exec" ],
+                                "/usr/sbin/ip6tables": [ "exec" ],
+                                "/usr/bin/ipset": [ "exec" ],
+                                "/usr/bin/hostapd_cli": [ "exec" ],
+                                "/usr/sbin/ebtables": [ "exec" ],
+                                "/usr/bin/conntrack": [ "exec" ],
                                 "/usr/bin/curl": [ "exec" ],
-                                "/usr/lib/traffic_stats/collect.lua": [ "exec" ],
-                                "/usr/lib/traffic_stats/store.lua": [ "exec" ]
+                                "/usr/bin/ip": [ "exec" ],
+                                "/usr/bin/homebox": [ "exec" ],
+                                "/usr/libexec/router_assistant/collect_traffic.lua": [ "exec" ]
                         }
                 },
                 "write": {
@@ -26,6 +32,9 @@
                         },
                         "exec": {
                                 "/usr/sbin/iptables": [ "exec" ],
+                                "/usr/sbin/ip6tables": [ "exec" ],
+                                "/usr/bin/ipset": [ "exec" ],
+                                "/usr/bin/conntrack": [ "exec" ],
                                 "/etc/init.d/traffic-stats": [ "exec" ]
                         }
                 }

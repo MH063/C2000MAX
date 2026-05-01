@@ -502,7 +502,8 @@ local CMD_TIMEOUT = 5
 local _has_timeout = nil
 local function has_timeout_cmd()
     if _has_timeout == nil then
-        _has_timeout = (os.execute("which timeout >/dev/null 2>&1") == 0)
+        local ret = luci.sys.exec("which timeout >/dev/null 2>&1") or ""
+        _has_timeout = (ret == "")
     end
     return _has_timeout
 end
@@ -521,7 +522,7 @@ local function safe_exec_command(cmd_name, args, timeout)
     else
         full_cmd = cmd_name .. " " .. (args or "") .. " >/dev/null 2>&1 &"
     end
-    return os.execute(full_cmd)
+    return luci.sys.exec(full_cmd)
 end
 
 -- 带超时的popen执行（仅用于需要读取输出的场景）
@@ -576,7 +577,7 @@ local function exec_background(cmd_name, args)
     -- 使用白名单 + 参数转义防止命令注入
     local safe_args = shell_escape(args or "")
     local cmd = "nohup " .. cmd_name .. " " .. safe_args .. " >/dev/null 2>&1 &"
-    os.execute(cmd)
+    luci.sys.exec(cmd)
     return true
 end
 
@@ -585,15 +586,25 @@ end
 local function safe_os_execute(cmd, timeout_sec)
     local t = timeout_sec or CMD_TIMEOUT
     if has_timeout_cmd() then
-        return os.execute("timeout " .. t .. " " .. cmd)
+        return luci.sys.exec("timeout " .. t .. " " .. cmd .. " 2>&1")
     else
-        -- 无timeout命令时记录警告但不阻止执行
         pcall(function()
             local nixio = require("nixio")
             nixio.syslog("warning", "[RouterAssistant] no timeout command, running without protection: " .. tostring(t))
         end)
-        return os.execute(cmd)
+        return luci.sys.exec(cmd .. " 2>&1")
     end
+end
+
+-- 【关键修复】真正非阻塞的后台执行函数
+-- 使用 os.execute 而不是 luci.sys.exec，确保后台进程不会被父进程等待
+-- luci.sys.exec 使用 io.popen，会等待管道关闭，可能导致后台命令被阻塞
+local function exec_background_nowait(cmd)
+    local nixio = require("nixio")
+    nixio.syslog("info", "[RouterAssistant] exec_background_nowait: " .. cmd)
+    -- os.execute 对于后台命令（带 &）会立即返回，不会等待子进程
+    local result = os.execute(cmd)
+    return result == 0 or result == true
 end
 
 -- 统一错误响应格式（不暴露敏感信息）
@@ -675,11 +686,6 @@ function index()
 
     -- 网络诊断工具
     entry({"admin", "status", "router_assistant", "network_diagnose"}, post("api_network_diagnose")).leaf = true
-
-    -- 设备限速（QoS）
-    entry({"admin", "status", "router_assistant", "get_rate_limits"}, call("api_get_rate_limits")).leaf = true
-    entry({"admin", "status", "router_assistant", "set_rate_limit"}, post("api_set_rate_limit")).leaf = true
-    entry({"admin", "status", "router_assistant", "remove_rate_limit"}, post("api_remove_rate_limit")).leaf = true
 end
 
 -- 缓存：所有无线接口的关联客户端 MAC 集合（无冒号大写格式）
@@ -3554,11 +3560,13 @@ function api_kick_device()
     end
 
     local mac_lower = mac_colon:lower()
+    local mac_no_colon = safe_mac
     local mac_no_colon_lower = safe_mac:lower()
 
     -- 先获取设备信息（快速操作，不会阻塞）
     local device_ip = ""
     local device_hostname = "未知设备"
+    local safe_device_ip = nil
 
     local ok_info, err_info = pcall(function()
         local leases_file = io.open("/tmp/dhcp.leases", "r")
@@ -3596,7 +3604,6 @@ function api_kick_device()
             end
         end
 
-        local safe_device_ip = nil
         if device_ip ~= "" then
             safe_device_ip = safe_ip_validate(device_ip)
             if not safe_device_ip then
@@ -3626,15 +3633,30 @@ function api_kick_device()
     local script_parts = {}
 
     -- 【最高优先级】iptables DROP 规则（最先执行，~0.5ms/条）
-    table.insert(script_parts, "iptables -I INPUT -m mac --mac-source " .. safe_mac_quoted .. " -j DROP 2>/dev/null")
-    table.insert(script_parts, "iptables -I FORWARD -m mac --mac-source " .. safe_mac_quoted .. " -j DROP 2>/dev/null")
+    -- 移除 2>/dev/null 以便错误信息能被记录到日志
+    table.insert(script_parts, "echo '[kick_device] Adding iptables DROP rules for MAC: " .. safe_mac_quoted .. "'")
+    table.insert(script_parts, "iptables -I INPUT -m mac --mac-source " .. safe_mac_quoted .. " -j DROP")
+    table.insert(script_parts, "iptables -I FORWARD -m mac --mac-source " .. safe_mac_quoted .. " -j DROP")
+    -- 同时添加 ip6tables 规则（阻止 IPv6 流量）
+    table.insert(script_parts, "ip6tables -I INPUT -m mac --mac-source " .. safe_mac_quoted .. " -j DROP 2>/dev/null || true")
+    table.insert(script_parts, "ip6tables -I FORWARD -m mac --mac-source " .. safe_mac_quoted .. " -j DROP 2>/dev/null || true")
+    table.insert(script_parts, "echo '[kick_device] iptables rules added, checking...'")
+    table.insert(script_parts, "iptables -L INPUT -n | grep -i 'MAC.*" .. mac_no_colon_lower .. "' || echo 'No INPUT rule found'")
+    table.insert(script_parts, "iptables -L FORWARD -n | grep -i 'MAC.*" .. mac_no_colon_lower .. "' || echo 'No FORWARD rule found'")
 
     -- 【高优先级】conntrack 清除已有连接（阻止残留流量）
     if safe_device_ip then
-        table.insert(script_parts, "conntrack -D -s " .. safe_ip_quoted .. " 2>/dev/null")
-        table.insert(script_parts, "conntrack -D -d " .. safe_ip_quoted .. " 2>/dev/null")
+        table.insert(script_parts, "echo '[kick_device] Clearing conntrack for IP: " .. safe_ip_quoted .. "'")
+        table.insert(script_parts, "conntrack -D -s " .. safe_ip_quoted .. " 2>/dev/null || true")
+        table.insert(script_parts, "conntrack -D -d " .. safe_ip_quoted .. " 2>/dev/null || true")
+        -- 清除 IPv6 conntrack
+        table.insert(script_parts, "conntrack -D -f ipv6 -s " .. safe_ip_quoted .. " 2>/dev/null || true")
+        table.insert(script_parts, "conntrack -D -f ipv6 -d " .. safe_ip_quoted .. " 2>/dev/null || true")
     end
-    table.insert(script_parts, "conntrack -D -m " .. mac_no_colon_lower .. " 2>/dev/null")
+    table.insert(script_parts, "conntrack -D -m " .. mac_no_colon_lower .. " 2>/dev/null || true")
+    -- 清除 flowtable 中的条目（FLOWOFFLOAD 硬件加速）
+    table.insert(script_parts, "echo '[kick_device] Clearing flowtable entries...'")
+    table.insert(script_parts, "echo 1 > /proc/sys/net/netfilter/nf_conntrack_tcp_loose 2>/dev/null || true")
 
     -- 【低优先级】iw 命令踢出无线连接（MTK驱动可能阻塞，timeout保护）
     local ifaces = {"ra0", "rai0", "ra1", "rai1", "apcli0", "apcli1"}
@@ -3673,16 +3695,18 @@ function api_kick_device()
     if sfd then
         sfd:write(script_content .. "\n")
         sfd:close()
-        -- 【问题5修复】使用 safe_os_execute 添加超时保护
-        safe_os_execute("chmod +x '" .. script_file .. "' 2>/dev/null", 3)
-        safe_os_execute("nohup /bin/sh '" .. script_file .. "' >/dev/null 2>&1 &", 10)
-        safe_os_execute("(sleep 15 && rm -f '" .. script_file .. "') >/dev/null 2>&1 &", 20)
+        -- 【关键修复】使用 exec_background_nowait 确保后台执行不被阻塞
+        nixio.syslog("info", "[RouterAssistant] kick_device: script file created: " .. script_file)
+        nixio.syslog("info", "[RouterAssistant] kick_device: script content:\n" .. script_content)
+        os.execute("chmod +x '" .. script_file .. "'")
+        exec_background_nowait("nohup /bin/sh '" .. script_file .. "' >/tmp/router_assistant_kick.log 2>&1 &")
+        exec_background_nowait("(sleep 15 && rm -f '" .. script_file .. "') >/dev/null 2>&1 &")
     else
         -- 【问题4修复】fallback 路径：转义 cmd 中的单引号（防御深度）
         nixio.syslog("warning", "[RouterAssistant] kick_device: cannot write script file, using fallback for " .. mac_colon)
         for _, cmd in ipairs(script_parts) do
             local escaped_cmd = cmd:gsub("'", "'\\''")
-            safe_os_execute("nohup /bin/sh -c '" .. escaped_cmd .. "' >/dev/null 2>&1 &", 10)
+            exec_background_nowait("nohup /bin/sh -c '" .. escaped_cmd .. "' >/dev/null 2>&1 &")
         end
     end
 
@@ -3703,6 +3727,7 @@ function api_kick_device()
 end
 
 function api_enable_device()
+    local nixio = require("nixio")
     nixio.syslog("info", "[RouterAssistant] api_enable_device called")
 
     if not require_csrf_token() then
@@ -3712,7 +3737,6 @@ function api_enable_device()
 
     local http = require "luci.http"
     local util = require "luci.util"
-    local nixio = require("nixio")
 
     local mac = luci.http.formvalue("mac")
     nixio.syslog("info", "[RouterAssistant] enable_device mac=" .. tostring(mac))
@@ -3732,6 +3756,7 @@ function api_enable_device()
     end
 
     local mac_lower = mac_colon:lower()
+    local mac_no_colon = safe_mac
 
     nixio.syslog("info", "[RouterAssistant] enable_device validated, mac=" .. mac_colon)
 
@@ -3747,6 +3772,9 @@ function api_enable_device()
     -- 1. 删除 iptables 规则
     table.insert(script_parts, "iptables -D INPUT -m mac --mac-source " .. safe_mac_quoted .. " -j DROP 2>/dev/null || true")
     table.insert(script_parts, "iptables -D FORWARD -m mac --mac-source " .. safe_mac_quoted .. " -j DROP 2>/dev/null || true")
+    -- 同时删除 ip6tables 规则
+    table.insert(script_parts, "ip6tables -D INPUT -m mac --mac-source " .. safe_mac_quoted .. " -j DROP 2>/dev/null || true")
+    table.insert(script_parts, "ip6tables -D FORWARD -m mac --mac-source " .. safe_mac_quoted .. " -j DROP 2>/dev/null || true")
 
     -- 2. 仅删除指定 MAC 的 iptables 规则（不再按 OUI 批量清理，保持与添加操作对称）
     --[[ 已禁用 OUI 联动删除（避免误删其他同品牌设备）
@@ -3790,16 +3818,18 @@ function api_enable_device()
         sfd:write("#!/bin/sh\n")
         sfd:write(script_content .. "\n")
         sfd:close()
-        -- 【问题5修复】使用 safe_os_execute 添加超时保护
-        safe_os_execute("chmod +x '" .. script_file .. "' 2>/dev/null", 3)
-        safe_os_execute("nohup /bin/sh '" .. script_file .. "' >/dev/null 2>&1 &", 10)
-        safe_os_execute("(sleep 10 && rm -f '" .. script_file .. "') >/dev/null 2>&1 &", 15)
+        -- 【关键修复】使用 exec_background_nowait 确保后台执行不被阻塞
+        nixio.syslog("info", "[RouterAssistant] enable_device: script file created: " .. script_file)
+        nixio.syslog("info", "[RouterAssistant] enable_device: script content:\n" .. script_content)
+        os.execute("chmod +x '" .. script_file .. "'")
+        exec_background_nowait("nohup /bin/sh '" .. script_file .. "' >/tmp/router_assistant_enable.log 2>&1 &")
+        exec_background_nowait("(sleep 10 && rm -f '" .. script_file .. "') >/dev/null 2>&1 &")
     else
         -- 【问题4修复】fallback 路径：转义 cmd 中的单引号（防御深度）
         nixio.syslog("warning", "[RouterAssistant] enable_device: cannot write script file, using fallback for " .. mac_colon)
         for _, cmd in ipairs(script_parts) do
             local escaped_cmd = cmd:gsub("'", "'\\''")
-            safe_os_execute("nohup /bin/sh -c '" .. escaped_cmd .. "' >/dev/null 2>&1 &", 10)
+            exec_background_nowait("nohup /bin/sh -c '" .. escaped_cmd .. "' >/dev/null 2>&1 &")
         end
     end
 
@@ -3807,7 +3837,16 @@ function api_enable_device()
     pcall(remove_from_blocklist, mac_colon)
     _blocked_macs_cache = nil
     _blocked_macs_cache_time = 0
-    clear_blocked_macs_cache_file()  -- 清除缓存文件，确保其他进程同步
+    clear_blocked_macs_cache_file()
+
+    -- 写入调试日志
+    local dbg = io.open("/tmp/enable_device_debug.log", "a")
+    if dbg then
+        dbg:write("=== enable_device called ===\n")
+        dbg:write("mac_colon=" .. tostring(mac_colon) .. "\n")
+        dbg:write("safe_mac=" .. tostring(safe_mac) .. "\n")
+        dbg:close()
+    end
 
     nixio.syslog("info", "[RouterAssistant] enable_device completed (background tasks running)")
 
@@ -4006,18 +4045,24 @@ function api_get_storage_status()
     local ok, err = pcall(function()
         local util = require("luci.util")
 
-        local mount_output = util.exec("cat /proc/mounts 2>/dev/null | grep mmcblk0")
+        local mount_output = util.exec("cat /proc/mounts 2>/dev/null | grep -E 'mmcblk|sdcard|sd[a-z][0-9]'")
         if mount_output and mount_output ~= "" then
             result.tf_card.exists = true
 
             for line in mount_output:gmatch("[^\r\n]+") do
-                local mount_point = line:match("^/dev/mmcblk0p1%s+(/%S+)")
-                if mount_point then
-                    if mount_point ~= "/overlay" then
+                local device, mount_point = line:match("^(/dev/%S+)%s+(/%S+)")
+                if mount_point and device then
+                    if mount_point == "/tmp/storage/mmcblk0p1" then
                         result.tf_card.mount_point = mount_point
+                        result.tf_card.device = device
+                        break
+                    elseif mount_point ~= "/overlay" and mount_point ~= "/" then
+                        result.tf_card.mount_point = mount_point
+                        result.tf_card.device = device
                         break
                     elseif result.tf_card.mount_point == "" then
                         result.tf_card.mount_point = mount_point
+                        result.tf_card.device = device
                     end
                 end
             end
@@ -4025,16 +4070,20 @@ function api_get_storage_status()
             if result.tf_card.mount_point ~= "" then
                 local safe_mount = safe_path(result.tf_card.mount_point)
                 if safe_mount then
-                    local df_output = safe_exec_with_output("df", "-k " .. safe_mount .. " | tail -1")
+                    local util = require("luci.util")
+                    local df_output = util.exec("df -k '" .. safe_mount:gsub("'", "'\\''") .. "' 2>/dev/null | tail -1")
                     if df_output and df_output ~= "" then
                         local parts = {}
                         for part in df_output:gmatch("%S+") do
                             table.insert(parts, part)
                         end
                         if #parts >= 4 then
-                            result.tf_card.total = tonumber(parts[2]) * 1024
-                            result.tf_card.used = tonumber(parts[3]) * 1024
-                            result.tf_card.available = tonumber(parts[4]) * 1024
+                            result.tf_card.total = tonumber(parts[2]) or 0
+                            result.tf_card.used = tonumber(parts[3]) or 0
+                            result.tf_card.available = tonumber(parts[4]) or 0
+                            result.tf_card.total = result.tf_card.total * 1024
+                            result.tf_card.used = result.tf_card.used * 1024
+                            result.tf_card.available = result.tf_card.available * 1024
                             if result.tf_card.total > 0 then
                                 local percent = (result.tf_card.used / result.tf_card.total) * 100
                                 result.tf_card.percent = string.format("%.1f%%", percent)
@@ -4447,7 +4496,7 @@ local function start_homebox()
 
     local start_cmd = HOMEBOX_BIN .. " serve --port " .. tostring(HOMEBOX_PORT) .. 
                       " > " .. HOMEBOX_LOG_FILE .. " 2>&1 &"
-    os.execute(start_cmd)
+    luci.sys.exec(start_cmd)
     
     local pid_fd = io.popen("pgrep -f 'homebox.*serve' | head -1 2>/dev/null", "r")
     if pid_fd then
@@ -4467,7 +4516,7 @@ local function start_homebox()
         if is_homebox_running() then
             return true, "Homebox 启动成功"
         end
-        os.execute("sleep 1")
+        luci.sys.exec("sleep 1")
         waited = waited + 1
     end
 
@@ -4649,160 +4698,4 @@ function api_network_diagnose()
 
     luci.http.prepare_content("application/json")
     luci.http.write_json(success_response(result))
-end
-
--- ============================================================
--- 设备限速（QoS）
--- ============================================================
-
-local QOS_IFACE = "br-lan"
-local RATE_LIMIT_FILE = "/etc/router_assistant_rate_limits.json"
-
-local function load_rate_limits()
-    local fd = io.open(RATE_LIMIT_FILE, "r")
-    if fd then
-        local content = fd:read("*a")
-        fd:close()
-        if content and content ~= "" then
-            local json = require("luci.jsonc")
-            local ok, data = pcall(json.parse, content)
-            if ok and data then return data end
-        end
-    end
-    return {}
-end
-
-local function save_rate_limits(limits)
-    local json = require("luci.jsonc")
-    local content = json.stringify(limits) or "{}"
-    local fd = io.open(RATE_LIMIT_FILE, "w")
-    if fd then
-        fd:write(content)
-        fd:close()
-        return true
-    end
-    return false
-end
-
-local function apply_tc_rules(mac, download_kbps, upload_kbps)
-    local mac_no_colon = mac:gsub(":", ""):upper()
-    local download_classid = mac_no_colon:sub(1, 4)
-    local upload_classid = mac_no_colon:sub(1, 4)
-
-    luci.sys.exec("tc filter del dev " .. QOS_IFACE .. " parent 1: protocol ip pref 100 handle ::" .. download_classid .. " flowid 1:" .. download_classid .. " 2>/dev/null")
-    luci.sys.exec("tc filter del dev " .. QOS_IFACE .. " parent 2: protocol ip pref 100 handle ::" .. upload_classid .. " flowid 2:" .. upload_classid .. " 2>/dev/null")
-
-    if download_kbps > 0 then
-        local class_cmd = "tc class add dev " .. QOS_IFACE .. " parent 1: classid 1:" .. download_classid .. " htb rate " .. download_kbps .. "kbit ceil " .. download_kbps .. "kbit"
-        local ret = luci.sys.exec(class_cmd .. " 2>&1") or ""
-        if ret:match("File exists") or ret ~= "" then
-            luci.sys.exec("tc class change dev " .. QOS_IFACE .. " parent 1: classid 1:" .. download_classid .. " htb rate " .. download_kbps .. "kbit ceil " .. download_kbps .. "kbit 2>/dev/null")
-        end
-        luci.sys.exec("tc filter add dev " .. QOS_IFACE .. " parent 1: protocol ip prio 5 u32 match ip dst 0.0.0.0/0 match ether dst " .. mac .. " flowid 1:" .. download_classid .. " 2>/dev/null")
-    end
-
-    if upload_kbps > 0 then
-        local class_cmd = "tc class add dev " .. QOS_IFACE .. " parent 2: classid 2:" .. upload_classid .. " htb rate " .. upload_kbps .. "kbit ceil " .. upload_kbps .. "kbit"
-        local ret = luci.sys.exec(class_cmd .. " 2>&1") or ""
-        if ret:match("File exists") or ret ~= "" then
-            luci.sys.exec("tc class change dev " .. QOS_IFACE .. " parent 2: classid 2:" .. upload_classid .. " htb rate " .. upload_kbps .. "kbit ceil " .. upload_kbps .. "kbit 2>/dev/null")
-        end
-        luci.sys.exec("tc filter add dev " .. QOS_IFACE .. " parent 2: protocol ip prio 5 u32 match ip src 0.0.0.0/0 match ether src " .. mac .. " flowid 2:" .. upload_classid .. " 2>/dev/null")
-    end
-
-    return true
-end
-
-local function init_qos()
-    luci.sys.exec("tc qdisc add dev " .. QOS_IFACE .. " root handle 1: htb default 10 2>/dev/null")
-    luci.sys.exec("tc class add dev " .. QOS_IFACE .. " parent 1: classid 1:10 htb rate 1000mbit 2>/dev/null")
-    luci.sys.exec("tc qdisc add dev " .. QOS_IFACE .. " parent 1:10 handle 10: sfq perturb 10 2>/dev/null")
-    luci.sys.exec("tc qdisc add dev " .. QOS_IFACE .. " root handle 2: htb default 20 2>/dev/null")
-    luci.sys.exec("tc class add dev " .. QOS_IFACE .. " parent 2: classid 2:20 htb rate 1000mbit 2>/dev/null")
-    luci.sys.exec("tc qdisc add dev " .. QOS_IFACE .. " parent 2:20 handle 20: sfq perturb 10 2>/dev/null")
-end
-
-function api_get_rate_limits()
-    collectgarbage("collect")
-    local limits = load_rate_limits()
-    luci.http.prepare_content("application/json")
-    luci.http.write_json(success_response({limits = limits}))
-end
-
-function api_set_rate_limit()
-    if not require_csrf_token() then return end
-    collectgarbage("collect")
-
-    local mac = luci.http.formvalue("mac") or ""
-    local download_limit = tonumber(luci.http.formvalue("download_limit")) or 0
-    local upload_limit = tonumber(luci.http.formvalue("upload_limit")) or 0
-    local enabled = luci.http.formvalue("enabled") == "true" or luci.http.formvalue("enabled") == "1"
-
-    local safe_mac = safe_mac_validate(mac)
-    if not safe_mac then
-        luci.http.prepare_content("application/json")
-        luci.http.write_json(error_response(-1, "无效的MAC地址"))
-        return
-    end
-
-    local mac_colon = format_mac_colon(safe_mac)
-    local limits = load_rate_limits()
-
-    if enabled and (download_limit > 0 or upload_limit > 0) then
-        limits[safe_mac] = {
-            mac = mac_colon,
-            download_limit = download_limit,
-            upload_limit = upload_limit,
-            enabled = true,
-            created_at = limits[safe_mac] and limits[safe_mac].created_at or os.time(),
-            updated_at = os.time()
-        }
-        init_qos()
-        apply_tc_rules(mac_colon, download_limit, upload_limit)
-    else
-        if limits[safe_mac] then
-            apply_tc_rules(mac_colon, 0, 0)
-        end
-        limits[safe_mac] = nil
-    end
-
-    save_rate_limits(limits)
-
-    luci.http.prepare_content("application/json")
-    luci.http.write_json(success_response({
-        mac = mac_colon,
-        download_limit = download_limit,
-        upload_limit = upload_limit,
-        enabled = enabled and (download_limit > 0 or upload_limit > 0),
-        message = "限速设置已保存"
-    }))
-end
-
-function api_remove_rate_limit()
-    if not require_csrf_token() then return end
-    collectgarbage("collect")
-
-    local mac = luci.http.formvalue("mac") or ""
-    local safe_mac = safe_mac_validate(mac)
-
-    if not safe_mac then
-        luci.http.prepare_content("application/json")
-        luci.http.write_json(error_response(-1, "无效的MAC地址"))
-        return
-    end
-
-    local mac_colon = format_mac_colon(safe_mac)
-    local limits = load_rate_limits()
-
-    if limits[safe_mac] then
-        apply_tc_rules(mac_colon, 0, 0)
-        limits[safe_mac] = nil
-        save_rate_limits(limits)
-    end
-
-    luci.http.prepare_content("application/json")
-    luci.http.write_json(success_response({
-        mac = mac_colon,
-        message = "限速规则已移除"
-    }))
 end
