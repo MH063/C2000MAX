@@ -49,6 +49,8 @@ define Package/luci-app-router-assistant/install
 	$(CP) ./rootfs/* $(1)/
 	$(CP) ./scripts/collect_traffic.lua $(1)/usr/libexec/router_assistant/
 	chmod 755 $(1)/usr/libexec/router_assistant/collect_traffic.lua
+	$(CP) ./scripts/timeout_aarch64 $(1)/usr/libexec/router_assistant/timeout
+	chmod 755 $(1)/usr/libexec/router_assistant/timeout
 	$(CP) ./version.json $(1)/usr/share/router-assistant/
 	$(CP) ./luasrc/oui_database.json $(1)/usr/share/router-assistant/
 	$(CP) ./etc/init.d/traffic-stats $(1)/etc/init.d/

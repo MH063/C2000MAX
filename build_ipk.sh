@@ -425,12 +425,6 @@ else
     echo "Warning: Homebox binary not found at $SCRIPT_DIR/usr/bin/homebox"
 fi
 
-mkdir -p "$PKG_DIR/data/usr/lib/traffic_stats"
-if [ -d "$SCRIPT_DIR/usr/lib/traffic_stats" ]; then
-    cp "$SCRIPT_DIR/usr/lib/traffic_stats/"*.lua "$PKG_DIR/data/usr/lib/traffic_stats/" 2>/dev/null || true
-    echo "Traffic stats scripts included"
-fi
-
 mkdir -p "$PKG_DIR/data/usr/libexec/router_assistant"
 if [ -f "$SCRIPT_DIR/scripts/collect_traffic.lua" ]; then
     cp "$SCRIPT_DIR/scripts/collect_traffic.lua" "$PKG_DIR/data/usr/libexec/router_assistant/"
@@ -438,6 +432,14 @@ if [ -f "$SCRIPT_DIR/scripts/collect_traffic.lua" ]; then
     echo "Collect traffic script included"
 else
     echo "Warning: collect_traffic.lua not found at $SCRIPT_DIR/scripts/collect_traffic.lua"
+fi
+
+if [ -f "$SCRIPT_DIR/scripts/timeout_aarch64" ]; then
+    cp "$SCRIPT_DIR/scripts/timeout_aarch64" "$PKG_DIR/data/usr/libexec/router_assistant/timeout"
+    chmod 755 "$PKG_DIR/data/usr/libexec/router_assistant/timeout"
+    echo "Timeout binary included"
+else
+    echo "Warning: timeout_aarch64 not found at $SCRIPT_DIR/scripts/timeout_aarch64"
 fi
 
 if [ -f "$SCRIPT_DIR/usr/share/icons/router_assistant.svg" ]; then

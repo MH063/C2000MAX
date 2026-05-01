@@ -5,6 +5,11 @@
 <meta name="format-detection" content="telephone=no">
 <meta name="mobile-web-app-capable" content="yes">
 
+<script>
+// 生产环境必须保持 false，禁止输出调试信息
+window.DEBUG_MODE = false;
+</script>
+
 <style>
     /* LuCI框架覆盖 - 确保移动端显示完整 */
     #maincontent, .main-content, .container, .cbi-map {
@@ -2463,8 +2468,8 @@ function loadVersion() {
                     var data = extractData(res);
                     var version = (data && data.version) || res.version || '1.0.0';
                     var author = (data && data.author) || res.author || 'MH';
-                    document.getElementById('version-info').innerHTML =
-                        '路由管家 v' + version + ' | 作者：' + author;
+                    var versionInfo = document.getElementById('version-info');
+                    versionInfo.textContent = '路由管家 v' + version + ' | 作者：' + author;
                 }
             } catch (e) {
                 if (window.DEBUG_MODE) console.error('[loadVersion] 版本加载失败:', e);
@@ -3402,7 +3407,7 @@ function renderDevices(devices, checkOnly) {
                              dev.signal >= -90 ? 'rm-signal-fair' :
                              dev.signal >= -100 ? 'rm-signal-normal' :
                              dev.signal >= -110 ? 'rm-signal-weak' : 'rm-signal-poor';
-            signalDisplay = '<span class="' + signalClass + '">' + dev.signal + ' dBm</span>';
+            signalDisplay = '<span class="' + signalClass + '">' + escapeHtml(dev.signal) + ' dBm</span>';
         }
 
         html += '<tr>' +
@@ -3973,7 +3978,7 @@ function renderStorageStatus(data) {
         statusEl.className = 'rm-storage-status memory';
         // 内存存储图标 - 更专业的设计
         iconEl.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M8 9h8" stroke-width="1.5"/><path d="M8 12h8" stroke-width="1.5"/><path d="M8 15h5" stroke-width="1.5"/></svg>';
-        textEl.innerHTML = '内存存储（重启丢失）';
+        textEl.textContent = '内存存储（重启丢失）';
     }
 }
 
@@ -4389,25 +4394,41 @@ function loadWifiStatus() {
     safeXHR(
         '<%=luci.dispatcher.build_url("admin/status/router_assistant/get_wifi_status")%>',
         function(res) {
+            console.log('[loadWifiStatus] response:', res);
             if (res.code === 0) {
                 var data = extractData(res);
+                console.log('[loadWifiStatus] extracted data:', data);
                 var wifiStatus = (data && data.wifi_status) || res.wifi_status;
-                if (wifiStatus) {
+                console.log('[loadWifiStatus] wifiStatus:', wifiStatus);
+                if (wifiStatus && wifiStatus.length > 0) {
                     renderWifiStatus(wifiStatus);
+                } else {
+                    console.warn('[loadWifiStatus] no wifi status data available');
                 }
+            } else {
+                console.error('[loadWifiStatus] API error:', res);
             }
         },
-        function(error) {}
+        function(error) {
+            console.error('[loadWifiStatus] request failed:', error);
+        }
     );
 }
 
 function renderWifiStatus(statusList) {
-    if (!statusList || statusList.length === 0) return;
+    console.log('[renderWifiStatus] input:', statusList);
+    if (!statusList || statusList.length === 0) {
+        console.warn('[renderWifiStatus] empty status list');
+        return;
+    }
 
     var validWifiList = statusList.filter(function(status) {
-        return status.ssid && status.ssid !== '-' && status.ssid !== '';
+        var isValid = status.ssid && status.ssid !== '-' && status.ssid !== '';
+        console.log('[renderWifiStatus] filtering:', status.iface, '|', status.ssid, '|', status.status, '->', isValid);
+        return isValid;
     });
 
+    console.log('[renderWifiStatus] valid count:', validWifiList.length, 'total:', statusList.length);
     wifiStatusData = validWifiList;
 
     var grid = document.getElementById('wifi-info-grid');
@@ -4415,9 +4436,13 @@ function renderWifiStatus(statusList) {
     var selector = document.getElementById('wifi-selector');
 
     if (selector) {
-        selector.innerHTML = '';
+        selector.textContent = '';
         if (validWifiList.length === 0) {
-            selector.innerHTML = '<span style="color:var(--text-secondary);font-size:12px;">暂无启用的WiFi网络</span>';
+            var emptySpan = document.createElement('span');
+            emptySpan.style.color = 'var(--text-secondary)';
+            emptySpan.style.fontSize = '12px';
+            emptySpan.textContent = '暂无启用的WiFi网络';
+            selector.appendChild(emptySpan);
         } else {
             validWifiList.forEach(function(status, index) {
                 var btn = document.createElement('button');

@@ -111,8 +111,10 @@ function M.get_traffic_stats()
     local f = io.popen("ipset list " .. ipset_rx .. " 2>/dev/null")
     if f then
         for line in f:lines() do
-            local mac, packets, bytes = line:match("(%S+) packets:(%d+) bytes:(%d+)")
+            -- ipset list 输出格式: AA:BB:CC:DD:EE:FF packets:123 bytes:45678
+            local mac, packets, bytes = line:match("([%x%x:%-]+)%s+packets:(%d+)%s+bytes:(%d+)")
             if mac and packets and bytes then
+                mac = mac:upper()
                 stats[mac] = stats[mac] or {}
                 stats[mac].rx_packets = tonumber(packets)
                 stats[mac].rx_bytes = tonumber(bytes)

@@ -498,14 +498,39 @@ local ALLOWED_COMMANDS = {
 -- 默认命令超时（秒），防止命令阻塞导致502
 local CMD_TIMEOUT = 5
 
--- 检测timeout命令是否可用（BusyBox通常包含，某些精简固件可能没有）
+-- 检测timeout命令是否可用
+-- 优先使用系统timeout，如果没有则使用插件内置的timeout
 local _has_timeout = nil
+local _timeout_path = nil
 local function has_timeout_cmd()
     if _has_timeout == nil then
-        local ret = luci.sys.exec("which timeout >/dev/null 2>&1") or ""
-        _has_timeout = (ret == "")
+        -- 1. 检查系统是否有 timeout 命令
+        local ret = luci.sys.exec("which timeout 2>/dev/null") or ""
+        if ret ~= "" and ret:match("timeout") then
+            _has_timeout = true
+            _timeout_path = "timeout"
+        else
+            -- 2. 检查插件内置的 timeout
+            local plugin_timeout = "/usr/libexec/router_assistant/timeout"
+            local fd = io.open(plugin_timeout, "r")
+            if fd then
+                fd:close()
+                _has_timeout = true
+                _timeout_path = plugin_timeout
+            else
+                _has_timeout = false
+                _timeout_path = nil
+                nixio.syslog("warning", "[RouterAssistant] timeout command not found, network diagnose may hang without timeout protection")
+            end
+        end
     end
     return _has_timeout
+end
+
+-- 获取 timeout 命令路径（系统命令或插件内置）
+local function get_timeout_cmd()
+    has_timeout_cmd() -- 确保已初始化
+    return _timeout_path
 end
 
 -- 非阻塞式执行命令（只执行不管结果，避免popen阻塞）
@@ -516,9 +541,10 @@ local function safe_exec_command(cmd_name, args, timeout)
     end
     
     local full_cmd
-    if has_timeout_cmd() then
+    local timeout_cmd = get_timeout_cmd()
+    if timeout_cmd then
         local t = timeout or CMD_TIMEOUT
-        full_cmd = "timeout " .. t .. " " .. cmd_name .. " " .. (args or "") .. " >/dev/null 2>&1 &"
+        full_cmd = timeout_cmd .. " " .. t .. " " .. cmd_name .. " " .. (args or "") .. " >/dev/null 2>&1 &"
     else
         full_cmd = cmd_name .. " " .. (args or "") .. " >/dev/null 2>&1 &"
     end
@@ -534,8 +560,9 @@ local function safe_exec_with_output(cmd_name, args, timeout)
     
     local t = timeout or CMD_TIMEOUT
     local full_cmd
-    if has_timeout_cmd() then
-        full_cmd = "timeout " .. t .. " " .. cmd_name .. " " .. (args or "") .. " 2>/dev/null"
+    local timeout_cmd = get_timeout_cmd()
+    if timeout_cmd then
+        full_cmd = timeout_cmd .. " " .. t .. " " .. cmd_name .. " " .. (args or "") .. " 2>/dev/null"
     else
         full_cmd = cmd_name .. " " .. (args or "") .. " 2>/dev/null"
     end
@@ -585,8 +612,9 @@ end
 -- 确保所有后台命令都有超时保护，防止命令阻塞导致502
 local function safe_os_execute(cmd, timeout_sec)
     local t = timeout_sec or CMD_TIMEOUT
-    if has_timeout_cmd() then
-        return luci.sys.exec("timeout " .. t .. " " .. cmd .. " 2>&1")
+    local timeout_cmd = get_timeout_cmd()
+    if timeout_cmd then
+        return luci.sys.exec(timeout_cmd .. " " .. t .. " " .. cmd .. " 2>&1")
     else
         pcall(function()
             local nixio = require("nixio")
@@ -681,7 +709,6 @@ function index()
     entry({"admin", "status", "router_assistant", "delete_alert"}, post("api_delete_alert")).leaf = true
     entry({"admin", "status", "router_assistant", "speed_test"}, post("api_speed_test")).leaf = true
     entry({"admin", "status", "router_assistant", "speed_test_status"}, call("api_speed_test_status")).leaf = true
-    entry({"admin", "status", "router_assistant", "collect_traffic"}, call("api_collect_traffic")).leaf = true
     entry({"admin", "status", "router_assistant", "create_monthly_snapshot"}, call("api_create_monthly_snapshot")).leaf = true
 
     -- 网络诊断工具
@@ -918,7 +945,7 @@ local function get_ipset_traffic(mac_colon, ip, ipv6_list)
         end
     end
     -- IPv6 邻居表映射
-    local neigh6_output = util.exec("timeout 3 ip -6 neigh show 2>/dev/null")
+    local neigh6_output = util.exec("ip -6 neigh show 2>/dev/null")
     if neigh6_output then
         for line in neigh6_output:gmatch("[^\r\n]+") do
             local neigh_ip, neigh_mac = line:match("^([0-9a-fA-F:.]+)%s+lladdr%s+(%x%x:%x%x:%x%x:%x%x:%x%x:%x%x)")
@@ -1038,7 +1065,7 @@ local function get_batch_data()
     end
 
     batch.neigh6_table = {}
-    local neigh6_output = util.exec("timeout 3 ip -6 neigh show 2>/dev/null")
+    local neigh6_output = util.exec("ip -6 neigh show 2>/dev/null")
     if neigh6_output then
         for line in neigh6_output:gmatch("[^\r\n]+") do
             local neigh_ip, neigh_mac = line:match("^([0-9a-fA-F:.]+)%s+lladdr%s+(%x%x:%x%x:%x%x:%x%x:%x%x:%x%x)")
@@ -1626,7 +1653,7 @@ end
 local function load_ipv6_neighbors()
     local neighbors = {}
     -- 使用timeout命令限制执行时间，避免被攻击或表过大时永久阻塞
-    local fd = io.popen("timeout 3 ip -6 neigh show 2>/dev/null")
+    local fd = io.popen("ip -6 neigh show 2>/dev/null")
     if fd then
         local start_time = os.time()
         local max_wait = 4  -- 最多等待4秒
@@ -3223,17 +3250,6 @@ function api_delete_device_note()
     luci.http.write_json(result)
 end
 
--- DEPRECATED: collect.lua 已废弃，流量采集已完全由 ubus 接管
--- 此API仅作向后兼容保留，实际无任何作用
-function api_collect_traffic()
-    if not require_csrf_token() then return end
-    -- 直接返回成功，因为流量采集现在完全由 api_get_traffic 在每次调用时自动完成
-    -- 不再需要独立的采集进程
-    local result = {code = 0, message = "流量采集已由系统自动完成，无需手动采集"}
-    luci.http.prepare_content("application/json")
-    luci.http.write_json(result)
-end
-
 function api_get_alerts()
     local result = {code = 0, global_threshold = 0, color_levels = {warning = 50, danger = 80, critical = 100}}
     local ok, err = pcall(function()
@@ -3393,13 +3409,53 @@ function api_get_wifi_status()
                     end
                 end
                 
-                -- 解析信道和频率: "Channel: 12 (2.467 GHz)" 或 "Channel: 64 (5.320 GHz)"
-                local channel_line = iwinfo_output:match("Channel:%s*([^\n]+)")
-                if channel_line then
-                    local ch, freq = channel_line:match("(%d+)%s*%(([%d%.]+)%s*GHz%)")
-                    if ch then status.channel = ch end
-                    if freq then
-                        status.frequency = freq .. " GHz"
+                -- 优先从 iw dev 获取真实的信道和频率
+                local iw_dev_info = sys.exec("iw dev " .. safe_ifname_val .. " info 2>/dev/null")
+                local real_channel, real_freq_mhz = nil, nil
+                
+                if iw_dev_info and iw_dev_info ~= "" then
+                    -- 解析格式: "channel 64 (5320 MHz), width: 160 MHz"
+                    real_channel = iw_dev_info:match("channel%s+(%d+)")
+                    real_freq_mhz = iw_dev_info:match("%((%d+)%s*MHz%)")
+                end
+                
+                if real_channel and real_freq_mhz then
+                    -- 从 iw dev 获取到真实值
+                    status.channel = real_channel
+                    status.frequency = string.format("%.3f GHz", tonumber(real_freq_mhz) / 1000)
+                else
+                    -- iw dev 获取不到，从 UCI 配置获取
+                    local uci_channel = uci:get("wireless", device, "channel")
+                    if uci_channel and uci_channel ~= "" and uci_channel ~= "auto" then
+                        status.channel = uci_channel
+                        -- 根据信道计算频率
+                        local ch_num = tonumber(uci_channel)
+                        if ch_num then
+                            if ch_num >= 1 and ch_num <= 14 then
+                                -- 2.4GHz 频段
+                                local freq_map = {
+                                    [1] = 2.412, [2] = 2.417, [3] = 2.422, [4] = 2.427,
+                                    [5] = 2.432, [6] = 2.437, [7] = 2.442, [8] = 2.447,
+                                    [9] = 2.452, [10] = 2.457, [11] = 2.462, [12] = 2.467,
+                                    [13] = 2.472, [14] = 2.484
+                                }
+                                status.frequency = (freq_map[ch_num] or 2.412) .. " GHz"
+                            elseif ch_num >= 36 and ch_num <= 165 then
+                                -- 5GHz 频段
+                                local freq_5g = 5.000 + (ch_num - 36) * 0.005
+                                status.frequency = string.format("%.3f GHz", freq_5g)
+                            end
+                        end
+                    else
+                        -- UCI也没有配置，从iwinfo获取
+                        local channel_line = iwinfo_output:match("Channel:%s*([^\n]+)")
+                        if channel_line then
+                            local ch, freq = channel_line:match("(%d+)%s*%(([%d%.]+)%s*GHz%)")
+                            if ch then status.channel = ch end
+                            if freq then
+                                status.frequency = freq .. " GHz"
+                            end
+                        end
                     end
                 end
 
@@ -3661,11 +3717,12 @@ function api_kick_device()
     -- 【低优先级】iw 命令踢出无线连接（MTK驱动可能阻塞，timeout保护）
     local ifaces = {"ra0", "rai0", "ra1", "rai1", "apcli0", "apcli1"}
     for _, iface in ipairs(ifaces) do
-        table.insert(script_parts, "timeout 3 iw dev " .. iface .. " station del " .. safe_mac_colon_quoted .. " 2>/dev/null || true")
+        table.insert(script_parts, "iw dev " .. iface .. " station del " .. safe_mac_colon_quoted .. " 2>/dev/null || true")
     end
 
     -- 【低优先级】access_ctl.sh ACL黑名单（如果存在）
-    table.insert(script_parts, "if [ -x /usr/bin/access_ctl.sh ]; then timeout 5 access_ctl.sh -m " .. safe_mac_lower_quoted .. " -a 0 2>/dev/null || true; fi")
+    local timeout_cmd = get_timeout_cmd() or ""
+    table.insert(script_parts, "if [ -x /usr/bin/access_ctl.sh ]; then " .. timeout_cmd .. " 5 access_ctl.sh -m " .. safe_mac_lower_quoted .. " -a 0 2>/dev/null || true; fi")
 
     -- 写入脚本并后台执行（按顺序：iptables→conntrack→iw→access_ctl）
     -- 先写入黑名单文件（同步操作，成功后才执行 iptables）
@@ -3800,7 +3857,8 @@ function api_enable_device()
     ]]
 
     -- 3. access_ctl.sh 恢复（如果存在）
-    table.insert(script_parts, "if [ -x /usr/bin/access_ctl.sh ]; then timeout 5 access_ctl.sh -m " .. safe_mac_lower_quoted .. " -a 1 2>/dev/null || true; fi")
+    local timeout_cmd = get_timeout_cmd() or ""
+    table.insert(script_parts, "if [ -x /usr/bin/access_ctl.sh ]; then " .. timeout_cmd .. " 5 access_ctl.sh -m " .. safe_mac_lower_quoted .. " -a 1 2>/dev/null || true; fi")
 
     -- 将所有操作写入临时脚本并后台执行（使用 MAC 唯一定位，避免并发覆盖）
     local script_content = table.concat(script_parts, "\n")
@@ -4662,22 +4720,26 @@ function api_network_diagnose()
 
     local cmd = ""
     local ok, err = pcall(function()
+        local timeout_cmd = get_timeout_cmd()
+        local timeout_prefix = timeout_cmd and (timeout_cmd .. " " .. DIAGNOSE_TIMEOUT .. " ") or ""
+        
         if diagnose_type == "ping" then
-            cmd = "timeout " .. DIAGNOSE_TIMEOUT .. " ping -c " .. count .. " -W 2 '" .. safe_target .. "' 2>&1"
+            cmd = timeout_prefix .. "ping -c " .. count .. " -W 2 '" .. safe_target .. "' 2>&1"
         elseif diagnose_type == "traceroute" then
+            local traceroute_timeout = timeout_cmd and (timeout_cmd .. " " .. (DIAGNOSE_TIMEOUT * 2) .. " ") or ""
             if luci.sys.exec("which traceroute 2>/dev/null | wc -l"):gsub("%s+", "") == "1" then
-                cmd = "timeout " .. (DIAGNOSE_TIMEOUT * 2) .. " traceroute -m 20 '" .. safe_target .. "' 2>&1"
+                cmd = traceroute_timeout .. "traceroute -m 20 '" .. safe_target .. "' 2>&1"
             else
-                cmd = "timeout " .. (DIAGNOSE_TIMEOUT * 2) .. " traceroute -m 20 '" .. safe_target .. "' 2>&1"
+                cmd = traceroute_timeout .. "traceroute -m 20 '" .. safe_target .. "' 2>&1"
             end
         elseif diagnose_type == "dns" then
-            cmd = "timeout " .. DIAGNOSE_TIMEOUT .. " nslookup '" .. safe_target .. "' 2>&1 || timeout " .. DIAGNOSE_TIMEOUT .. " dig '" .. safe_target .. "' +short 2>&1"
+            cmd = timeout_prefix .. "nslookup '" .. safe_target .. "' 2>&1 || " .. timeout_prefix .. "dig '" .. safe_target .. "' +short 2>&1"
         elseif diagnose_type == "port" then
             if port < 1 or port > 65535 then
                 result.output = "错误：端口号必须在 1-65535 范围内"
                 result.success = false
             else
-                cmd = "timeout " .. DIAGNOSE_TIMEOUT .. " nc -zv -w 3 '" .. safe_target .. "' " .. port .. " 2>&1 || echo '端口 " .. port .. " 不可达'"
+                cmd = timeout_prefix .. "nc -zv -w 3 '" .. safe_target .. "' " .. port .. " 2>&1 || echo '端口 " .. port .. " 不可达'"
             end
         else
             result.output = "错误：不支持的诊断类型"
