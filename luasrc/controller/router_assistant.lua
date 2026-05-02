@@ -32,6 +32,11 @@ MAX_DAILY_RECORDS = 30
 -- 修复问题6：限制流量历史中的设备条目数，避免文件无限增长
 MAX_TRAFFIC_DEVICES = 200
 
+-- 实时网速监控常量
+REALTIME_SPEED_FILE = "realtime_speed.json"
+MAX_REALTIME_POINTS = 120  -- 保留最近120个数据点（约2分钟，每秒采集一次）
+REALTIME_SPEED_CACHE_TTL = 1  -- 实时网速缓存1秒
+
 -- Homebox 配置
 HOMEBOX_BIN = "/usr/bin/homebox"
 HOMEBOX_PORT = 3300
@@ -49,6 +54,11 @@ local BLOCKED_MACS_CACHE_FILE = "/tmp/router_assistant/blocked_macs_cache.json"
 local BLOCKED_MACS_CACHE_TTL = 30  -- 缓存有效期30秒
 _blocked_macs_cache = nil  -- 进程内缓存（请求内复用）
 _blocked_macs_cache_time = 0
+
+-- 实时网速缓存（文件缓存，跨进程共享）
+local REALTIME_SPEED_CACHE_FILE = "/tmp/router_assistant/realtime_speed_cache.json"
+_realtime_speed_cache = nil  -- 进程内缓存
+_realtime_speed_cache_time = 0
 
 -- 从文件加载缓存
 local function load_blocked_macs_cache_from_file()
@@ -713,6 +723,34 @@ function index()
 
     -- 网络诊断工具
     entry({"admin", "status", "router_assistant", "network_diagnose"}, post("api_network_diagnose")).leaf = true
+
+    -- 安全中心功能
+    entry({"admin", "status", "router_assistant", "get_security_overview"}, call("api_get_security_overview")).leaf = true
+    entry({"admin", "status", "router_assistant", "get_mac_vendor"}, call("api_get_mac_vendor")).leaf = true
+    entry({"admin", "status", "router_assistant", "get_device_fingerprint"}, call("api_get_device_fingerprint")).leaf = true
+    entry({"admin", "status", "router_assistant", "get_arp_spoof_detection"}, call("api_get_arp_spoof_detection")).leaf = true
+    entry({"admin", "status", "router_assistant", "get_arp_alert_history"}, call("api_get_arp_alert_history")).leaf = true
+    entry({"admin", "status", "router_assistant", "handle_arp_alert"}, post("api_handle_arp_alert")).leaf = true
+    entry({"admin", "status", "router_assistant", "clear_arp_history"}, post("api_clear_arp_history")).leaf = true
+    entry({"admin", "status", "router_assistant", "get_port_scan_detection"}, call("api_get_port_scan_detection")).leaf = true
+    entry({"admin", "status", "router_assistant", "start_port_scan"}, post("api_start_port_scan")).leaf = true
+    entry({"admin", "status", "router_assistant", "get_port_scan_history"}, call("api_get_port_scan_history")).leaf = true
+    entry({"admin", "status", "router_assistant", "handle_port_scan_alert"}, post("api_handle_port_scan_alert")).leaf = true
+    entry({"admin", "status", "router_assistant", "refresh_security_data"}, post("api_refresh_security_data")).leaf = true
+    entry({"admin", "status", "router_assistant", "add_security_whitelist"}, post("api_add_security_whitelist")).leaf = true
+    entry({"admin", "status", "router_assistant", "remove_security_whitelist"}, post("api_remove_security_whitelist")).leaf = true
+    entry({"admin", "status", "router_assistant", "get_security_whitelist"}, call("api_get_security_whitelist")).leaf = true
+    
+    -- 网络安全检测
+    entry({"admin", "status", "router_assistant", "check_open_ports"}, call("api_check_open_ports")).leaf = true
+    entry({"admin", "status", "router_assistant", "check_dns_hijack"}, call("api_check_dns_hijack")).leaf = true
+    entry({"admin", "status", "router_assistant", "check_weak_passwords"}, call("api_check_weak_passwords")).leaf = true
+    entry({"admin", "status", "router_assistant", "run_security_scan"}, post("api_run_security_scan")).leaf = true
+    
+    -- 自定义OUI数据库管理
+    entry({"admin", "status", "router_assistant", "get_custom_oui"}, call("api_get_custom_oui")).leaf = true
+    entry({"admin", "status", "router_assistant", "add_custom_oui"}, post("api_add_custom_oui")).leaf = true
+    entry({"admin", "status", "router_assistant", "remove_custom_oui"}, post("api_remove_custom_oui")).leaf = true
 end
 
 -- 缓存：所有无线接口的关联客户端 MAC 集合（无冒号大写格式）
@@ -1563,30 +1601,69 @@ local function get_device_type(hostname, mac, is_wifi)
 
     local h = hostname:lower()
 
-    if h:match("ipad") or h:match("pad") or h:match("tab") or h:match("平板") then
+    -- 手机识别：iPhone, Android, 小米, 华为, OPPO, vivo, Redmi, 三星, 荣耀等
+    if h:match("iphone") or h:match("android") or h:match("redmi") or h:match("xiaomi") or 
+       h:match("huawei") or h:match("honor") or h:match("oppo") or h:match("vivo") or
+       h:match("samsung") or h:match("galaxy") or h:match("oneplus") or h:match("realme") or
+       h:match("meizu") or h:match("zte") or h:match("nubia") or h:match("motorola") or
+       h:match("lenovo") or h:match("sony") or h:match("lg") or h:match("htc") or
+       h:match("pixel") or h:match("nexus") or h:match("手机") then
+        return "phone"
+    -- 平板识别：iPad, Galaxy Tab, MatePad 等
+    elseif h:match("ipad") or h:match("galaxy.tab") or h:match("matepad") or h:match("surface") or
+           h:match("pad") or h:match("tab") or h:match("平板") then
         return "tablet"
-    elseif h:match("watch") or h:match("band") or h:match("手环") or h:match("手表") then
+    -- 笔记本识别：MacBook, ThinkPad, Dell, HP, Lenovo, ASUS 等
+    elseif h:match("macbook") or h:match("thinkpad") or h:match("laptop") or h:match("笔记本") then
+        return "laptop"
+    -- 台式机识别：Desktop, PC, Windows-PC 等
+    elseif h:match("desktop") or h:match("^pc") or h:match("windows.pc") or h:match("台式") or
+           h:match("computer") or h:match("dell") or h:match("hp") or h:match("asus") or
+           h:match("acer") or h:match("msi") or h:match("lenovo") then
+        return "desktop"
+    -- 穿戴设备识别：Apple Watch, 小米手环, 华为手表 等
+    elseif h:match("watch") or h:match("band") or h:match("手环") or h:match("手表") or
+           h:match("fitbit") or h:match("garmin") or h:match("amazfit") then
         return "wearable"
-    elseif h:match("tv") or h:match("电视") or h:match("盒子") or h:match("box") then
+    -- 电视/盒子识别：小米电视, Apple TV, Chromecast 等
+    elseif h:match("tv") or h:match("电视") or h:match("盒子") or h:match("box") or
+           h:match("chromecast") or h:match("fire.tv") or h:match("roku") or h:match("appletv") then
         return "tv"
-    elseif h:match("printer") or h:match("打印") then
+    -- 打印机识别
+    elseif h:match("printer") or h:match("打印") or h:match("hp.print") or h:match("canon") or
+           h:match("epson") or h:match("brother") then
         return "printer"
-    elseif h:match("camera") or h:match("摄像头") or h:match("相机") then
+    -- 摄像头识别
+    elseif h:match("camera") or h:match("摄像头") or h:match("相机") or h:match("ipc") or
+           h:match("yi.camera") or h:match("foscam") or h:match("hikvision") or h:match("dahua") then
         return "camera"
-    elseif h:match("nas") or h:match("存储") or h:match("群晖") then
-        return "nas"
-    elseif h:match("router") or h:match("路由") or h:match("ap") or h:match("网关") then
-        return "router"
-    elseif h:match("switch") or h:match("交换机") then
-        return "switch"
-    elseif h:match("server") or h:match("服务器") then
+    -- NAS/服务器识别：群晖, 威联通, TrueNAS 等
+    elseif h:match("nas") or h:match("存储") or h:match("群晖") or h:match("synology") or
+           h:match("qnap") or h:match("truenas") or h:match("freenas") then
         return "server"
-    elseif h:match("ps[34]") or h:match("xbox") or h:match("switch") or h:match("游戏机") then
-        return "console"
-    elseif h:match("smart") or h:match("智能") or h:match("灯") or h:match("插座") or h:match("sensor") then
+    -- 路由器/网关识别
+    elseif h:match("router") or h:match("路由") or h:match("ap") or h:match("网关") or
+           h:match("gateway") or h:match("mikrotik") or h:match("ubiquiti") or h:match("openwrt") then
+        return "router"
+    -- 交换机识别
+    elseif h:match("switch") or h:match("交换机") or h:match("cisco") or h:match("huawei.switch") then
+        return "router"
+    -- 服务器识别
+    elseif h:match("server") or h:match("服务器") or h:match("ubuntu") or h:match("centos") or
+           h:match("debian") or h:match("fedora") or h:match("redhat") then
+        return "server"
+    -- 游戏机识别：PlayStation, Xbox, Nintendo Switch 等
+    elseif h:match("ps[345]") or h:match("playstation") or h:match("xbox") or h:match("nintendo") or
+           h:match("switch") or h:match("游戏机") or h:match("wii") or h:match("3ds") then
+        return "gaming"
+    -- 智能家居识别
+    elseif h:match("smart") or h:match("智能") or h:match("灯") or h:match("插座") or h:match("sensor") or
+           h:match("yeelight") or h:match("philips.hue") or h:match("tuya") or h:match("涂鸦") then
         return "smart_home"
-    elseif h:match("robot") or h:match("扫地") or h:match("roborock") or h:match("irobot") then
-        return "robot"
+    -- 扫地机器人识别
+    elseif h:match("robot") or h:match("扫地") or h:match("roborock") or h:match("irobot") or
+           h:match("xiaomi.vacuum") or h:match("dreame") or h:match("石头") then
+        return "smart_home"
     else
         return "unknown"
     end
@@ -2023,6 +2100,1202 @@ function api_get_devices()
         response_data = error_response(-1, "获取设备列表失败", tostring(err))
     end
 
+    luci.http.prepare_content("application/json")
+    luci.http.write_json(response_data)
+end
+
+-- ============================================================
+-- 自定义OUI数据库管理API
+-- ============================================================
+
+-- API: 获取自定义OUI数据库
+function api_get_custom_oui()
+    local response_data = nil
+    collectgarbage("collect")
+    
+    local ok, err = pcall(function()
+        local custom_db = load_custom_oui_database()
+        local entries = {}
+        
+        if custom_db and custom_db.entries then
+            for oui, entry in pairs(custom_db.entries) do
+                table.insert(entries, {
+                    oui = oui,
+                    vendor = entry.vendor or "",
+                    device_type = entry.device_type or "unknown",
+                    added_time = entry.added_time or 0,
+                    note = entry.note or ""
+                })
+            end
+        end
+        
+        response_data = success_response({
+            entries = entries,
+            total_count = #entries
+        })
+    end)
+    
+    if not ok then
+        response_data = error_response(-1, "获取自定义OUI失败", tostring(err))
+    end
+    
+    luci.http.prepare_content("application/json")
+    luci.http.write_json(response_data)
+end
+
+-- API: 添加自定义OUI条目
+function api_add_custom_oui()
+    if not require_csrf_token() then return end
+    
+    local response_data = nil
+    collectgarbage("collect")
+    
+    local oui_prefix = (luci.http.formvalue("oui") or ""):upper():gsub("[^A-F0-9]", "")
+    local vendor = luci.http.formvalue("vendor") or ""
+    local device_type = luci.http.formvalue("device_type") or "unknown"
+    local note = luci.http.formvalue("note") or ""
+    
+    local ok, err = pcall(function()
+        -- 验证OUI前缀（6个十六进制字符）
+        if not oui_prefix or #oui_prefix ~= 6 then
+            response_data = error_response(-1, "无效的OUI前缀，需要6位十六进制字符（如B66E8A）")
+            return
+        end
+        
+        if not vendor or vendor == "" then
+            response_data = error_response(-1, "厂商名称不能为空")
+            return
+        end
+        
+        local custom_db = load_custom_oui_database()
+        if not custom_db.entries then
+            custom_db.entries = {}
+        end
+        
+        -- 格式化OUI前缀为标准格式
+        local formatted_oui = oui_prefix:sub(1,2) .. ":" .. oui_prefix:sub(3,4) .. ":" .. oui_prefix:sub(5,6)
+        
+        custom_db.entries[formatted_oui] = {
+            vendor = vendor,
+            device_type = device_type,
+            note = note,
+            added_time = os.time(),
+            source = "manual"
+        }
+        
+        save_custom_oui_database(custom_db)
+        
+        response_data = success_response({
+            message = "已添加自定义OUI: " .. formatted_oui .. " → " .. vendor,
+            oui = formatted_oui,
+            vendor = vendor
+        })
+    end)
+    
+    if not ok then
+        response_data = error_response(-1, "添加自定义OUI失败", tostring(err))
+    end
+    
+    luci.http.prepare_content("application/json")
+    luci.http.write_json(response_data)
+end
+
+-- API: 删除自定义OUI条目
+function api_remove_custom_oui()
+    if not require_csrf_token() then return end
+    
+    local response_data = nil
+    collectgarbage("collect")
+    
+    local oui_prefix = (luci.http.formvalue("oui") or ""):upper():gsub("[^A-F0-9]", "")
+    
+    local ok, err = pcall(function()
+        if not oui_prefix or #oui_prefix < 3 then
+            response_data = error_response(-1, "无效的OUI前缀")
+            return
+        end
+        
+        local formatted_oui = oui_prefix:sub(1,2) .. ":" .. oui_prefix:sub(3,4) .. ":" .. oui_prefix:sub(5,6)
+        local custom_db = load_custom_oui_database()
+        
+        if custom_db and custom_db.entries and custom_db.entries[formatted_oui] then
+            local removed_vendor = custom_db.entries[formatted_oui].vendor
+            custom_db.entries[formatted_oui] = nil
+            save_custom_oui_database(custom_db)
+            
+            response_data = success_response({
+                message = "已删除自定义OUI: " .. formatted_oui,
+                oui = formatted_oui,
+                vendor = removed_vendor
+            })
+        else
+            response_data = error_response(-1, "该OUI不在自定义数据库中")
+        end
+    end)
+    
+    if not ok then
+        response_data = error_response(-1, "删除自定义OUI失败", tostring(err))
+    end
+    
+    luci.http.prepare_content("application/json")
+    luci.http.write_json(response_data)
+end
+
+-- ============================================================
+-- 网络安全检测功能
+-- ============================================================
+
+-- 路由器必要端口白名单（这些端口是路由器正常工作必需的，不应标记为危险）
+local ROUTER_ESSENTIAL_PORTS = {
+    ["53"] = {name = "DNS", desc = "DNS解析服务（路由器必需）", category = "essential"},
+    ["67"] = {name = "DHCP-Server", desc = "DHCP服务（路由器必需）", category = "essential"},
+    ["68"] = {name = "DHCP-Client", desc = "DHCP客户端（路由器必需）", category = "essential"},
+    ["80"] = {name = "HTTP/WebUI", desc = "Web管理界面（路由器必需）", category = "essential"},
+    ["443"] = {name = "HTTPS/WebUI", desc = "安全Web管理界面（路由器必需）", category = "essential"},
+    ["1900"] = {name = "UPnP/SSDP", desc = "设备发现服务（IoT设备需要）", category = "iot"},
+    ["5353"] = {name = "mDNS", desc = "多播DNS（Apple设备/AirPlay等）", category = "iot"}
+}
+
+-- 危险端口列表（不应对外开放的端口，排除必要端口后）
+local DANGEROUS_PORTS = {
+    ["22"] = {name = "SSH", risk = "high", desc = "远程SSH登录，可能被暴力破解"},
+    ["23"] = {name = "Telnet", risk = "critical", desc = "明文传输，极不安全，建议关闭"},
+    ["25"] = {name = "SMTP", risk = "medium", desc = "邮件服务，可能被利用发送垃圾邮件"},
+    ["111"] = {name = "RPCbind", risk = "high", desc = "RPC服务，存在多个已知漏洞"},
+    ["135"] = {name = "MS-RPC", risk = "high", desc = "Windows RPC服务"},
+    ["139"] = {name = "NetBIOS", risk = "medium", desc = "Windows文件共享"},
+    ["445"] = {name = "SMB", risk = "high", desc = "Windows共享服务，永恒之蓝漏洞"},
+    ["512"] = {name = "Rexec", risk = "critical", desc = "远程执行命令"},
+    ["513"] = {name = "Rlogin", risk = "critical", desc = "明文远程登录"},
+    ["514"] = {name = "Syslog", risk = "low", desc = "系统日志服务"},
+    ["873"] = {name = "RSync", risk = "medium", desc = "文件同步服务"},
+    ["1080"] = {name = "SOCKS", risk = "medium", desc = "代理服务器"},
+    ["1433"] = {name = "MSSQL", risk = "high", desc = "SQL Server数据库"},
+    ["1521"] = {name = "Oracle", risk = "high", desc = "Oracle数据库"},
+    ["2049"] = {name = "NFS", risk = "medium", desc = "网络文件系统"},
+    ["3306"] = {name = "MySQL", risk = "high", desc = "MySQL数据库"},
+    ["3389"] = {name = "RDP", risk = "high", desc = "Windows远程桌面"},
+    ["5432"] = {name = "PostgreSQL", risk = "medium", desc = "PostgreSQL数据库"},
+    ["5900"] = {name = "VNC", risk = "high", desc = "VNC远程控制"},
+    ["5901"] = {name = "VNC:1", risk = "high", desc = "VNC远程控制(备用)"},
+    ["6379"] = {name = "Redis", risk = "high", desc = "Redis数据库（未授权访问风险）"},
+    ["8080"] = {name = "HTTP-Alt", risk = "low", desc = "HTTP备用端口"},
+    [ "8888"] = {name = "HTTP-Alt2", risk = "low", desc = "HTTP备用端口"},
+    ["9200"] = {name = "Elasticsearch", risk = "high", desc = "搜索引擎（可能未授权）"},
+    ["27017"] = {name = "MongoDB", risk = "high", desc = "MongoDB数据库"},
+    ["1880"] = {name = "MQTT", risk = "medium", desc = "MQTT消息队列服务"},
+    ["5000"] = {name = "Docker", risk = "medium", desc = "Docker容器管理接口"},
+    ["554"] = {name = "RTSP", risk = "medium", desc = "视频监控流媒体"}
+}
+
+-- 检测路由器开放端口（增强版）
+local function check_router_open_ports()
+    local open_ports = {}
+    local util = require("luci.util")
+
+    -- 尝试多种方式获取监听端口
+    local output = ""
+    local cmd1 = "ss -tlnp 2>/dev/null"
+    local cmd2 = "netstat -tlnp 2>/dev/null"
+
+    -- 优先使用ss命令
+    output = util.exec(cmd1) or ""
+    if not output or output == "" then
+        output = util.exec(cmd2) or ""
+    end
+
+    if output and output ~= "" then
+        for line in output:gmatch("[^\r\n]+") do
+            -- 跳过表头和空行
+            if line:match("%d+") and not line:match("^State") and not line:match("^Proto") then
+                local port, addr, proc_info = nil, nil, nil
+
+                -- 解析ss输出格式: State Recv-Q Send-Q Local Address:Port Peer Address:Port Process
+                if line:match("LISTEN") then
+                    -- ss格式: LISTEN  0  128  *:80  *:*  users:(("nginx",pid=1234,...))
+                    port, addr = line:match("LISTEN.*%s+(%S+):(%d+)%s+")
+                    if not port then
+                        -- 另一种格式: [::]:80
+                        port, addr = line:match("LISTEN.*%s+%[?([^%]]*)%]?:(%d+)")
+                    end
+
+                    -- 提取进程信息
+                    proc_info = line:match("users:%(.+%)")
+                end
+
+                -- 如果ss解析失败，尝试netstat格式
+                if not port and line:match("^tcp") then
+                    -- netstat格式: tcp  0  0 0.0.0.0:80  0.0.0.0:*  LISTEN  1234/nginx
+                    port, addr = line:match("^tcp%d*%s+%d+%s+%d+%s+(%S+):(%d+)%s+")
+                    if not port then
+                        port, addr = line:match("^tcp%d*%s+%d+%s+%d+%s+%[?([^%]]*)%]?:(%d+)")
+                    end
+                    proc_info = line:match("%d+/(%S+)$")
+                end
+
+                if port then
+                    local port_num_val = tonumber(port)
+                    if port_num_val and port_num_val > 0 then
+                        local is_external = false
+                        local bind_addr = addr or "unknown"
+
+                        -- 标准化地址显示
+                        if bind_addr == "*" or bind_addr == "" then
+                            bind_addr = "0.0.0.0"
+                        end
+
+                        -- 检查是否绑定到外部地址
+                        if bind_addr == "0.0.0.0" or bind_addr == "::" then
+                            is_external = true
+                        elseif bind_addr ~= "127.0.0.1" and bind_addr ~= "::1" and bind_addr ~= "localhost" then
+                            -- 非回环地址都视为外部可访问
+                            if not bind_addr:match("^127%.") and not bind_addr:match("^::1") then
+                                is_external = true
+                            end
+                        end
+
+                        -- 获取端口信息（优先检查白名单）
+                        local port_num = tostring(port_num_val)
+                        local essential_info = ROUTER_ESSENTIAL_PORTS[port_num]
+                        local port_info = nil
+                        local port_category = "normal"
+                        
+                        if essential_info then
+                            -- 端口在白名单中，标记为必要端口或IoT端口
+                            port_info = {
+                                name = essential_info.name,
+                                risk = "safe",
+                                desc = essential_info.desc
+                            }
+                            port_category = essential_info.category or "essential"
+                        else
+                            -- 不在白名单中，检查是否为危险端口
+                            port_info = DANGEROUS_PORTS[port_num] or {
+                                name = get_port_name(port_num),
+                                risk = "low",
+                                desc = "未知服务"
+                            }
+                            
+                            -- 根据是否外部暴露调整风险等级
+                            if is_external and port_info.risk == "low" then
+                                port_info.risk = "medium"
+                            end
+                        end
+
+                        table.insert(open_ports, {
+                            port = port_num_val,
+                            name = port_info.name,
+                            bind_addr = bind_addr,
+                            is_external = is_external,
+                            risk = port_info.risk,
+                            category = port_category,
+                            description = port_info.desc,
+                            process = proc_info or "unknown"
+                        })
+                    end
+                end
+            end
+        end
+    end
+
+    -- 去重（同一端口可能监听在多个地址）
+    local seen = {}
+    local unique_ports = {}
+    for _, p in ipairs(open_ports) do
+        local key = p.port .. "_" .. p.bind_addr
+        if not seen[key] then
+            seen[key] = true
+            table.insert(unique_ports, p)
+        end
+    end
+
+    return unique_ports
+end
+
+-- API: 检测开放端口
+function api_check_open_ports()
+    local response_data = nil
+    collectgarbage("collect")
+    
+    local ok, err = pcall(function()
+        local ports = check_router_open_ports()
+        
+        -- 统计风险等级
+        local external_count = 0
+        local high_risk_count = 0
+        local critical_count = 0
+        
+        for _, port in ipairs(ports) do
+            if port.is_external then
+                external_count = external_count + 1
+                if port.risk == "high" then
+                    high_risk_count = high_risk_count + 1
+                elseif port.risk == "critical" then
+                    critical_count = critical_count + 1
+                end
+            end
+        end
+        
+        response_data = success_response({
+            ports = ports,
+            total_open = #ports,
+            external_count = external_count,
+            high_risk_count = high_risk_count,
+            critical_count = critical_count,
+            check_time = os.time()
+        })
+    end)
+    
+    if not ok then
+        response_data = error_response(-1, "检测开放端口失败", tostring(err))
+    end
+    
+    luci.http.prepare_content("application/json")
+    luci.http.write_json(response_data)
+end
+
+-- DNS劫持检测（增强版）
+local function check_dns_hijack()
+    local results = {}
+    local util = require("luci.util")
+
+    -- DNS测试域名列表
+    -- 国内域名：用于评分计算（主要指标）
+    -- 国际域名：仅做参考测试，失败不扣分
+    local test_domains = {
+        -- 国内主流网站（6个，用于评分）
+        {domain = "www.baidu.com", expected_pattern = "baidu", category = "domestic"},
+        {domain = "www.aliyun.com", expected_pattern = "aliyun", category = "domestic"},
+        {domain = "www.taobao.com", expected_pattern = "taobao", category = "domestic"},
+        {domain = "www.qq.com", expected_pattern = "qq", category = "domestic"},
+        {domain = "www.jd.com", expected_pattern = "jd", category = "domestic"},
+        {domain = "www.bilibili.com", expected_pattern = "bilibili", category = "domestic"},
+        
+        -- 国际知名网站（2个，仅参考，失败不扣分）
+        {domain = "www.cloudflare.com", expected_pattern = "cloudflare", category = "international"},
+        {domain = "dns.google", expected_pattern = "google", category = "international"}
+    }
+
+    for _, test in ipairs(test_domains) do
+        local dns_ok, dns_result = pcall(function()
+            local resolved_ip = ""
+            local is_normal = true
+            local hijack_suspicion = false
+            local error_msg = nil
+
+            -- 尝试多种DNS查询方式
+            local output = nil
+
+            -- 方式1: 使用nslookup（如果可用）
+            local cmd1 = "nslookup " .. test.domain .. " 2>/dev/null"
+            output = util.exec(cmd1)
+
+            if not output or output == "" then
+                -- 方式2: 使用dig（如果可用）
+                local cmd2 = "dig +short " .. test.domain .. " 2>/dev/null"
+                output = util.exec(cmd2)
+            end
+
+            if not output or output == "" then
+                -- 方式3: 使用host命令
+                local cmd3 = "host " .. test.domain .. " 2>/dev/null"
+                output = util.exec(cmd3)
+            end
+
+            if not output or output == "" or (output and not output:match("%d+%.%d+%.%d+%.%d+")) then
+                -- 方式4: 使用ping获取IP地址（适用于大多数嵌入式系统）
+                local cmd4 = "ping -c 1 -W 2 " .. test.domain .. " 2>/dev/null | grep PING | awk '{print $3}' | tr -d '()'"
+                output = util.exec(cmd4)
+            end
+
+            if not output or output == "" or (output and not output:match("%d+%.%d+%.%d+%.%d+")) then
+                -- 方式5: 使用wget测试网络连通性（间接验证DNS）
+                local cmd5 = "wget -q --timeout=3 --spider http://" .. test.domain .. " 2>&1 && echo 'CONNECTED' || echo 'FAILED'"
+                local wget_result = util.exec(cmd5) or ""
+                
+                if wget_result:match("CONNECTED") then
+                    -- 网络可达，说明DNS工作正常（虽然不知道具体IP）
+                    resolved_ip = "正常"
+                    is_normal = true
+                    error_msg = nil
+                    return {
+                        domain = test.domain,
+                        category = test.category,
+                        resolved_ip = resolved_ip,
+                        is_normal = is_normal,
+                        suspicion = false,
+                        error = error_msg
+                    }
+                else
+                    -- 无法通过任何方式验证
+                    resolved_ip = "-"
+                    is_normal = true
+                    error_msg = "无法验证"
+                    return {
+                        domain = test.domain,
+                        category = test.category,
+                        resolved_ip = resolved_ip,
+                        is_normal = is_normal,
+                        suspicion = false,
+                        error = error_msg
+                    }
+                end
+            end
+
+            -- 解析输出获取IP地址
+            if output then
+                -- nslookup格式: Address: 1.2.3.4 或 Name: example.com Address: 1.2.3.4
+                resolved_ip = output:match("Address:%s*(%d+%.%d+%.%d+%.%d+)") or
+                             output:match("Name:%s*(%S+)%s*Address:%s*(%d+%.%d+%.%d+%.%d+)")
+
+                -- dig格式: 直接返回IP
+                if not resolved_ip then
+                    resolved_ip = output:match("^%s*(%d+%.%d+%.%d+%.%d+)%s*$")
+                end
+
+                -- host格式: example.com has address 1.2.3.4
+                if not resolved_ip then
+                    resolved_ip = output:match("has address%s+(%d+%.%d+%.%d+%.%d+)")
+                end
+                
+                -- ping格式: 纯IP地址
+                if not resolved_ip then
+                    resolved_ip = output:match("^(%d+%.%d+%.%d+%.%d+)%s*$")
+                end
+
+                -- 安全检查：如果解析到可疑IP，标记为劫持嫌疑
+                if resolved_ip and resolved_ip ~= "" and resolved_ip ~= "-" and resolved_ip ~= "正常" then
+                    -- 检查是否为127.0.0.1（本地回环地址）
+                    -- 注意：在OpenWrt环境中，解析到127.0.0.1通常是正常的
+                    -- 可能原因：去广告插件(AdGuard Home)、透明代理(SSR/Clash)、防火墙规则等
+                    if resolved_ip:match("^127%.") or resolved_ip == "127.0.0.1" then
+                        -- 127.0.0.1在OpenWrt中很常见，不标记为劫持
+                        -- 可能是去广告、代理插件的正常行为
+                        hijack_suspicion = false
+                        is_normal = true
+                        error_msg = "本地重定向"
+                    -- 检查是否为其他私有IP或特殊IP（这些才可能是劫持）
+                    elseif resolved_ip:match("^0%.") or
+                           resolved_ip:match("^169%.254%.") or
+                           (resolved_ip:match("^10%.") and test.domain:match("com$")) or
+                           ((resolved_ip:match("^192%.168%.") or resolved_ip:match("^172%.1[6-9]%.") or resolved_ip:match("^172%.2%d%.") or resolved_ip:match("^172%.3[01]%.")) and test.domain:match("^www%.")) then
+                        hijack_suspicion = true
+                        is_normal = false
+                    end
+
+                    -- 检查是否为已知恶意IP段（简化检查）
+                    local first_octet = resolved_ip:match("^(%d+)%.")
+                    if first_octet and tonumber(first_octet) == 0 and not (resolved_ip:match("^127%.")) then
+                        hijack_suspicion = true
+                        is_normal = false
+                    end
+                elseif not resolved_ip or resolved_ip == "" or resolved_ip == "-" then
+                    -- 无法解析IP但之前已处理过这种情况
+                    is_normal = true
+                    error_msg = nil
+                end
+            else
+                is_normal = true
+                error_msg = nil
+            end
+
+            return {
+                domain = test.domain,
+                category = test.category,
+                resolved_ip = resolved_ip or "-",
+                is_normal = is_normal,
+                suspicion = hijack_suspicion,
+                error = error_msg
+            }
+        end)
+
+        if dns_ok and dns_result then
+            table.insert(results, dns_result)
+        else
+            -- 检测过程出错时，不标记为异常，而是标记为无法检测
+            table.insert(results, {
+                domain = test.domain,
+                category = test.category,
+                resolved_ip = "-",
+                is_normal = true,
+                suspicion = false,
+                error = "检测超时"
+            })
+        end
+    end
+
+    -- 检查路由器DNS设置
+    local dns_servers = {}
+    local uci_check, _ = pcall(function()
+        local uci = require("luci.model.uci").cursor()
+
+        -- 检查多个可能的DNS配置位置
+        local ns_lan = uci:get("network", "lan", "dns")
+        local ns_wan = uci:get("network", "wan", "dns")
+        local ns_wan6 = uci:get("network", "wan6", "dns")
+
+        -- 合并所有DNS服务器
+        local all_dns = {}
+        if ns_lan then
+            for server in ns_lan:gmatch("[^%s]+") do
+                all_dns[server] = true
+            end
+        end
+        if ns_wan then
+            for server in ns_wan:gmatch("[^%s]+") do
+                all_dns[server] = true
+            end
+        end
+        if ns_wan6 then
+            for server in ns_wan6:gmatch("[^%s]+") do
+                all_dns[server] = true
+            end
+        end
+
+        -- 转换为数组
+        for server, _ in pairs(all_dns) do
+            table.insert(dns_servers, server)
+        end
+    end)
+
+    -- 如果没有找到DNS服务器，尝试从resolv.conf读取
+    if #dns_servers == 0 then
+        local resolv_conf = util.exec("cat /etc/resolv.conf 2>/dev/null | grep nameserver | awk '{print $2}'") or ""
+        if resolv_conf and resolv_conf ~= "" then
+            for server in resolv_conf:gmatch("[^\r\n]+") do
+                if server:match("%d+%.%d+%.%d+%.%d+") then
+                    table.insert(dns_servers, server)
+                end
+            end
+        end
+    end
+
+    -- 统计结果：只统计国内域名用于评分
+    local suspicious_count = 0
+    local failed_count = 0
+    local success_count = 0
+    local unverified_count = 0
+    
+    -- 国际域名统计（仅参考，不参与评分）
+    local intl_suspicious_count = 0
+    local intl_failed_count = 0
+    local intl_success_count = 0
+    
+    for _, r in ipairs(results) do
+        -- 判断是否为国内域名
+        local is_domestic = (r.category == "domestic")
+        
+        if r.suspicion then 
+            if is_domestic then
+                suspicious_count = suspicious_count + 1 
+            else
+                intl_suspicious_count = intl_suspicious_count + 1
+            end
+        end
+        
+        -- 分类统计检测结果
+        if not r.is_normal and r.error then
+            if r.error == "无法验证" or r.error == "检测超时" then
+                -- 无法验证的情况：视为正常（DNS工作正常但工具受限）
+                unverified_count = unverified_count + 1
+                success_count = success_count + 1
+            else
+                -- 明确的失败情况
+                if is_domestic then
+                    failed_count = failed_count + 1
+                else
+                    intl_failed_count = intl_failed_count + 1
+                end
+            end
+        elseif r.is_normal then
+            if is_domestic then
+                success_count = success_count + 1
+            else
+                intl_success_count = intl_success_count + 1
+            end
+        end
+    end
+    
+    -- DNS安全判断：只根据国内域名判断
+    -- 只要没有可疑劫持，就认为DNS基本正常
+    local is_safe = (suspicious_count == 0)
+    
+    -- 调试日志：输出DNS检测结果
+    print("[DNS检测] 国内-成功:" .. success_count .. " 失败:" .. failed_count .. " 可疑:" .. suspicious_count)
+    print("[DNS检测] 国际-成功:" .. intl_success_count .. " 失败:" .. intl_failed_count .. " 可疑:" .. intl_suspicious_count)
+
+    return {
+        tests = results,
+        dns_servers = dns_servers,
+        -- 国内域名统计（用于评分）
+        suspicious_count = suspicious_count,
+        failed_count = failed_count,
+        success_count = success_count,
+        domestic_total = 6,  -- 国内域名总数
+        -- 国际域名统计（仅参考）
+        intl_suspicious_count = intl_suspicious_count,
+        intl_failed_count = intl_failed_count,
+        intl_success_count = intl_success_count,
+        international_total = 2,  -- 国际域名总数
+        -- 总体判断
+        total_tests = #results,
+        is_safe = is_safe
+    }
+end
+
+-- API: 检测DNS劫持
+function api_check_dns_hijack()
+    local response_data = nil
+    collectgarbage("collect")
+    
+    local ok, err = pcall(function()
+        local results = check_dns_hijack()
+        
+        response_data = success_response({
+            tests = results.tests,
+            dns_servers = results.dns_servers,
+            suspicious_count = results.suspicious_count,
+            failed_count = results.failed_count,
+            total_tests = results.total_tests,
+            is_safe = results.is_safe,
+            check_time = os.time()
+        })
+    end)
+    
+    if not ok then
+        response_data = error_response(-1, "DNS劫持检测失败", tostring(err))
+    end
+    
+    luci.http.prepare_content("application/json")
+    luci.http.write_json(response_data)
+end
+
+-- 弱密码检测（增强版）
+local function check_weak_passwords()
+    local results = {}
+
+    -- 1. 检查WiFi密码强度
+    local wifi_checks = {}
+    local uci_ok, _ = pcall(function()
+        local uci = require("luci.model.uci").cursor()
+
+        -- 遍历WiFi配置（支持多种无线配置格式）
+        uci:foreach("wireless", "wifi-iface", function(s)
+            local ssid = s.ssid or ""
+            local key = s.key or ""
+            local encryption = s.encryption or "none"
+            local disabled = s.disabled
+
+            -- 跳过禁用的WiFi和未加密的WiFi
+            if ssid ~= "" and disabled ~= "1" then
+                if encryption == "none" or encryption == "psk" or encryption == "" then
+                    -- 未加密或使用预共享密钥（无实际密码）
+                    table.insert(wifi_checks, {
+                        type = "wifi",
+                        name = "WiFi: " .. ssid,
+                        password_length = 0,
+                        encryption = encryption or "none",
+                        strength = "critical",
+                        score = 0,
+                        issues = {"WiFi未加密或使用弱加密方式!"}
+                    })
+                elseif key and key ~= "" then
+                    local strength = "strong"
+                    local issues = {}
+                    local score = 100
+
+                    -- 密码长度检查
+                    if #key < 8 then
+                        score = score - 40
+                        table.insert(issues, "密码长度不足8位")
+                        strength = "weak"
+                    elseif #key < 12 then
+                        score = score - 15
+                        table.insert(issues, "建议使用12位以上密码")
+                    end
+
+                    -- 复杂度检查
+                    local has_upper = key:find("%u")
+                    local has_lower = key:find("%l")
+                    local has_digit = key:find("%d")
+                    local has_special = key:find("%W")
+
+                    local complexity = (has_upper and 1 or 0) +
+                                    (has_lower and 1 or 0) +
+                                    (has_digit and 1 or 0) +
+                                    (has_special and 1 or 0)
+
+                    if complexity <= 1 then
+                        score = score - 30
+                        table.insert(issues, "密码复杂度太低，建议混合大小写字母、数字和符号")
+                        if strength ~= "weak" then strength = "medium" end
+                    elseif complexity <= 2 then
+                        score = score - 15
+                        table.insert(issues, "密码复杂度一般，建议增加字符种类")
+                    end
+
+                    -- 常见弱密码检查（扩展版：包含Top 100常见弱密码和路由器默认密码）
+                    local weak_patterns = {
+                        -- Top 20 最常见弱密码
+                        "12345678", "password", "admin888", "88888888",
+                        "00000000", "abcdefgh", "qwertyui", "11111111",
+                        "1234567890", "123456789", "password123", "admin123",
+                        "iloveyou", "sunshine", "princess", "abc123456",
+                        "monkey", "dragon", "master", "letmein",
+                        -- 路由器默认密码
+                        "admin", "root", "password", "1234", "12345",
+                        "123456", "1234567", "123456789", "1234567890",
+                        "admin1234", "passw0rd", "welcome1", "qwerty123",
+                        -- 中文用户常见弱密码
+                        "woaini1314", "aaron423", "5201314", "5211314",
+                        "zhangsan", "lisi", "wangwu", "test1234",
+                        -- 纯数字弱密码
+                        "66666666", "88888888", "99999999", "00000000",
+                        "11223344", "12121212", "12332111", "14725836",
+                        -- 键盘模式弱密码
+                        "qwertyuiop", "asdfghjkl", "zxcvbnm", "1qaz2wsx",
+                        "qazwsxedc", "1q2w3e4r", "zaq12wsx", "qweasd123"
+                    }
+                    local lower_key = key:lower()
+                    for _, pattern in ipairs(weak_patterns) do
+                        if lower_key == pattern then
+                            score = 0
+                            strength = "critical"
+                            table.insert(issues, "使用了极弱的常用密码! 建议立即更换")
+                            break
+                        end
+                    end
+
+                    -- 密码更新建议（基于密码长度和复杂度）
+                    if #key >= 8 and score >= 80 then
+                        table.insert(issues, "✅ 密码强度良好，建议每3-6个月更换一次")
+                    elseif score >= 60 then
+                        table.insert(issues, "⚠️ 建议增加密码长度到12位以上并定期更换")
+                    end
+
+                    -- 连续字符检查
+                    if key:match("(%w)%1%1%1") then
+                        score = score - 10
+                        table.insert(issues, "包含4个以上连续相同字符")
+                    end
+
+                    if score < 60 then strength = "weak"
+                    elseif score < 80 then strength = "medium"
+                    else strength = "strong" end
+
+                    table.insert(wifi_checks, {
+                        type = "wifi",
+                        name = "WiFi: " .. ssid,
+                        password_length = #key,
+                        encryption = encryption,
+                        strength = strength,
+                        score = score,
+                        issues = issues
+                    })
+                end
+            end
+        end)
+    end)
+
+    if not uci_ok then
+        table.insert(wifi_checks, {
+            type = "wifi",
+            name = "WiFi配置读取失败",
+            password_length = 0,
+            encryption = "unknown",
+            strength = "unknown",
+            score = -1,
+            issues = {"无法读取WiFi配置文件"}
+        })
+    end
+
+    results.wifi = wifi_checks
+
+    -- 2. 检查管理后台密码
+    local admin_checks = {}
+    local admin_ok, _ = pcall(function()
+        local util = require("luci.util")
+
+        -- 检查/etc/shadow中的root密码哈希（需要root权限）
+        local shadow_check = util.exec("cat /etc/shadow 2>/dev/null | grep '^root:' | cut -d: -f2") or ""
+        
+        -- 调试日志
+        print("[密码检测] shadow_check结果: " .. tostring(shadow_check ~= "" and "有内容" or "空"))
+        print("[密码检测] shadow_check值: " .. (shadow_check:sub(1, 20) or "nil"))
+
+        -- 检查是否有密码设置
+        local has_password_set = false
+        local is_default_password = false
+        local pwd_info = ""
+
+        if shadow_check and shadow_check ~= "" then
+            -- 如果shadow字段不为空且不是特殊值，说明设置了密码
+            if shadow_check ~= "!" and shadow_check ~= "*" and shadow_check ~= "!!" and shadow_check ~= "" then
+                has_password_set = true
+                pwd_info = shadow_check:sub(1, 10) .. "..."  -- 只显示前几个字符用于识别类型
+                print("[密码检测] 检测到已设置密码: " .. pwd_info)
+            else
+                print("[密码检测] shadow为特殊值: " .. tostring(shadow_check))
+            end
+        else
+            print("[密码检测] shadow为空或读取失败")
+        end
+
+        -- 备用检查：通过UCI检查（某些系统可能使用不同的存储方式）
+        if not has_password_set then
+            local uci = require("luci.model.uci").cursor()
+            local root_pwd_uci = uci:get("system", "@system[0]", "rootpassword") or ""
+
+            if root_pwd_uci and root_pwd_uci ~= "" then
+                has_password_set = true
+                pwd_info = "已设置(UCI)"
+            end
+        end
+
+        -- 检查是否为常见默认密码（通过尝试认证或其他方式）
+        -- 注意：这里不能直接验证密码，只能给出建议
+        if not has_password_set then
+            table.insert(admin_checks, {
+                type = "admin",
+                name = "管理后台密码",
+                has_password = false,
+                strength = "critical",
+                score = 0,
+                issues = {"未设置管理密码或使用默认密码!", "请立即在 系统→管理员权限 中设置强密码"},
+                recommendation = "立即设置强密码（至少8位，包含字母、数字和符号）"
+            })
+        else
+            -- 已设置密码，给出安全建议
+            local pwd_score = 100
+            local pwd_issues = {}
+
+            -- 由于无法直接读取明文密码，基于其他因素评估
+            table.insert(pwd_issues, "✅ 已设置管理密码")
+
+            -- 检查是否可以通过其他方式判断密码强度
+            if pwd_info:match("^$6$") or pwd_info:match("^$5$") then
+                -- SHA-512或SHA-256加密，相对较新
+                pwd_issues = {"✅ 已设置管理密码（使用现代加密算法SHA-512/256）"}
+                pwd_score = 95
+            elseif pwd_info:match("^$1$") then
+                -- MD5加密，较弱
+                table.insert(pwd_issues, "⚠️ 密码使用MD5加密，建议升级系统")
+                pwd_score = 70
+            elseif pwd_info:match("^$2[aby]$") then
+                -- Blowfish加密，较强
+                pwd_issues = {"✅ 已设置管理密码（使用强加密算法Blowfish）"}
+                pwd_score = 95
+            else
+                -- 其他情况：已设置密码但无法识别加密算法
+                pwd_issues = {"✅ 已设置管理密码", "加密算法类型：未知（可能使用特殊加密）"}
+                pwd_score = 85  -- 提高分数，因为已设置密码
+            end
+
+            local pwd_strength = pwd_score >= 85 and "strong" or (pwd_score >= 70 and "medium" or "weak")
+
+            table.insert(admin_checks, {
+                type = "admin",
+                name = "管理后台密码",
+                has_password = true,
+                strength = pwd_strength,
+                score = pwd_score,
+                issues = pwd_issues,
+                recommendation = pwd_score < 80 and "建议定期更换密码并确保密码复杂度足够高" or nil
+            })
+        end
+    end)
+
+    if not admin_ok then
+        table.insert(admin_checks, {
+            type = "admin",
+            name = "管理后台密码检查失败",
+            has_password = nil,
+            strength = "error",
+            score = -1,
+            issues = {"无法检查管理密码状态"},
+            error = "权限不足或系统不支持"
+        })
+    end
+
+    results.admin = admin_checks
+
+    -- 统计结果
+    local weak_count = 0
+    local medium_count = 0
+    local critical_count = 0
+
+    for _, w in ipairs(wifi_checks) do
+        if w.strength == "weak" then weak_count = weak_count + 1
+        elseif w.strength == "medium" then medium_count = medium_count + 1 end
+    end
+
+    for _, a in ipairs(admin_checks) do
+        if a.strength == "critical" then critical_count = critical_count + 1
+        elseif a.strength == "weak" then weak_count = weak_count + 1
+        elseif a.strength == "medium" then medium_count = medium_count + 1 end
+    end
+
+    results.summary = {
+        weak_count = weak_count,
+        medium_count = medium_count,
+        critical_count = critical_count,
+        total_checked = #wifi_checks + #admin_checks,
+        is_all_strong = weak_count == 0 and critical_count == 0
+    }
+
+    return results
+end
+
+-- API: 检测弱密码
+function api_check_weak_passwords()
+    local response_data = nil
+    collectgarbage("collect")
+    
+    local ok, err = pcall(function()
+        local results = check_weak_passwords()
+        
+        response_data = success_response({
+            wifi = results.wifi,
+            admin = results.admin,
+            summary = results.summary,
+            check_time = os.time()
+        })
+    end)
+    
+    if not ok then
+        response_data = error_response(-1, "弱密码检测失败", tostring(err))
+    end
+    
+    luci.http.prepare_content("application/json")
+    luci.http.write_json(response_data)
+end
+
+-- API: 运行完整安全扫描
+function api_run_security_scan()
+    if not require_csrf_token() then return end
+    
+    local response_data = nil
+    collectgarbage("collect")
+    
+    local ok, err = pcall(function()
+        -- 并行执行各项检测
+        local ports = check_router_open_ports()
+        local dns_results = check_dns_hijack()
+        local pwd_results = check_weak_passwords()
+        
+        -- 计算综合安全评分（纯累加制）
+        -- 从0分开始，通过安全配置累加得分
+        local security_score = 0
+        
+        -- ========== 维度1：开放端口（权重35%） ==========
+        -- 评分规则：扣分制+奖励制
+        -- 基准分：20分，范围：0-35分
+        local port_score = 20  -- 基准分（中间值）
+        
+        local external_port_count = 0
+        local essential_port_count = 0
+        local high_risk_port_count = 0
+        
+        for _, port in ipairs(ports) do
+            -- 统计必要端口
+            if port.category == "essential" or port.category == "iot" then
+                essential_port_count = essential_port_count + 1
+            elseif port.is_external then
+                external_port_count = external_port_count + 1
+                -- 统计高风险端口数量
+                if port.risk == "critical" then
+                    high_risk_port_count = high_risk_port_count + 2  -- 极危端口权重更高
+                elseif port.risk == "high" then
+                    high_risk_port_count = high_risk_port_count + 1
+                end
+            end
+        end
+        
+        -- ===== 扣分制 =====
+        -- 有外部开放端口：每个扣5分
+        port_score = port_score - (external_port_count * 5)
+        -- 有高风险端口：每个扣10分
+        port_score = port_score - (high_risk_port_count * 10)
+        
+        -- ===== 奖励制 =====
+        -- 必要端口配置正确(≥3个)：+10分
+        if essential_port_count >= 3 then
+            port_score = port_score + 10
+        end
+        -- 无外部开放端口：+5分（额外奖励）
+        if external_port_count == 0 then
+            port_score = port_score + 5
+        end
+        
+        -- 应用分数限制：最低0分，最高35分
+        if port_score < 0 then port_score = 0 end
+        if port_score > 35 then port_score = 35 end
+        
+        security_score = security_score + port_score
+        
+        -- ========== 维度2：DNS状态（权重25%） ==========
+        -- 最高可得25分
+        local dns_score = 0
+        
+        -- DNS解析正常：+15分
+        if dns_results.is_safe then
+            dns_score = dns_score + 15
+        end
+        -- 无DNS劫持嫌疑：+10分
+        if dns_results.suspicious_count == 0 then
+            dns_score = dns_score + 10
+        end
+        
+        security_score = security_score + math.min(dns_score, 25)
+        
+        -- ========== 维度3：密码强度（权重40%） ==========
+        -- 评分规则：弱以下扣分制，弱以上奖励制
+        -- 基准分：20分（有密码时），0分（无密码时），范围：0-40分
+        local pwd_score = 0  -- 默认0分
+        
+        if pwd_results.summary and (pwd_results.summary.total_checked or 0) > 0 then
+            -- 有密码检测时，设置基准分
+            pwd_score = 20  -- 基准分（中间值）
+            
+            local total = pwd_results.summary.total_checked or 0
+            local critical = pwd_results.summary.critical_count or 0
+            local weak = pwd_results.summary.weak_count or 0
+            local medium = pwd_results.summary.medium_count or 0
+            local strong = total - critical - weak - medium
+            
+            -- ===== 扣分制（弱以下）=====
+            -- 极弱密码：每个扣10分
+            pwd_score = pwd_score - (critical * 10)
+            -- 弱密码：每个扣5分
+            pwd_score = pwd_score - (weak * 5)
+            
+            -- ===== 奖励制（弱以上，不包含弱）=====
+            -- 中等密码：每个加5分
+            pwd_score = pwd_score + (medium * 5)
+            -- 强密码：每个加10分
+            pwd_score = pwd_score + (strong * 10)
+        end
+        -- 无密码检测时，pwd_score = 0
+        
+        -- 应用分数限制：最低0分，最高40分
+        if pwd_score < 0 then pwd_score = 0 end
+        if pwd_score > 40 then pwd_score = 40 end
+        
+        security_score = security_score + pwd_score
+        
+        -- ========== 风险原因分析 ==========
+        local risk_reasons = {}
+        
+        -- 开放端口风险分析
+        if external_port_count > 0 then
+            table.insert(risk_reasons, {
+                category = "ports",
+                level = external_port_count > 3 and "high" or "medium",
+                reason = "发现" .. external_port_count .. "个外部开放端口",
+                suggestion = "建议关闭不必要的外部端口，或使用防火墙限制访问"
+            })
+        end
+        if high_risk_port_count > 0 then
+            table.insert(risk_reasons, {
+                category = "ports",
+                level = "critical",
+                reason = "发现" .. high_risk_port_count .. "个高风险端口开放",
+                suggestion = "立即关闭Telnet(23)、Rexec(512)等高危端口"
+            })
+        end
+        
+        -- DNS风险分析
+        if not dns_results.is_safe then
+            table.insert(risk_reasons, {
+                category = "dns",
+                level = "high",
+                reason = "DNS解析存在异常",
+                suggestion = "检查DNS服务器配置，确保使用可信的DNS服务器"
+            })
+        end
+        if dns_results.suspicious_count and dns_results.suspicious_count > 0 then
+            table.insert(risk_reasons, {
+                category = "dns",
+                level = "critical",
+                reason = "检测到" .. dns_results.suspicious_count .. "个DNS劫持嫌疑",
+                suggestion = "立即检查DNS设置，更换可信的DNS服务器"
+            })
+        end
+        
+        -- 密码风险分析
+        if pwd_results.summary then
+            local critical = pwd_results.summary.critical_count or 0
+            local weak = pwd_results.summary.weak_count or 0
+            
+            if critical > 0 then
+                table.insert(risk_reasons, {
+                    category = "password",
+                    level = "critical",
+                    reason = "发现" .. critical .. "个极弱密码",
+                    suggestion = "立即更换密码，使用8位以上包含大小写字母、数字和特殊字符的密码"
+                })
+            end
+            if weak > 0 then
+                table.insert(risk_reasons, {
+                    category = "password",
+                    level = "high",
+                    reason = "发现" .. weak .. "个弱密码",
+                    suggestion = "建议增强密码强度，添加更多字符类型"
+                })
+            end
+        end
+        
+        -- 无密码检测警告
+        if not pwd_results.summary or (pwd_results.summary.total_checked or 0) == 0 then
+            table.insert(risk_reasons, {
+                category = "password",
+                level = "medium",
+                reason = "未检测到密码配置",
+                suggestion = "请确保已设置WiFi密码和管理后台密码"
+            })
+        end
+        
+        -- ========== 分数限制 ==========
+        -- 最高100分，最低0分
+        if security_score > 100 then security_score = 100 end
+        if security_score < 0 then security_score = 0 end
+        
+        -- ========== 安全等级（优化阈值） ==========
+        local level = security_score >= 90 and "安全" or 
+                     (security_score >= 75 and "良好" or 
+                     (security_score >= 60 and "一般" or 
+                     (security_score >= 45 and "风险" or "危险")))
+        
+        response_data = success_response({
+            security_score = security_score,
+            security_level = level,
+            risk_reasons = risk_reasons,
+            open_ports = {
+                ports = ports,
+                total_open = #ports,
+                external_count = external_port_count,
+                high_risk_count = high_risk_port_count
+            },
+            dns_check = {
+                tests = dns_results.tests,
+                suspicious_count = dns_results.suspicious_count,
+                failed_count = dns_results.failed_count,
+                success_count = dns_results.success_count or 0,
+                is_safe = dns_results.is_safe
+            },
+            password_check = {
+                wifi = pwd_results.wifi,
+                admin = pwd_results.admin,
+                summary = pwd_results.summary
+            },
+            scan_time = os.time()
+        })
+    end)
+    
+    if not ok then
+        response_data = error_response(-1, "安全扫描失败", tostring(err))
+    end
+    
     luci.http.prepare_content("application/json")
     luci.http.write_json(response_data)
 end
@@ -3032,6 +4305,226 @@ function api_get_traffic()
     luci.http.prepare_content("application/json")
     luci.http.write_json(response_data)
 end
+
+-- ========== 实时网速监控功能 ==========
+
+-- 从文件加载实时网速缓存
+local function load_realtime_speed_cache()
+    local fd = io.open(REALTIME_SPEED_CACHE_FILE, "r")
+    if fd then
+        local content = fd:read("*a")
+        fd:close()
+        if content and content ~= "" then
+            local ok, data = pcall(function()
+                return require("luci.jsonc").parse(content)
+            end)
+            if ok and data and type(data) == "table" then
+                return data
+            end
+        end
+    end
+    return { points = {}, last_total_rx = 0, last_total_tx = 0, last_time = 0 }
+end
+
+-- 保存实时网速缓存到文件
+local function save_realtime_speed_cache(data)
+    local dir = REALTIME_SPEED_CACHE_FILE:match("^(.+)/[^/]+$")
+    if dir then
+        os.execute("mkdir -p '" .. dir .. "' 2>/dev/null")
+    end
+    local json = require("luci.jsonc")
+    local json_str = json.stringify(data) or "{}"
+    local fd = io.open(REALTIME_SPEED_CACHE_FILE, "w")
+    if fd then
+        fd:write(json_str)
+        fd:close()
+    end
+end
+
+-- 获取当前总流量（从ipset获取）
+local function get_current_total_traffic()
+    local util = require("luci.util")
+    local total_rx = 0
+    local total_tx = 0
+    
+    -- 获取TX流量（上行）
+    local tx_output = util.exec("ipset list " .. IPSET_TX_NAME .. " 2>/dev/null")
+    if tx_output then
+        for bytes in tx_output:gmatch("packets%s+%d+%s+bytes%s+(%d+)") do
+            total_tx = total_tx + (tonumber(bytes) or 0)
+        end
+    end
+    
+    -- 获取RX流量（下行，IPv4）
+    local rx_ip_output = util.exec("ipset list " .. IPSET_RX_IP_NAME .. " 2>/dev/null")
+    if rx_ip_output then
+        for bytes in rx_ip_output:gmatch("packets%s+%d+%s+bytes%s+(%d+)") do
+            total_rx = total_rx + (tonumber(bytes) or 0)
+        end
+    end
+    
+    -- 获取RX流量（下行，IPv6）
+    local rx_ip6_output = util.exec("ipset list " .. IPSET_RX_IP6_NAME .. " 2>/dev/null")
+    if rx_ip6_output then
+        for bytes in rx_ip6_output:gmatch("packets%s+%d+%s+bytes%s+(%d+)") do
+            total_rx = total_rx + (tonumber(bytes) or 0)
+        end
+    end
+    
+    return total_rx, total_tx
+end
+
+-- 更新实时网速数据点
+local function update_realtime_speed_data()
+    local now = os.time()
+    local cache = load_realtime_speed_cache()
+    
+    -- 获取当前总流量
+    local current_rx, current_tx = get_current_total_traffic()
+    
+    pcall(nixio.syslog, "info", "[RouterAssistant] speed_update: 当前流量 RX=" .. current_rx .. " TX=" .. current_tx .. 
+        " 上次时间=" .. (cache.last_time or 0) .. 
+        " 上次RX=" .. (cache.last_total_rx or 0))
+    
+    -- 计算网速（字节/秒）
+    local speed_rx = 0
+    local speed_tx = 0
+    local time_diff = now - (cache.last_time or now)
+    
+    if cache.last_time and cache.last_time > 0 and time_diff > 0 then
+        -- 处理计数器回绕
+        local last_rx = cache.last_total_rx or 0
+        local last_tx = cache.last_total_tx or 0
+        
+        if current_rx >= last_rx then
+            speed_rx = (current_rx - last_rx) / time_diff
+        else
+            -- 计数器回绕或ipset重置
+            local diff_rx = current_rx - last_rx
+            if diff_rx < -1000000 then
+                -- 大幅减少，可能是计数器回绕（32位无符号）
+                speed_rx = ((4294967296 - last_rx) + current_rx) / time_diff
+            else
+                -- 小幅波动，可能是ipset清空重置，忽略本次计算
+                speed_rx = 0
+                pcall(nixio.syslog, "warning", "[RouterAssistant] RX流量异常减少，可能ipset重置: " .. tostring(last_rx) .. " -> " .. tostring(current_rx))
+            end
+        end
+        
+        if current_tx >= last_tx then
+            speed_tx = (current_tx - last_tx) / time_diff
+        else
+            -- 计数器回绕或ipset重置
+            local diff = current_tx - last_tx
+            if diff < -1000000 then
+                -- 大幅减少，可能是计数器回绕（32位无符号）
+                speed_tx = ((4294967296 - last_tx) + current_tx) / time_diff
+            else
+                -- 小幅波动，可能是ipset清空重置，忽略本次计算
+                speed_tx = 0
+                pcall(nixio.syslog, "warning", "[RouterAssistant] TX流量异常减少，可能ipset重置: " .. tostring(last_tx) .. " -> " .. tostring(current_tx))
+            end
+        end
+        
+        -- 负数保护：网速不可能为负值
+        if speed_rx < 0 then
+            pcall(nixio.syslog, "warning", "[RouterAssistant] RX网速为负，修正为0: " .. tostring(speed_rx))
+            speed_rx = 0
+        end
+        
+        if speed_tx < 0 then
+            pcall(nixio.syslog, "warning", "[RouterAssistant] TX网速为负，修正为0: " .. tostring(speed_tx))
+            speed_tx = 0
+        end
+        
+        pcall(nixio.syslog, "info", "[RouterAssistant] speed_update: 计算网速 RX=" .. speed_rx .. " TX=" .. speed_tx .. 
+            " 时间差=" .. time_diff .. "秒")
+    else
+        pcall(nixio.syslog, "info", "[RouterAssistant] speed_update: 首次调用或时间差无效，记录基准数据")
+    end
+    
+    -- 添加新数据点
+    local new_point = {
+        time = now,
+        speed_rx = speed_rx,
+        speed_tx = speed_tx,
+        speed_total = speed_rx + speed_tx
+    }
+    
+    table.insert(cache.points, new_point)
+    
+    -- 限制数据点数量
+    while #cache.points > MAX_REALTIME_POINTS do
+        table.remove(cache.points, 1)
+    end
+    
+    -- 更新缓存
+    cache.last_total_rx = current_rx
+    cache.last_total_tx = current_tx
+    cache.last_time = now
+    
+    save_realtime_speed_cache(cache)
+    
+    return cache.points
+end
+
+-- API接口：获取实时网速历史数据
+function api_get_traffic_history()
+    local response_data = { code = 0, points = {}, current_speed = { rx = 0, tx = 0, total = 0 } }
+    
+    local ok, err = pcall(function()
+        -- 更新并获取实时网速数据
+        local points = update_realtime_speed_data()
+        
+        pcall(nixio.syslog, "info", "[RouterAssistant] traffic_history: 获取到 " .. #points .. " 个数据点")
+        
+        -- 格式化数据点（添加显示用的时间戳）
+        local formatted_points = {}
+        for i, point in ipairs(points) do
+            table.insert(formatted_points, {
+                time = point.time,
+                display_time = os.date("%H:%M:%S", point.time),
+                speed_rx = point.speed_rx,
+                speed_tx = point.speed_tx,
+                speed_total = point.speed_total,
+                speed_rx_display = format_bytes(point.speed_rx) .. "/s",
+                speed_tx_display = format_bytes(point.speed_tx) .. "/s",
+                speed_total_display = format_bytes(point.speed_total) .. "/s"
+            })
+        end
+        
+        response_data.points = formatted_points
+        
+        -- 当前网速（最后一个数据点）
+        if #points > 0 then
+            local last = points[#points]
+            response_data.current_speed = {
+                rx = last.speed_rx,
+                tx = last.speed_tx,
+                total = last.speed_total,
+                rx_display = format_bytes(last.speed_rx) .. "/s",
+                tx_display = format_bytes(last.speed_tx) .. "/s",
+                total_display = format_bytes(last.speed_total) .. "/s"
+            }
+            
+            pcall(nixio.syslog, "info", "[RouterAssistant] traffic_history: 当前速度 RX=" .. 
+                (response_data.current_speed.rx_display or "") .. 
+                " TX=" .. (response_data.current_speed.tx_display or ""))
+        end
+    end)
+    
+    if not ok then
+        pcall(nixio.syslog, "err", "[RouterAssistant] traffic_history: 错误 - " .. tostring(err))
+        response_data = error_response(-1, "获取实时网速失败", tostring(err))
+    else
+        response_data = success_response(response_data)
+    end
+    
+    luci.http.prepare_content("application/json")
+    luci.http.write_json(response_data)
+end
+
+-- ========== 实时网速监控功能结束 ==========
 
 function api_get_wifi()
     local result = {code = 0, wifi = {}}
@@ -4681,6 +6174,464 @@ end
 
 local DIAGNOSE_TIMEOUT = 10
 local MAX_PING_COUNT = 10
+local MAX_PORT_SCAN_RANGE = 100  -- 端口扫描最大范围
+local DNS_SPEED_TEST_SERVERS = {
+    {name = "阿里云DNS", ip = "223.5.5.5"},
+    {name = "腾讯云DNS", ip = "119.29.29.29"},
+    {name = "百度DNS", ip = "180.76.76.76"},
+    {name = "114DNS", ip = "114.114.114.114"},
+    {name = "Google DNS", ip = "8.8.8.8"},
+    {name = "Cloudflare DNS", ip = "1.1.1.1"}
+}
+
+-- 格式化traceroute输出为中文风格
+local function format_traceroute_output(raw_output, target)
+    if not raw_output or raw_output == "" then
+        return "路由追踪失败，无输出结果。"
+    end
+    
+    local lines = {}
+    for line in raw_output:gmatch("[^\r\n]+") do
+        table.insert(lines, line)
+    end
+    
+    local formatted = {}
+    table.insert(formatted, "正在追踪到 " .. target .. " 的路由，最多 20 个跃点:")
+    table.insert(formatted, "")
+    
+    local hop_count = 0
+    local has_output = false
+    
+    for _, line in ipairs(lines) do
+        line = line:gsub("^%s*(.-)%s*$", "%1")
+        if line ~= "" then
+            -- 匹配标准traceroute输出:  1  192.168.1.1 (192.168.1.1)  1.234 ms  1.345 ms  1.456 ms
+            local hop, ip, hostname, t1, t2, t3 = line:match("^%s*(%d+)%s+([%w%.%-]+)%s*%(([%d%.]+)%)%s+([%d%.]+)%s*ms%s+([%d%.]+)%s*ms%s+([%d%.]+)%s*ms")
+            
+            -- 尝试匹配无域名的格式:  1  192.168.1.1  1.234 ms  1.345 ms  1.456 ms
+            if not hop then
+                hop, ip, t1, t2, t3 = line:match("^%s*(%d+)%s+([%d%.]+)%s+([%d%.]+)%s*ms%s+([%d%.]+)%s*ms%s+([%d%.]+)%s*ms")
+                if hop and ip then
+                    hostname = ip
+                end
+            end
+            
+            -- 尝试匹配超时格式:  3  * * *
+            if not hop then
+                hop = line:match("^%s*(%d+)%s+%*%s+%*%s+%*")
+                if hop then
+                    hop_count = hop_count + 1
+                    has_output = true
+                    table.insert(formatted, "  " .. hop .. "    请求超时。")
+                end
+            end
+            
+            -- 尝试匹配单时间格式:  1  192.168.1.1 (192.168.1.1)  1.234 ms
+            if not hop then
+                hop, ip, hostname, t1 = line:match("^%s*(%d+)%s+([%w%.%-]+)%s*%(([%d%.]+)%)%s+([%d%.]+)%s*ms")
+            end
+            
+            if not hop then
+                hop, ip, t1 = line:match("^%s*(%d+)%s+([%d%.]+)%s+([%d%.]+)%s*ms")
+                if hop and ip then
+                    hostname = ip
+                end
+            end
+            
+            if hop and ip then
+                hop_count = hop_count + 1
+                has_output = true
+                local display_ip = hostname or ip
+                local times_str = ""
+                if t1 then
+                    times_str = " 时间=" .. tostring(math.floor(tonumber(t1) + 0.5)) .. "ms"
+                end
+                if t2 then
+                    times_str = times_str .. " 时间=" .. tostring(math.floor(tonumber(t2) + 0.5)) .. "ms"
+                end
+                if t3 then
+                    times_str = times_str .. " 时间=" .. tostring(math.floor(tonumber(t3) + 0.5)) .. "ms"
+                end
+                table.insert(formatted, "  " .. hop .. "    " .. display_ip .. times_str)
+            end
+        end
+    end
+    
+    if not has_output then
+        table.insert(formatted, "  无法解析路由信息。")
+    end
+    
+    table.insert(formatted, "")
+    table.insert(formatted, "路由追踪完成。")
+    
+    return table.concat(formatted, "\n")
+end
+
+-- 格式化DNS查询输出为中文风格
+local function format_dns_output(raw_output, target)
+    if not raw_output or raw_output == "" then
+        return "DNS查询失败，无输出结果。"
+    end
+    
+    local lines = {}
+    for line in raw_output:gmatch("[^\r\n]+") do
+        table.insert(lines, line)
+    end
+    
+    local formatted = {}
+    table.insert(formatted, "正在查询 " .. target .. " 的DNS记录:")
+    table.insert(formatted, "")
+    
+    local has_result = false
+    local server_info = nil
+    
+    for _, line in ipairs(lines) do
+        line = line:gsub("^%s*(.-)%s*$", "%1")
+        if line ~= "" then
+            -- 匹配nslookup的Server行: Server:  192.168.1.1
+            local server = line:match("[Ss]erver:%s*([%d%.]+)")
+            if server and not server_info then
+                server_info = server
+            end
+            
+            -- 匹配nslookup的Name行: Name: baidu.com
+            local name = line:match("[Nn]ame:%s*([%w%.%-]+)")
+            
+            -- 匹配nslookup的Address行: Address: 110.242.68.66
+            local address = line:match("[Aa]ddress%s*:%s*([%d%.]+)")
+            if address and not line:match("#") then
+                has_result = true
+                table.insert(formatted, "  名称:    " .. (name or target))
+                table.insert(formatted, "  地址:    " .. address)
+                table.insert(formatted, "")
+            end
+            
+            -- 匹配nslookup的AAAA记录: Address: 2408:4000:1000::1
+            local address6 = line:match("[Aa]ddress%s*:%s*([%x:]+)")
+            if address6 and not line:match("#") and not address6:match("^%d+%.") then
+                has_result = true
+                table.insert(formatted, "  名称:    " .. (name or target))
+                table.insert(formatted, "  IPv6地址: " .. address6)
+                table.insert(formatted, "")
+            end
+            
+            -- 匹配dig的简短输出（纯IP地址行）
+            local dig_ip = line:match("^([%d%.]+)$")
+            if dig_ip then
+                has_result = true
+                table.insert(formatted, "  名称:    " .. target)
+                table.insert(formatted, "  地址:    " .. dig_ip)
+                table.insert(formatted, "")
+            end
+            
+            -- 匹配dig的IPv6输出
+            local dig_ip6 = line:match("^([%x:]+)$")
+            if dig_ip6 and not dig_ip6:match("^%d+%.") then
+                has_result = true
+                table.insert(formatted, "  名称:    " .. target)
+                table.insert(formatted, "  IPv6地址: " .. dig_ip6)
+                table.insert(formatted, "")
+            end
+        end
+    end
+    
+    if server_info then
+        table.insert(formatted, 1, "  DNS服务器: " .. server_info)
+        table.insert(formatted, 2, "")
+    end
+    
+    if not has_result then
+        table.insert(formatted, "  未找到DNS记录。")
+    end
+    
+    table.insert(formatted, "DNS查询完成。")
+    
+    return table.concat(formatted, "\n")
+end
+
+-- 格式化端口检测输出为中文风格
+local function format_port_output(raw_output, target, port)
+    if not raw_output or raw_output == "" then
+        return "端口检测失败，无输出结果。"
+    end
+    
+    local lines = {}
+    for line in raw_output:gmatch("[^\r\n]+") do
+        table.insert(lines, line)
+    end
+    
+    local formatted = {}
+    table.insert(formatted, "正在检测 " .. target .. " 的端口 " .. port .. ":")
+    table.insert(formatted, "")
+    
+    local is_open = false
+    local connection_info = nil
+    
+    for _, line in ipairs(lines) do
+        line = line:gsub("^%s*(.-)%s*$", "%1")
+        if line ~= "" then
+            -- 匹配nc成功连接: Connection to 192.168.1.1 80 port [tcp/http] succeeded!
+            local conn_target, conn_port, proto = line:match("[Cc]onnection to ([%w%.%-]+) (%d+) port %[?([^%]]*)%]? succeeded")
+            if conn_target then
+                is_open = true
+                connection_info = "  协议:    " .. (proto ~= "" and proto or "tcp") .. "\n  状态:    开放"
+            end
+            
+            -- 匹配nc简洁成功: 192.168.1.1 (192.168.1.1:80) open
+            if not is_open then
+                local open_ip, open_port = line:match("([%d%.]+).-:(%d+).*open")
+                if open_ip then
+                    is_open = true
+                    connection_info = "  协议:    tcp\n  状态:    开放"
+                end
+            end
+            
+            -- 匹配超时或拒绝
+            if line:match("[Tt]imeout") or line:match("[Rr]efused") or line:match("[Ff]ailed") or line:match("不可达") then
+                connection_info = "  状态:    关闭或不可达"
+            end
+        end
+    end
+    
+    if connection_info then
+        table.insert(formatted, connection_info)
+    else
+        -- 尝试从原始输出推断
+        if raw_output:match("succeeded") or raw_output:match("open") then
+            table.insert(formatted, "  协议:    tcp\n  状态:    开放")
+        else
+            table.insert(formatted, "  状态:    关闭或不可达")
+        end
+    end
+    
+    table.insert(formatted, "")
+    table.insert(formatted, "端口检测完成。")
+    
+    return table.concat(formatted, "\n")
+end
+
+-- 格式化端口范围扫描输出为中文风格
+local function format_port_range_output(raw_output, target, start_port, end_port)
+    local formatted = {}
+    table.insert(formatted, "正在扫描 " .. target .. " 的端口范围 " .. start_port .. "-" .. end_port .. ":")
+    table.insert(formatted, "")
+    
+    local open_ports = {}
+    local total_scanned = end_port - start_port + 1
+    
+    if raw_output and raw_output ~= "" then
+        for line in raw_output:gmatch("[^\r\n]+") do
+            local port_num = line:match("PORT:(%d+):OPEN")
+            if port_num then
+                table.insert(open_ports, tonumber(port_num))
+            end
+        end
+    end
+    
+    table.sort(open_ports)
+    
+    if #open_ports > 0 then
+        table.insert(formatted, "  开放端口:")
+        for _, port_num in ipairs(open_ports) do
+            -- 尝试获取服务名称
+            local service_name = ""
+            local common_ports = {
+                [21] = "FTP", [22] = "SSH", [23] = "Telnet", [25] = "SMTP",
+                [53] = "DNS", [80] = "HTTP", [110] = "POP3", [143] = "IMAP",
+                [443] = "HTTPS", [445] = "SMB", [3306] = "MySQL", [3389] = "RDP",
+                [8080] = "HTTP-Proxy", [8443] = "HTTPS-Alt"
+            }
+            if common_ports[port_num] then
+                service_name = " (" .. common_ports[port_num] .. ")"
+            end
+            table.insert(formatted, "    端口 " .. port_num .. service_name .. "  [开放]")
+        end
+    else
+        table.insert(formatted, "  未检测到开放端口。")
+    end
+    
+    table.insert(formatted, "")
+    table.insert(formatted, "扫描统计:")
+    table.insert(formatted, "  扫描端口数: " .. total_scanned)
+    table.insert(formatted, "  开放端口数: " .. #open_ports)
+    table.insert(formatted, "")
+    table.insert(formatted, "端口扫描完成。")
+    
+    return table.concat(formatted, "\n")
+end
+
+-- 格式化DNS测速输出为中文风格
+local function format_dns_speed_output(speed_results, target)
+    local formatted = {}
+    table.insert(formatted, "正在对 " .. target .. " 进行DNS测速对比:")
+    table.insert(formatted, "")
+    
+    -- 按响应时间排序
+    table.sort(speed_results, function(a, b)
+        if a.status == "成功" and b.status ~= "成功" then
+            return true
+        elseif a.status ~= "成功" and b.status == "成功" then
+            return false
+        else
+            return tonumber(a.time) < tonumber(b.time)
+        end
+    end)
+    
+    table.insert(formatted, "  DNS服务器测速结果:")
+    table.insert(formatted, "")
+    
+    for i, result in ipairs(speed_results) do
+        local rank = ""
+        if i == 1 then
+            rank = " [最快]"
+        end
+        local time_str = result.status == "成功" and (result.time .. "ms") or "超时"
+        table.insert(formatted, "  " .. i .. ". " .. result.name)
+        table.insert(formatted, "     IP:   " .. result.ip)
+        table.insert(formatted, "     响应: " .. time_str .. rank)
+        table.insert(formatted, "")
+    end
+    
+    -- 找出最佳DNS
+    local best_dns = nil
+    for _, result in ipairs(speed_results) do
+        if result.status == "成功" then
+            best_dns = result
+            break
+        end
+    end
+    
+    if best_dns then
+        table.insert(formatted, "推荐DNS服务器: " .. best_dns.name .. " (" .. best_dns.ip .. ")")
+    else
+        table.insert(formatted, "所有DNS服务器均无法解析该域名。")
+    end
+    
+    table.insert(formatted, "")
+    table.insert(formatted, "DNS测速完成。")
+    
+    return table.concat(formatted, "\n")
+end
+
+-- 格式化ping输出为Windows风格
+local function format_ping_output(raw_output, target, count)
+    if not raw_output or raw_output == "" then
+        return "请求超时。"
+    end
+    
+    local lines = {}
+    for line in raw_output:gmatch("[^\r\n]+") do
+        table.insert(lines, line)
+    end
+    
+    local formatted = {}
+    local received = 0
+    local lost = 0
+    local times = {}
+    local ttl_values = {}
+    local actual_bytes = "32"  -- 默认字节数
+    
+    for _, line in ipairs(lines) do
+        line = line:gsub("^%s*(.-)%s*$", "%1")  -- 去除首尾空白
+        
+        if line ~= "" then
+            -- 匹配标准Linux ping输出: 64 bytes from 192.168.1.1: icmp_seq=1 ttl=64 time=1.23 ms
+            local bytes, from_ip, seq, ttl, time_ms = line:match("(%d+) bytes from ([%d%.]+): icmp_seq=(%d+) ttl=(%d+) time=([%d%.]+) ms")
+            
+            -- 匹配OpenWrt busybox格式: 64 bytes from 192.168.1.1: seq=0 ttl=64 time=2.340 ms
+            if not bytes then
+                bytes, from_ip, seq, ttl, time_ms = line:match("(%d+) bytes from ([%d%.]+): seq=(%d+) ttl=(%d+) time=([%d%.]+) ms")
+            end
+            
+            -- 尝试匹配域名格式: 64 bytes from router.lan (192.168.1.1): icmp_seq=1 ttl=64 time=1.23 ms
+            if not bytes then
+                bytes, from_ip, seq, ttl, time_ms = line:match("(%d+) bytes from [%w%.%-]+ %(([%d%.]+)%): icmp_seq=(%d+) ttl=(%d+) time=([%d%.]+) ms")
+            end
+            
+            -- 尝试匹配域名+busybox格式: 64 bytes from router.lan (192.168.1.1): seq=0 ttl=64 time=2.340 ms
+            if not bytes then
+                bytes, from_ip, seq, ttl, time_ms = line:match("(%d+) bytes from [%w%.%-]+ %(([%d%.]+)%): seq=(%d+) ttl=(%d+) time=([%d%.]+) ms")
+            end
+            
+            if bytes and from_ip and ttl and time_ms then
+                received = received + 1
+                actual_bytes = bytes  -- 记录实际的字节数
+                local t = tonumber(time_ms)
+                if t then
+                    table.insert(times, t)
+                    -- 四舍五入到整数毫秒
+                    time_ms = tostring(math.floor(t + 0.5))
+                end
+                table.insert(ttl_values, tonumber(ttl) or 0)
+                table.insert(formatted, "来自 " .. from_ip .. " 的回复: 字节=" .. bytes .. " 时间=" .. time_ms .. "ms TTL=" .. ttl)
+            end
+            
+            -- 检测超时行
+            if line:match("Request timeout") or line:match("100%% packet loss") or line:match("no answer") then
+                lost = lost + 1
+            end
+        end
+    end
+    
+    -- 构建标题行（使用实际字节数）
+    local title_line = "正在 Ping " .. target .. " 具有 " .. actual_bytes .. " 字节的数据:"
+    
+    -- 如果没有解析到任何回复，尝试检测是否全部丢失
+    if received == 0 then
+        if raw_output:match("100%% packet loss") or raw_output:match("unreachable") or raw_output:match("unknown host") then
+            -- 清空之前的内容，重新构建
+            formatted = {}
+            table.insert(formatted, title_line)
+            table.insert(formatted, "")
+            for i = 1, count do
+                table.insert(formatted, "请求超时。")
+            end
+        end
+    else
+        -- 有回复时，在开头插入标题行
+        local new_formatted = {}
+        table.insert(new_formatted, title_line)
+        table.insert(new_formatted, "")
+        for _, v in ipairs(formatted) do
+            table.insert(new_formatted, v)
+        end
+        formatted = new_formatted
+    end
+    
+    -- 计算丢包数
+    if received > 0 then
+        lost = count - received
+        if lost < 0 then lost = 0 end
+    end
+    
+    local loss_percent = count > 0 and math.floor((lost / count) * 100) or 0
+    
+    table.insert(formatted, "")
+    table.insert(formatted, target .. " 的 Ping 统计信息:")
+    table.insert(formatted, "    数据包: 已发送 = " .. count .. "，已接收 = " .. received .. "，丢失 = " .. lost .. " (" .. loss_percent .. "% 丢失)，")
+    table.insert(formatted, "往返行程的估计时间(以毫秒为单位):")
+    
+    if #times > 0 then
+        local min_time = times[1]
+        local max_time = times[1]
+        local sum = 0
+        for _, t in ipairs(times) do
+            if t < min_time then min_time = t end
+            if t > max_time then max_time = t end
+            sum = sum + t
+        end
+        local avg_time = sum / #times
+        -- 四舍五入
+        min_time = math.floor(min_time + 0.5)
+        max_time = math.floor(max_time + 0.5)
+        avg_time = math.floor(avg_time + 0.5)
+        table.insert(formatted, "    最短 = " .. min_time .. "ms，最长 = " .. max_time .. "ms，平均 = " .. avg_time .. "ms")
+    else
+        table.insert(formatted, "    最短 = 0ms，最长 = 0ms，平均 = 0ms")
+    end
+    
+    return table.concat(formatted, "\n")
+end
 
 local function safe_target_validate(target)
     if not target or type(target) ~= "string" then return nil end
@@ -4700,6 +6651,8 @@ function api_network_diagnose()
     local target = luci.http.formvalue("target") or ""
     local count = tonumber(luci.http.formvalue("count")) or 4
     local port = tonumber(luci.http.formvalue("port")) or 0
+    local port_end = tonumber(luci.http.formvalue("port_end")) or 0
+    local scan_type = luci.http.formvalue("scan_type") or "single"  -- single 或 range
 
     local safe_target = safe_target_validate(target)
     if not safe_target then
@@ -4733,13 +6686,62 @@ function api_network_diagnose()
                 cmd = traceroute_timeout .. "traceroute -m 20 '" .. safe_target .. "' 2>&1"
             end
         elseif diagnose_type == "dns" then
-            cmd = timeout_prefix .. "nslookup '" .. safe_target .. "' 2>&1 || " .. timeout_prefix .. "dig '" .. safe_target .. "' +short 2>&1"
-        elseif diagnose_type == "port" then
-            if port < 1 or port > 65535 then
-                result.output = "错误：端口号必须在 1-65535 范围内"
-                result.success = false
+            local dns_type = luci.http.formvalue("dns_type") or "query"
+            if dns_type == "speed" then
+                -- DNS测速模式
+                local speed_results = {}
+                for _, server in ipairs(DNS_SPEED_TEST_SERVERS) do
+                    local start_time = os.clock()
+                    local dns_cmd = "nslookup '" .. safe_target .. "' " .. server.ip .. " >/dev/null 2>&1 && echo 'OK' || echo 'FAIL'"
+                    local dns_output = luci.sys.exec(dns_cmd)
+                    local elapsed = os.clock() - start_time
+                    local status = dns_output:match("OK") and "成功" or "失败"
+                    table.insert(speed_results, {
+                        name = server.name,
+                        ip = server.ip,
+                        time = string.format("%.2f", elapsed * 1000),
+                        status = status
+                    })
+                end
+                result.output = format_dns_speed_output(speed_results, safe_target)
+                result.success = true
+                return
             else
-                cmd = timeout_prefix .. "nc -zv -w 3 '" .. safe_target .. "' " .. port .. " 2>&1 || echo '端口 " .. port .. " 不可达'"
+                cmd = timeout_prefix .. "nslookup '" .. safe_target .. "' 2>&1 || " .. timeout_prefix .. "dig '" .. safe_target .. "' +short 2>&1"
+            end
+        elseif diagnose_type == "port" then
+            if scan_type == "range" then
+                -- 端口范围扫描
+                if port < 1 or port > 65535 or port_end < 1 or port_end > 65535 then
+                    result.output = "错误：端口号必须在 1-65535 范围内"
+                    result.success = false
+                    return
+                end
+                if port > port_end then
+                    port, port_end = port_end, port
+                end
+                local range_size = port_end - port + 1
+                if range_size > MAX_PORT_SCAN_RANGE then
+                    result.output = "错误：端口扫描范围不能超过 " .. MAX_PORT_SCAN_RANGE .. " 个端口"
+                    result.success = false
+                    return
+                end
+                -- 使用bash循环进行端口扫描
+                local scan_cmd = "for p in $(seq " .. port .. " " .. port_end .. "); do "
+                    .. "(timeout 2 nc -z -w 1 '" .. safe_target .. "' $p 2>/dev/null && echo \"PORT:$p:OPEN\") &"
+                    .. "done; wait"
+                local scan_output = luci.sys.exec(scan_cmd)
+                result.output = format_port_range_output(scan_output, safe_target, port, port_end)
+                result.success = true
+                return
+            else
+                -- 单个端口检测
+                if port < 1 or port > 65535 then
+                    result.output = "错误：端口号必须在 1-65535 范围内"
+                    result.success = false
+                else
+                    cmd = timeout_prefix .. "nc -zv -w 3 '" .. safe_target .. "' " .. port .. " 2>&1 || echo '端口 " .. port .. " 不可达'"
+                end
             end
         else
             result.output = "错误：不支持的诊断类型"
@@ -4748,6 +6750,20 @@ function api_network_diagnose()
 
         if cmd and cmd ~= "" then
             local output = luci.sys.exec(cmd)
+            
+            -- 根据诊断类型进行格式化
+            if output and output ~= "" then
+                if diagnose_type == "ping" then
+                    output = format_ping_output(output, safe_target, count)
+                elseif diagnose_type == "traceroute" then
+                    output = format_traceroute_output(output, safe_target)
+                elseif diagnose_type == "dns" then
+                    output = format_dns_output(output, safe_target)
+                elseif diagnose_type == "port" then
+                    output = format_port_output(output, safe_target, port)
+                end
+            end
+            
             result.output = output or ""
             result.success = true
         end
@@ -4760,4 +6776,1897 @@ function api_network_diagnose()
 
     luci.http.prepare_content("application/json")
     luci.http.write_json(success_response(result))
+end
+
+-- ============================================================
+-- 安全中心功能
+-- ============================================================
+
+-- 安全数据缓存文件
+local SECURITY_DATA_FILE = "security_data.json"
+local ARP_CACHE_FILE = "/tmp/router_assistant/arp_cache.json"
+local PORT_SCAN_LOG_FILE = "/tmp/router_assistant/port_scan.log"
+
+-- DHCP指纹数据库（设备类型识别）
+local DHCP_FINGERPRINTS = {
+    ["android"] = {
+        patterns = {"android", "dalvik", "droid"},
+        vendor = "Android",
+        device_type = "phone"
+    },
+    ["iphone"] = {
+        patterns = {"iphone", "ipad", "ios", "apple"},
+        vendor = "Apple",
+        device_type = "phone"
+    },
+    ["windows"] = {
+        patterns = {"msft", "windows", "microsoft"},
+        vendor = "Microsoft",
+        device_type = "desktop"
+    },
+    ["macos"] = {
+        patterns = {"macbook", "imac", "macos", "darwin"},
+        vendor = "Apple",
+        device_type = "laptop"
+    },
+    ["linux"] = {
+        patterns = {"linux", "ubuntu", "debian", "centos", "fedora", "redhat"},
+        vendor = "Linux",
+        device_type = "desktop"
+    },
+    ["router"] = {
+        patterns = {"router", "gateway", "openwrt", "lede"},
+        vendor = "Router",
+        device_type = "router"
+    },
+    ["printer"] = {
+        patterns = {"printer", "hp", "canon", "epson", "brother"},
+        vendor = "Printer",
+        device_type = "printer"
+    },
+    ["smart_tv"] = {
+        patterns = {"smarttv", "samsung", "lg", "sony", "tizen", "webos"},
+        vendor = "Smart TV",
+        device_type = "tv"
+    },
+    ["iot"] = {
+        patterns = {"iot", "smart", "homekit", "alexa", "echo", "googlehome"},
+        vendor = "IoT Device",
+        device_type = "smart_home"
+    },
+    ["gaming"] = {
+        patterns = {"playstation", "xbox", "nintendo", "switch"},
+        vendor = "Gaming Console",
+        device_type = "gaming"
+    }
+}
+
+-- 从OUI数据库加载厂商信息
+local function load_oui_database()
+    local json = require("luci.jsonc")
+    local file_path = get_data_dir() .. "/../oui_database.json"
+    local fd = io.open(file_path, "r")
+    if not fd then
+        return nil
+    end
+    local content = fd:read("*a")
+    fd:close()
+    if not content or content == "" then
+        return nil
+    end
+    local ok, data = pcall(json.parse, content)
+    if not ok or not data or not data.brands then
+        return nil
+    end
+    return data
+end
+
+-- ============================================================
+-- 自定义OUI数据库（用户手动添加）
+-- ============================================================
+local CUSTOM_OUI_DB_FILE = "/tmp/router_assistant/custom_oui_db.json"
+local _custom_oui_cache = nil
+
+local function load_custom_oui_database()
+    if _custom_oui_cache then return _custom_oui_cache end
+    
+    local json = require("luci.jsonc")
+    local fd = io.open(CUSTOM_OUI_DB_FILE, "r")
+    if not fd then
+        _custom_oui_cache = {}
+        return _custom_oui_cache
+    end
+    
+    local content = fd:read("*a")
+    fd:close()
+    
+    if content and content ~= "" then
+        local ok, data = pcall(json.parse, content)
+        if ok and data then
+            _custom_oui_cache = data
+            return _custom_oui_cache
+        end
+    end
+    
+    _custom_oui_cache = {}
+    return _custom_oui_cache
+end
+
+local function save_custom_oui_database(db)
+    local json = require("luci.jsonc")
+    local dir = CUSTOM_OUI_DB_FILE:match("^(.+)/[^/]+$")
+    if dir then
+        os.execute("mkdir -p '" .. dir .. "' 2>/dev/null")
+    end
+    local fd = io.open(CUSTOM_OUI_DB_FILE, "w")
+    if fd then
+        fd:write(json.stringify(db))
+        fd:close()
+    end
+    -- 清除缓存使更改立即生效
+    _custom_oui_cache = db
+end
+
+-- 从自定义OUI数据库查询厂商
+local function get_custom_oui_vendor(oui_prefix)
+    local custom_db = load_custom_oui_database()
+    if custom_db and custom_db.entries then
+        for oui, entry in pairs(custom_db.entries) do
+            if oui:upper() == oui_prefix:upper() then
+                return entry.vendor, entry.device_type or "unknown", true  -- 第三个参数表示来自自定义库
+            end
+        end
+    end
+    return nil, nil, false
+end
+
+-- 获取MAC地址对应的厂商信息
+-- 在线OUI查询缓存
+local ONLINE_OUI_CACHE_FILE = "/tmp/router_assistant/online_oui_cache.json"
+local _online_oui_cache = nil
+
+local function load_online_oui_cache()
+    if _online_oui_cache then return _online_oui_cache end
+    
+    local json = require("luci.jsonc")
+    local fd = io.open(ONLINE_OUI_CACHE_FILE, "r")
+    if not fd then
+        _online_oui_cache = {}
+        return _online_oui_cache
+    end
+    local content = fd:read("*a")
+    fd:close()
+    
+    if content and content ~= "" then
+        local ok, data = pcall(json.parse, content)
+        if ok and data then
+            _online_oui_cache = data
+            return _online_oui_cache
+        end
+    end
+    
+    _online_oui_cache = {}
+    return _online_oui_cache
+end
+
+local function save_online_oui_cache(oui, vendor)
+    _online_oui_cache[oui] = {
+        vendor = vendor,
+        cached_time = os.time()
+    }
+    
+    local json = require("luci.jsonc")
+    local dir = ONLINE_OUI_CACHE_FILE:match("^(.+)/[^/]+$")
+    if dir then
+        os.execute("mkdir -p '" .. dir .. "' 2>/dev/null")
+    end
+    local fd = io.open(ONLINE_OUI_CACHE_FILE, "w")
+    if fd then
+        fd:write(json.stringify(_online_oui_cache))
+        fd:close()
+    end
+end
+
+local function query_online_oui(oui_prefix)
+    local cache = load_online_oui_cache()
+    local clean_prefix = oui_prefix:gsub(":", ""):gsub("-", ""):upper()
+    
+    -- 检查缓存（缓存有效期7天）
+    if cache[clean_prefix] and cache[clean_prefix].cached_time then
+        local age = os.time() - cache[clean_prefix].cached_time
+        if age < 604800 then  -- 7天
+            return cache[clean_prefix].vendor
+        end
+    end
+    
+    -- 尝试在线查询（使用macvendors.com API）
+    local util = require("luci.util")
+    
+    -- 格式化MAC地址用于API查询
+    local mac_for_api = oui_prefix:sub(1,2) .. ":" .. oui_prefix:sub(3,4) .. ":" .. oui_prefix:sub(5,6) .. ":00:00:00"
+    
+    -- 使用curl查询，设置超时为3秒
+    local cmd = "curl -s -m 3 'https://api.macvendors.com/" .. mac_for_api .. "' 2>/dev/null"
+    local output = util.exec(cmd)
+    
+    if output and output ~= "" and #output < 200 and not output:match("^%{") then
+        -- 成功获取到厂商信息
+        save_online_oui_cache(clean_prefix, output)
+        return output
+    end
+    
+    -- 备用API：maclookup.app
+    local cmd2 = "curl -s -m 3 'https://api.maclookup.app/v2/macs/" .. oui_prefix .. "' 2>/dev/null"
+    local output2 = util.exec(cmd2)
+    
+    if output2 and output2 ~= "" then
+        local json = require("luci.jsonc")
+        local ok, data = pcall(json.parse, output2)
+        if ok and data and data.company then
+            save_online_oui_cache(clean_prefix, data.company)
+            return data.company
+        end
+    end
+    
+    -- 标记为已查询但未找到，避免重复请求
+    save_online_oui_cache(clean_prefix, nil)
+    return nil
+end
+
+local function get_mac_vendor_info(mac)
+    if not mac or type(mac) ~= "string" then
+        return nil, nil
+    end
+    local mac_clean = mac:upper():gsub("[^A-F0-9]", "")
+    if #mac_clean < 6 then
+        return nil, nil
+    end
+    local oui_prefix = mac_clean:sub(1, 6)
+    local formatted_oui = oui_prefix:sub(1,2) .. ":" .. oui_prefix:sub(3,4) .. ":" .. oui_prefix:sub(5,6)
+    
+    -- 1. 首先尝试自定义OUI数据库（用户手动添加的，优先级最高）
+    local custom_vendor, custom_type, is_custom = get_custom_oui_vendor(oui_prefix)
+    if custom_vendor then
+        return custom_vendor, custom_type or "unknown"
+    end
+    
+    -- 2. 尝试本地内置OUI数据库
+    local oui_db = load_oui_database()
+    if oui_db and oui_db.brands then
+        for brand_key, brand_info in pairs(oui_db.brands) do
+            if brand_info.ouis then
+                for _, oui in ipairs(brand_info.ouis) do
+                    if oui:upper() == formatted_oui then
+                        return brand_info.name or brand_key, brand_info.type or "unknown"
+                    end
+                end
+            end
+        end
+    end
+    
+    -- 3. 本地数据库未找到，尝试在线查询
+    local online_vendor = query_online_oui(formatted_oui)
+    if online_vendor then
+        return online_vendor, "unknown"
+    end
+    
+    return nil, nil
+end
+
+-- 解析DHCP请求指纹
+local function parse_dhcp_fingerprint(hostname, vendor_class)
+    local result = {
+        vendor = "Unknown",
+        device_type = "unknown",
+        confidence = 0,
+        fingerprint_data = {}
+    }
+    
+    if hostname and type(hostname) == "string" then
+        result.fingerprint_data.hostname = hostname
+        local h = hostname:lower()
+        for fp_key, fp_info in pairs(DHCP_FINGERPRINTS) do
+            for _, pattern in ipairs(fp_info.patterns) do
+                if h:match(pattern) then
+                    result.vendor = fp_info.vendor
+                    result.device_type = fp_info.device_type
+                    result.confidence = 70
+                    result.fingerprint_data.matched_pattern = pattern
+                    break
+                end
+            end
+            if result.confidence > 0 then break end
+        end
+    end
+    
+    if vendor_class and type(vendor_class) == "string" then
+        result.fingerprint_data.vendor_class = vendor_class
+        local vc = vendor_class:lower()
+        for fp_key, fp_info in pairs(DHCP_FINGERPRINTS) do
+            for _, pattern in ipairs(fp_info.patterns) do
+                if vc:match(pattern) then
+                    if result.confidence < 80 then
+                        result.vendor = fp_info.vendor
+                        result.device_type = fp_info.device_type
+                        result.confidence = math.max(result.confidence, 80)
+                        result.fingerprint_data.matched_vendor_class = pattern
+                    end
+                    break
+                end
+            end
+        end
+    end
+    
+    return result
+end
+
+-- 获取ARP表
+local function get_arp_table()
+    local arp_entries = {}
+    local fd = io.popen("cat /proc/net/arp 2>/dev/null", "r")
+    if fd then
+        for line in fd:lines() do
+            if line and not line:match("^IP") then
+                local parts = {}
+                for part in line:gmatch("%S+") do
+                    table.insert(parts, part)
+                end
+                if #parts >= 4 then
+                    local ip = parts[1]
+                    local hw_type = parts[2]
+                    local flags = parts[3]
+                    local mac = parts[4]
+                    if mac and mac ~= "00:00:00:00:00:00" and ip and ip:match("^%d+%.%d+%.%d+%.%d+$") then
+                        table.insert(arp_entries, {
+                            ip = ip,
+                            mac = mac:upper(),
+                            hw_type = hw_type,
+                            flags = flags,
+                            device = parts[5] or ""
+                        })
+                    end
+                end
+            end
+        end
+        fd:close()
+    end
+    return arp_entries
+end
+
+-- 保存ARP缓存用于检测欺骗
+local function save_arp_cache()
+    local arp_table = get_arp_table()
+    local cache_data = {
+        timestamp = os.time(),
+        entries = {}
+    }
+    for _, entry in ipairs(arp_table) do
+        cache_data.entries[entry.ip] = entry.mac
+    end
+    local json = require("luci.jsonc")
+    local dir = ARP_CACHE_FILE:match("^(.+)/[^/]+$")
+    if dir then
+        os.execute("mkdir -p '" .. dir .. "' 2>/dev/null")
+    end
+    local fd = io.open(ARP_CACHE_FILE, "w")
+    if fd then
+        fd:write(json.stringify(cache_data))
+        fd:close()
+    end
+    return cache_data
+end
+
+-- 加载ARP缓存
+local function load_arp_cache()
+    local json = require("luci.jsonc")
+    local fd = io.open(ARP_CACHE_FILE, "r")
+    if not fd then
+        return nil
+    end
+    local content = fd:read("*a")
+    fd:close()
+    if not content or content == "" then
+        return nil
+    end
+    local ok, data = pcall(json.parse, content)
+    if not ok or not data then
+        return nil
+    end
+    return data
+end
+
+-- 获取路由器自身MAC地址（用于排除误判）
+local function get_router_mac()
+    local macs = {}
+    -- 获取所有网络接口的MAC地址
+    local fd = io.popen("ip -o link show 2>/dev/null | grep 'ether' | awk '{print toupper($13)}'", "r")
+    if fd then
+        for line in fd:lines() do
+            if line and line ~= "" and #line == 17 then
+                macs[line] = true
+            end
+        end
+        fd:close()
+    end
+    return macs
+end
+
+-- 判断MAC是否为本地管理地址（第2字节最低位为1）
+local function is_locally_administered_mac(mac)
+    if not mac or type(mac) ~= "string" or #mac < 4 then return false end
+    local clean = mac:gsub(":", ""):gsub("-", ""):upper()
+    if #clean < 4 then return false end
+    local second_byte = tonumber(clean:sub(3, 4), 16)
+    if not second_byte then return false end
+    -- 第2字节最低位为1表示本地管理（软件生成的MAC）
+    return (second_byte % 2) == 1
+end
+
+-- 判断IP是否为内网私有地址
+local function is_private_ip(ip)
+    if not ip then return false end
+    return ip:match("^10%.") or 
+           ip:match("^172%.1[6-9]%.") or ip:match("^172%.2%d%.") or ip:match("^172%.3[01]%.") or
+           ip:match("^192%.168%.")
+end
+
+-- 判断IP是否为链路本地或特殊地址
+local function is_special_ip(ip)
+    if not ip then return false end
+    return ip:match("^169%.254%.") or  -- 链路本地
+           ip:match("^127%.") or       -- 回环
+           ip == "0.0.0.0" or
+           ip:match("^224%.") or       -- 组播
+           ip:match("^255%.")          -- 广播
+end
+
+-- 加载设备白名单（已确认安全的设备）
+local SECURITY_WHITELIST_FILE = "/tmp/router_assistant/security_whitelist.json"
+local _security_whitelist_cache = nil
+local _whitelist_cache_time = 0
+
+local function load_security_whitelist()
+    local now = os.time()
+    if _security_whitelist_cache and (now - _whitelist_cache_time) < 60 then
+        return _security_whitelist_cache
+    end
+    
+    local json = require("luci.jsonc")
+    local fd = io.open(SECURITY_WHITELIST_FILE, "r")
+    if not fd then
+        _security_whitelist_cache = {macs = {}}
+        _whitelist_cache_time = now
+        return _security_whitelist_cache
+    end
+    
+    local content = fd:read("*a")
+    fd:close()
+    
+    if content and content ~= "" then
+        local ok, data = pcall(json.parse, content)
+        if ok and data and data.macs then
+            _security_whitelist_cache = data
+            _whitelist_cache_time = now
+            return data
+        end
+    end
+    
+    _security_whitelist_cache = {macs = {}}
+    _whitelist_cache_time = now
+    return _security_whitelist_cache
+end
+
+-- 检查MAC是否在白名单中
+local function is_mac_whitelisted(mac)
+    local whitelist = load_security_whitelist()
+    if whitelist and whitelist.macs then
+        local clean_mac = mac:upper():gsub("[^A-F0-9]", "")
+        return whitelist.macs[clean_mac] == true
+    end
+    return false
+end
+
+-- 分析MAC地址特征
+local function analyze_mac_characteristics(mac)
+    if not mac or type(mac) ~= "string" then return {} end
+    
+    local clean = mac:upper():gsub("[^A-F0-9]", "")
+    local result = {
+        is_locally_administered = is_locally_administered_mac(mac),
+        oui_prefix = #clean >= 6 and clean:sub(1, 6) or nil,
+        vendor_info = nil,
+        likely_device_type = "unknown",
+        confidence = 0
+    }
+    
+    -- 获取厂商信息
+    local oui_db = load_oui_database()
+    if oui_db and oui_db.brands and result.oui_prefix then
+        local formatted_oui = result.oui_prefix:sub(1,2) .. ":" .. result.oui_prefix:sub(3,4) .. ":" .. result.oui_prefix:sub(5,6)
+        for brand_key, brand_info in pairs(oui_db.brands) do
+            if brand_info.ouis then
+                for _, oui in ipairs(brand_info.ouis) do
+                    if oui:upper() == formatted_oui then
+                        result.vendor_info = {
+                            name = brand_info.name,
+                            type = brand_info.type
+                        }
+                        break
+                    end
+                end
+            end
+            if result.vendor_info then break end
+        end
+    end
+    
+    -- 推断设备类型
+    if result.is_locally_administered then
+        result.likely_device_type = "virtual_interface"
+        result.confidence = 85
+        result.reason = "本地管理MAC，可能是虚拟接口/容器/Docker"
+    elseif result.vendor_info then
+        result.likely_device_type = result.vendor_info.type
+        result.confidence = 70
+        result.reason = "通过OUI数据库识别为 " .. (result.vendor_info.name or "未知")
+    else
+        result.likely_device_type = "unknown"
+        result.confidence = 20
+        result.reason = "无法识别的MAC前缀"
+    end
+    
+    return result
+end
+
+-- 检测ARP欺骗（增强版：智能分析+白名单）
+local function detect_arp_spoofing()
+    local alerts = {}
+    local current_arp = get_arp_table()
+    local cached_arp = load_arp_cache()
+    local ip_mac_current = {}
+    local mac_ip_current = {}
+    
+    -- 获取路由器自身所有MAC用于排除
+    local router_macs = get_router_mac()
+    
+    -- 第一遍：构建IP-MAC和MAC-IP映射
+    for _, entry in ipairs(current_arp) do
+        -- IP冲突检测（同一IP对应多个MAC）- 这是高危信号
+        if not ip_mac_current[entry.ip] then
+            ip_mac_current[entry.ip] = entry.mac
+        elseif ip_mac_current[entry.ip] ~= entry.mac then
+            -- 排除特殊IP的冲突（如组播等）
+            if not is_special_ip(entry.ip) then
+                table.insert(alerts, {
+                    type = "ip_conflict",
+                    severity = "high",
+                    ip = entry.ip,
+                    mac_old = ip_mac_current[entry.ip],
+                    mac_new = entry.mac,
+                    message = "IP地址 " .. entry.ip .. " 被多个MAC地址使用（可能存在ARP欺骗）",
+                    timestamp = os.time(),
+                    confidence = 90
+                })
+            end
+        end
+        
+        if not mac_ip_current[entry.mac] then
+            mac_ip_current[entry.mac] = {}
+        end
+        table.insert(mac_ip_current[entry.mac], entry.ip)
+    end
+    
+    -- 第二遍：检测多IP绑定（智能分析版）
+    for mac, ips in pairs(mac_ip_current) do
+        -- 去重IP列表
+        local unique_ips = {}
+        for _, ip in ipairs(ips) do
+            unique_ips[ip] = true
+        end
+        
+        local unique_count = 0
+        for _ in pairs(unique_ips) do unique_count = unique_count + 1 end
+        
+        -- 只有当唯一IP数量>=3时才考虑告警
+        if unique_count >= 3 then
+            -- 分析MAC特征
+            local mac_analysis = analyze_mac_characteristics(mac)
+            
+            -- 排除条件检查
+            local should_exclude = false
+            local exclude_reason = ""
+            
+            -- 1. 白名单排除
+            if is_mac_whitelisted(mac) then
+                should_exclude = true
+                exclude_reason = "已在白名单中"
+            
+            -- 2. 路由器自身MAC排除
+            elseif router_macs and router_macs[mac] then
+                should_exclude = true
+                exclude_reason = "是路由器自身接口"
+            
+            -- 3. 本地管理MAC（虚拟接口）降低严重程度
+            elseif mac_analysis.is_locally_administered then
+                -- 不完全排除，但标记为低危且提示可能是正常设备
+                exclude_reason = "本地管理MAC（" .. (mac_analysis.reason or "虚拟接口") .. ")"
+            end
+            
+            if not should_exclude and unique_count >= 3 then
+                -- 统计内网IP数量
+                local private_ip_list = {}
+                for ip, _ in pairs(unique_ips) do
+                    if is_private_ip(ip) then
+                        table.insert(private_ip_list, ip)
+                    end
+                end
+                
+                -- 智能判断：大量IP绑定 = 网关设备，完全排除告警
+                if unique_count >= 15 then
+                    -- 关联15+个IP = 几乎100%是网关/AP/路由器，不生成告警
+                    -- 记录到日志但不在界面显示
+                    
+                elseif unique_count >= 8 then
+                    -- 关联8-14个IP = 极大概率是网关设备，仅记录为"信息"不触发告警
+                    
+                elseif mac_analysis.is_locally_administered and unique_count >= 5 then
+                    -- 本地管理MAC + 多IP = 虚拟接口，不生成告警
+                    
+                else
+                    -- 其他情况才可能生成告警
+                    local severity = "medium"
+                    local reason = ""
+                    local is_likely_fp = false
+                    
+                    if mac_analysis.is_locally_administered then
+                        severity = "low"
+                        reason = "虚拟接口关联" .. #private_ip_list .. "个内网IP"
+                        is_likely_fp = true
+                    elseif #private_ip_list >= 3 then
+                        severity = "medium"
+                        reason = "跨子网绑定" .. #private_ip_list .. "个内网IP"
+                    else
+                        severity = "medium"
+                        reason = "关联" .. unique_count .. "个IP"
+                    end
+                    
+                    table.insert(alerts, {
+                        type = "mac_multi_ip",
+                        severity = severity,
+                        mac = mac,
+                        ips = private_ip_list,
+                        ip_count = unique_count,
+                        message = "MAC " .. mac .. " " .. reason,
+                        timestamp = os.time(),
+                        is_likely_false_positive = is_likely_fp,
+                        mac_analysis = mac_analysis,
+                        confidence = is_likely_fp and 30 or 60
+                    })
+                end
+            end
+        end
+    end
+    
+    -- 第三遍：检测ARP缓存变更（与历史对比）
+    if cached_arp and cached_arp.entries then
+        for ip, cached_mac in pairs(cached_arp.entries) do
+            if ip_mac_current[ip] and ip_mac_current[ip] ~= cached_mac then
+                -- 排除特殊IP和短时间内的正常变更
+                if not is_special_ip(ip) then
+                    local time_diff = os.time() - (cached_arp.timestamp or 0)
+                    -- 只在缓存存在超过30秒时才报告变更（避免初始化时的误报）
+                    if time_diff > 30 then
+                        table.insert(alerts, {
+                            type = "arp_change",
+                            severity = "high",
+                            ip = ip,
+                            mac_old = cached_mac,
+                            mac_new = ip_mac_current[ip],
+                            message = "IP " .. ip .. " 的MAC从 " .. cached_mac .. " 变更为 " .. ip_mac_current[ip] .. "（可能存在ARP欺骗）",
+                            time_since_cache = time_diff,
+                            timestamp = os.time()
+                        })
+                    end
+                end
+            end
+        end
+    end
+    
+    return alerts
+end
+
+-- ============================================================
+-- 端口扫描检测（主动扫描模式）
+-- ============================================================
+local PORT_SCAN_HISTORY_FILE = "/tmp/router_assistant/port_scan_history.json"
+local MAX_PORT_SCAN_HISTORY = 100
+
+-- 常见服务端口映射
+local SERVICE_PORTS = {
+    ["21"] = "FTP",
+    ["22"] = "SSH",
+    ["23"] = "Telnet",
+    ["25"] = "SMTP",
+    ["53"] = "DNS",
+    ["80"] = "HTTP",
+    ["110"] = "POP3",
+    ["143"] = "IMAP",
+    ["443"] = "HTTPS",
+    ["445"] = "SMB",
+    ["993"] = "IMAPS",
+    ["995"] = "POP3S",
+    ["1433"] = "MSSQL",
+    ["1521"] = "Oracle",
+    ["3306"] = "MySQL",
+    ["3389"] = "RDP",
+    ["5432"] = "PostgreSQL",
+    ["5900"] = "VNC",
+    ["6379"] = "Redis",
+    ["8080"] = "HTTP-Alt",
+    ["8443"] = "HTTPS-Alt",
+    ["8888"] = "HTTP-Alt2",
+    ["9090"] = "HTTP-Alt3"
+}
+
+-- 获取端口名称
+local function get_port_name(port)
+    return SERVICE_PORTS[tostring(port)] or "Unknown"
+end
+
+-- 主动扫描：通过netstat/ss获取当前连接信息
+local function perform_active_port_scan()
+    local connections = {}
+    local all_connections = {
+        external_count = 0,
+        internal_count = 0,
+        total_connections = 0,
+        external_ips = {},
+        internal_ips = {}
+    }
+
+    local util = require("luci.util")
+    local output = ""
+
+    -- 方式1: 尝试ss命令
+    output = util.exec("ss -tn 2>/dev/null | head -200") or ""
+
+    -- 方式2: 如果ss失败，尝试netstat
+    if not output or output == "" then
+        output = util.exec("netstat -tn 2>/dev/null | head -200") or ""
+    end
+
+    -- 方式3: 如果都失败，直接读取/proc/net/tcp
+    if not output or output == "" then
+        output = util.exec("cat /proc/net/tcp 2>/dev/null | head -200") or ""
+    end
+
+    if output and output ~= "" then
+        for line in output:gmatch("[^\r\n]+") do
+            -- 跳过表头
+            if line:match("^%s*sl") or line:match("^Proto") or line:match("^State") then
+                -- 跳过表头行
+            else
+                local local_addr, remote_addr, state = nil, nil, nil
+
+                -- 尝试解析ss/netstat格式: State Recv-Q Send-Q Local Address:Port Peer Address:Port
+                local l_addr, r_addr = line:match("%S+%s+%d+%s+%d+%s+(%S+)%s+(%S+)")
+                if l_addr and r_addr then
+                    local_addr = l_addr
+                    remote_addr = r_addr
+                else
+                    -- 尝试解析/proc/net/tcp格式: sl local_address rem_address st tx_queue rx_queue ...
+                    local l_hex, r_hex, st_hex = line:match("%d+:%s+(%S+)%s+(%S+)%s+(%S+)")
+                    if l_hex and r_hex then
+                        -- 转换十六进制地址为点分十进制
+                        local function hex_to_ip(hex)
+                            local ip_hex, port_hex = hex:match("([^:]+):(%x+)")
+                            if ip_hex and port_hex then
+                                local a = tonumber(ip_hex:sub(7, 8), 16)
+                                local b = tonumber(ip_hex:sub(5, 6), 16)
+                                local c = tonumber(ip_hex:sub(3, 4), 16)
+                                local d = tonumber(ip_hex:sub(1, 2), 16)
+                                local port = tonumber(port_hex, 16)
+                                if a and b and c and d and port then
+                                    return string.format("%d.%d.%d.%d", a, b, c, d), port
+                                end
+                            end
+                            return nil, nil
+                        end
+                        local_addr, _ = hex_to_ip(l_hex)
+                        remote_addr, r_port = hex_to_ip(r_hex)
+                    end
+                end
+
+                if remote_addr then
+                    -- 从地址中提取IP和端口
+                    local r_ip, r_port = remote_addr:match("([^%[%]:]+):(%d+)$")
+                    if not r_ip then
+                        r_ip = remote_addr:match("^%[?([^%]]+)%]?:")
+                    end
+                    if not r_ip then
+                        r_ip = remote_addr
+                    end
+
+                    if r_ip then
+                        -- 清理IPv6的方括号
+                        r_ip = r_ip:gsub("^%[", ""):gsub("%]$", "")
+
+                        all_connections.total_connections = all_connections.total_connections + 1
+
+                        -- 判断是内部还是外部IP
+                        local is_external = not is_private_ip(r_ip) and not is_special_ip(r_ip)
+
+                        if is_external then
+                            all_connections.external_count = all_connections.external_count + 1
+                            all_connections.external_ips[r_ip] = true
+
+                            -- 外部连接才进行详细分析和告警
+                            if not connections[r_ip] then
+                                connections[r_ip] = {
+                                    ip = r_ip,
+                                    ports = {},
+                                    port_count = 0,
+                                    connection_count = 0,
+                                    states = {}
+                                }
+                            end
+
+                            local port_name = get_port_name(tostring(r_port or "0"))
+                            local port_key = tostring(r_port or "0")
+                            connections[r_ip].ports[port_key] = {
+                                port = port_key,
+                                name = port_name,
+                                state = state or "UNKNOWN"
+                            }
+                            connections[r_ip].port_count = connections[r_ip].port_count + 1
+                            connections[r_ip].connection_count = connections[r_ip].connection_count + 1
+
+                            if state then
+                                if not connections[r_ip].states[state] then
+                                    connections[r_ip].states[state] = 0
+                                end
+                                connections[r_ip].states[state] = connections[r_ip].states[state] + 1
+                            end
+                        else
+                            all_connections.internal_count = all_connections.internal_count + 1
+                            all_connections.internal_ips[r_ip] = true
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    return connections, all_connections
+end
+
+-- 分析连接模式，识别可疑的端口扫描行为
+local function analyze_scan_patterns(connections)
+    local alerts = {}
+
+    for ip, data in pairs(connections) do
+        local suspicious_score = 0
+        local reasons = {}
+
+        -- 检查1：连接到多个不同端口（可能是扫描）
+        if data.port_count >= 5 then
+            suspicious_score = suspicious_score + 30
+            table.insert(reasons, "连接" .. data.port_count .. "个不同端口")
+        end
+
+        -- 检查2：大量连接（可能是暴力破解或扫描）
+        if data.connection_count >= 20 then
+            suspicious_score = suspicious_score + 25
+            table.insert(reasons, "共" .. data.connection_count .. "次连接尝试")
+        end
+
+        -- 检查3：连接到敏感端口
+        local sensitive_ports = {"22", "23", "3389", "5900", "3306", "6379"}
+        local has_sensitive = false
+        for _, sp in ipairs(sensitive_ports) do
+            if data.ports[sp] then
+                has_sensitive = true
+                suspicious_score = suspicious_score + 20
+                table.insert(reasons, "访问敏感端口:" .. sp .. "(" .. (data.ports[sp].name or "") .. ")")
+            end
+        end
+
+        -- 检查4：SYN_SENT状态多（可能正在扫描）
+        if data.states["SYN-SENT"] and data.states["SYN-SENT"] >= 10 then
+            suspicious_score = suspicious_score + 25
+            table.insert(reasons, data.states["SYN-SENT"] .. "个半开连接")
+        end
+
+        -- 判断是否为可疑行为
+        if suspicious_score >= 30 then
+            local severity = "low"
+            if suspicious_score >= 70 then
+                severity = "high"
+            elseif suspicious_score >= 50 then
+                severity = "medium"
+            end
+
+            table.insert(alerts, {
+                ip = ip,
+                ports = data.ports,
+                port_count = data.port_count,
+                connection_count = data.connection_count,
+                states = data.states,
+                suspicious_score = suspicious_score,
+                severity = severity,
+                reasons = reasons,
+                timestamp = os.time(),
+                is_suspicious = true
+            })
+        end
+    end
+
+    -- 按可疑程度排序
+    table.sort(alerts, function(a, b)
+        return (a.suspicious_score or 0) > (b.suspicious_score or 0)
+    end)
+
+    return alerts
+end
+
+-- 获取端口扫描数据（统一接口）
+local function get_port_scan_data()
+    local connections, all_connections = perform_active_port_scan()
+    local alerts = analyze_scan_patterns(connections)
+
+    -- 统计外部IP数量
+    local external_ip_count = 0
+    for _ in pairs(all_connections.external_ips) do
+        external_ip_count = external_ip_count + 1
+    end
+
+    return alerts, {
+        external_ip_count = external_ip_count,
+        total_connections = all_connections.total_connections,
+        internal_connections = all_connections.internal_count,
+        external_connections = all_connections.external_count,
+        suspicious_alerts = #alerts
+    }
+end
+
+-- 加载端口扫描历史
+local function load_port_scan_history()
+    local json = require("luci.jsonc")
+    local fd = io.open(PORT_SCAN_HISTORY_FILE, "r")
+    if not fd then
+        return {scans = {}}
+    end
+    local content = fd:read("*a")
+    fd:close()
+    
+    if content and content ~= "" then
+        local ok, data = pcall(json.parse, content)
+        if ok and data and data.scans then
+            return data
+        end
+    end
+    
+    return {scans = {}}
+end
+
+-- 保存端口扫描记录到历史
+local function save_port_scan_to_history(scan)
+    local history = load_port_scan_history()
+    
+    table.insert(history.scans, 1, {
+        id = os.time() .. math.random(1000, 9999),
+        ip = scan.ip or "",
+        port_count = scan.port_count or 0,
+        connection_count = scan.connection_count or 0,
+        severity = scan.severity or "low",
+        suspicious_score = scan.suspicious_score or 0,
+        reasons = scan.reasons or {},
+        timestamp = os.time(),
+        handled = false,
+        handle_action = nil,
+        handle_time = nil
+    })
+    
+    -- 限制历史数量
+    while #history.scans > MAX_PORT_SCAN_HISTORY do
+        table.remove(history.scans)
+    end
+    
+    local json = require("luci.jsonc")
+    local dir = PORT_SCAN_HISTORY_FILE:match("^(.+)/[^/]+$")
+    if dir then
+        os.execute("mkdir -p '" .. dir .. "' 2>/dev/null")
+    end
+    local fd = io.open(PORT_SCAN_HISTORY_FILE, "w")
+    if fd then
+        fd:write(json.stringify(history))
+        fd:close()
+    end
+end
+
+-- API: 启动端口扫描检测
+function api_start_port_scan()
+    if not require_csrf_token() then return end
+
+    local response_data = nil
+    collectgarbage("collect")
+
+    local ok, err = pcall(function()
+        -- 执行主动扫描（获取完整数据）
+        local connections, all_connections = perform_active_port_scan()
+
+        -- 分析扫描模式
+        local scan_alerts = analyze_scan_patterns(connections)
+
+        -- 将可疑记录保存到历史
+        for _, alert in ipairs(scan_alerts) do
+            save_port_scan_to_history(alert)
+        end
+
+        -- 统计外部IP数量
+        local external_ip_count = 0
+        for _ in pairs(all_connections.external_ips) do
+            external_ip_count = external_ip_count + 1
+        end
+
+        response_data = success_response({
+            message = "端口扫描完成",
+            connections = connections,
+            alerts = scan_alerts,
+            total_external_ips = external_ip_count,
+            total_connections = all_connections.total_connections,
+            suspicious_count = #scan_alerts,
+            internal_connections = all_connections.internal_connections,
+            external_connections = all_connections.external_count,
+            scan_time = os.time()
+        })
+    end)
+
+    if not ok then
+        response_data = error_response(-1, "端口扫描失败", tostring(err))
+    end
+
+    luci.http.prepare_content("application/json")
+    luci.http.write_json(response_data)
+end
+
+-- API: 获取当前端口扫描检测结果（兼容旧接口）
+function api_get_port_scan_detection()
+    local response_data = nil
+    collectgarbage("collect")
+
+    local ok, err = pcall(function()
+        -- 执行快速扫描
+        local connections, all_connections = perform_active_port_scan()
+        local scan_alerts = analyze_scan_patterns(connections)
+
+        -- 统计外部IP数量
+        local external_ip_count = 0
+        for _ in pairs(all_connections.external_ips) do
+            external_ip_count = external_ip_count + 1
+        end
+
+        -- 转换为兼容格式
+        local result = {}
+        for _, alert in ipairs(scan_alerts) do
+            local port_list = {}
+            for port, info in pairs(alert.ports or {}) do
+                table.insert(port_list, port .. "(" .. (info.name or "") .. ")")
+            end
+
+            table.insert(result, {
+                ip = alert.ip,
+                port_count = alert.port_count,
+                ports = table.concat(port_list, ","),
+                scan_count = alert.connection_count,
+                severity = alert.severity,
+                suspicious_score = alert.suspicious_score,
+                reasons = alert.reasons,
+                first_seen = alert.timestamp,
+                last_seen = os.time()
+            })
+        end
+
+        response_data = success_response({
+            scans = result,
+            scan_count = #result,
+            external_ip_count = external_ip_count,
+            total_connections = all_connections.total_connections,
+            internal_connections = all_connections.internal_count,
+            external_connections = all_connections.external_count,
+            last_check = os.time()
+        })
+    end)
+    
+    if not ok then
+        response_data = error_response(-1, "获取端口扫描检测结果失败", tostring(err))
+    end
+    
+    luci.http.prepare_content("application/json")
+    luci.http.write_json(response_data)
+end
+
+-- API: 获取端口扫描历史
+function api_get_port_scan_history()
+    local response_data = nil
+    collectgarbage("collect")
+    
+    local ok, err = pcall(function()
+        local history = load_port_scan_history()
+        
+        local total_count = #history.scans
+        local unhandled_count = 0
+        local high_risk_count = 0
+        
+        for _, scan in ipairs(history.scans) do
+            if not scan.handled then
+                unhandled_count = unhandled_count + 1
+            end
+            if scan.severity == "high" then
+                high_risk_count = high_risk_count + 1
+            end
+        end
+        
+        response_data = success_response({
+            scans = history.scans,
+            total_count = total_count,
+            unhandled_count = unhandled_count,
+            high_risk_count = high_risk_count
+        })
+    end)
+    
+    if not ok then
+        response_data = error_response(-1, "获取扫描历史失败", tostring(err))
+    end
+    
+    luci.http.prepare_content("application/json")
+    luci.http.write_json(response_data)
+end
+
+-- API: 处理端口扫描告警
+function api_handle_port_scan_alert()
+    if not require_csrf_token() then return end
+    
+    local response_data = nil
+    collectgarbage("collect")
+    
+    local alert_id = luci.http.formvalue("alert_id") or ""
+    local action = luci.http.formvalue("action") or ""
+    local note = luci.http.formvalue("note") or ""
+    
+    local ok, err = pcall(function()
+        if not alert_id or alert_id == "" then
+            response_data = error_response(-1, "告警ID不能为空")
+            return
+        end
+        
+        if not action or (action ~= "block" and action ~= "ignore" and action ~= "whitelist") then
+            response_data = error_response(-1, "无效的操作类型")
+            return
+        end
+        
+        local history = load_port_scan_history()
+        local found = false
+        local target_ip = ""
+        
+        for i, scan in ipairs(history.scans) do
+            if tostring(scan.id) == alert_id then
+                scan.handled = true
+                scan.handle_action = action
+                scan.handle_time = os.time()
+                target_ip = scan.ip or ""
+                found = true
+                break
+            end
+        end
+        
+        if not found then
+            response_data = error_response(-1, "未找到该扫描记录")
+            return
+        end
+        
+        -- 如果选择阻止，添加iptables规则
+        if action == "block" and target_ip ~= "" then
+            os.execute("iptables -A INPUT -s " .. target_ip .. " -j DROP 2>/dev/null")
+        end
+        
+        -- 保存更新后的历史
+        local json = require("luci.jsonc")
+        local fd = io.open(PORT_SCAN_HISTORY_FILE, "w")
+        if fd then
+            fd:write(json.stringify(history))
+            fd:close()
+        end
+        
+        local action_text
+        if action == "block" then
+            action_text = "已阻止"
+        elseif action == "ignore" then
+            action_text = "已忽略"
+        else
+            action_text = "已加入白名单"
+        end
+        
+        response_data = success_response({
+            message = "扫描记录" .. action_text,
+            alert_id = alert_id,
+            action = action,
+            target_ip = target_ip
+        })
+    end)
+    
+    if not ok then
+        response_data = error_response(-1, "处理失败", tostring(err))
+    end
+    
+    luci.http.prepare_content("application/json")
+    luci.http.write_json(response_data)
+end
+
+-- API: 获取安全概览
+function api_get_security_overview()
+    local response_data = nil
+    collectgarbage("collect")
+
+    local ok, err = pcall(function()
+        local arp_alerts = detect_arp_spoofing()
+        local port_scan_alerts, port_scan_stats = get_port_scan_data()
+        local arp_table = get_arp_table()
+
+        local high_risk_count = 0
+        local medium_risk_count = 0
+
+        for _, alert in ipairs(arp_alerts) do
+            if alert.severity == "high" then
+                high_risk_count = high_risk_count + 1
+            else
+                medium_risk_count = medium_risk_count + 1
+            end
+        end
+
+        for _, scan in ipairs(port_scan_alerts) do
+            if scan.severity == "high" then
+                high_risk_count = high_risk_count + 1
+            elseif scan.severity == "medium" then
+                medium_risk_count = medium_risk_count + 1
+            end
+        end
+
+        local security_score = 100
+        security_score = security_score - (high_risk_count * 20)
+        security_score = security_score - (medium_risk_count * 10)
+        if security_score < 0 then security_score = 0 end
+
+        response_data = success_response({
+            security_score = security_score,
+            security_level = security_score >= 80 and "安全" or (security_score >= 60 and "一般" or (security_score >= 40 and "风险" or "危险")),
+            arp_alerts_count = #arp_alerts,
+            port_scan_count = #port_scan_alerts,
+            high_risk_count = high_risk_count,
+            medium_risk_count = medium_risk_count,
+            arp_table_count = #arp_table,
+            -- 新增端口扫描统计信息
+            port_scan_stats = port_scan_stats or {
+                external_ip_count = 0,
+                total_connections = 0,
+                internal_connections = 0,
+                external_connections = 0,
+                suspicious_alerts = 0
+            },
+            last_update = os.time()
+        })
+    end)
+    
+    if not ok then
+        response_data = error_response(-1, "获取安全概览失败", tostring(err))
+    end
+    
+    luci.http.prepare_content("application/json")
+    luci.http.write_json(response_data)
+end
+
+-- API: 获取MAC厂商信息
+function api_get_mac_vendor()
+    local response_data = nil
+    collectgarbage("collect")
+    
+    local ok, err = pcall(function()
+        local mac = luci.http.formvalue("mac") or ""
+        local vendor, device_type = get_mac_vendor_info(mac)
+        
+        -- 获取MAC特征分析
+        local mac_analysis = analyze_mac_characteristics(mac)
+        
+        -- 判断数据来源
+        local source = "local_db"
+        if not vendor then
+            source = "online_api"
+            vendor = query_online_oui(mac:sub(1, 2) .. ":" .. mac:sub(4,5) .. ":" .. mac:sub(7,8))
+            if not vendor then
+                source = "not_found"
+                vendor = nil
+            end
+        end
+        
+        response_data = success_response({
+            mac = mac,
+            vendor = vendor or "未知厂商",
+            device_type = device_type or "unknown",
+            source = source,
+            is_locally_administered = mac_analysis.is_locally_administered,
+            oui_prefix = mac_analysis.oui_prefix,
+            suggestion = generate_vendor_suggestion(mac, vendor, mac_analysis)
+        })
+    end)
+    
+    if not ok then
+        response_data = error_response(-1, "获取MAC厂商失败", tostring(err))
+    end
+    
+    luci.http.prepare_content("application/json")
+    luci.http.write_json(response_data)
+end
+
+-- 生成厂商查询建议
+local function generate_vendor_suggestion(mac, vendor, mac_analysis)
+    if vendor and vendor ~= "未知厂商" then
+        return nil  -- 已识别，无需建议
+    end
+    
+    local suggestions = {}
+    
+    if mac_analysis.is_locally_administered then
+        table.insert(suggestions, {
+            type = "info",
+            text = "这是本地管理MAC地址（软件生成），可能来自虚拟机、Docker容器或WiFi中继器"
+        })
+    else
+        table.insert(suggestions, {
+            type = "info", 
+            text = "该OUI前缀未在本地数据库和在线API中找到"
+        })
+        table.insert(suggestions, {
+            type = "tip",
+            text = "可能是新注册的厂商或专用设备，建议提供主机名进行设备指纹识别"
+        })
+    end
+    
+    return suggestions
+end
+
+-- API: 获取设备指纹识别
+function api_get_device_fingerprint()
+    local response_data = nil
+    collectgarbage("collect")
+    
+    local ok, err = pcall(function()
+        local mac = luci.http.formvalue("mac") or ""
+        local hostname = luci.http.formvalue("hostname") or ""
+        
+        local dhcp_leases = load_dhcp_leases()
+        local lease_info = dhcp_leases[mac:upper()]
+        
+        local fingerprint = parse_dhcp_fingerprint(hostname, lease_info and lease_info.vendor_class)
+        
+        local vendor, device_type = get_mac_vendor_info(mac)
+        if vendor and fingerprint.confidence < 70 then
+            fingerprint.vendor = vendor
+            fingerprint.device_type = device_type
+            fingerprint.confidence = 60
+            fingerprint.fingerprint_data.source = "oui_database"
+        end
+        
+        response_data = success_response({
+            mac = mac,
+            hostname = hostname,
+            fingerprint = fingerprint
+        })
+    end)
+    
+    if not ok then
+        response_data = error_response(-1, "获取设备指纹失败", tostring(err))
+    end
+    
+    luci.http.prepare_content("application/json")
+    luci.http.write_json(response_data)
+end
+
+-- API: 获取ARP欺骗检测结果
+function api_get_arp_spoof_detection()
+    local response_data = nil
+    collectgarbage("collect")
+
+    local ok, err = pcall(function()
+        local alerts = detect_arp_spoofing()
+        local arp_table = get_arp_table()
+
+        -- 保存当前ARP缓存用于下次对比
+        save_arp_cache()
+
+        response_data = success_response({
+            alerts = alerts,
+            arp_table = arp_table,
+            alert_count = #alerts,
+            last_check = os.time()
+        })
+    end)
+
+    if not ok then
+        response_data = error_response(-1, "获取ARP检测结果失败", tostring(err))
+    end
+
+    luci.http.prepare_content("application/json")
+    luci.http.write_json(response_data)
+end
+
+-- API: 获取端口扫描检测结果
+function api_get_port_scan_detection()
+    local response_data = nil
+    collectgarbage("collect")
+    
+    local ok, err = pcall(function()
+        local scans = get_port_scan_data()
+        
+        response_data = success_response({
+            scans = scans,
+            scan_count = #scans,
+            last_check = os.time()
+        })
+    end)
+    
+    if not ok then
+        response_data = error_response(-1, "获取端口扫描检测结果失败", tostring(err))
+    end
+    
+    luci.http.prepare_content("application/json")
+    luci.http.write_json(response_data)
+end
+
+-- ============================================================
+-- ARP告警历史记录与管理
+-- ============================================================
+local ARP_ALERT_HISTORY_FILE = "/tmp/router_assistant/arp_alert_history.json"
+local MAX_ALERT_HISTORY = 200  -- 最多保存200条历史记录
+
+local function load_arp_alert_history()
+    local json = require("luci.jsonc")
+    local fd = io.open(ARP_ALERT_HISTORY_FILE, "r")
+    if not fd then
+        return {alerts = {}}
+    end
+    local content = fd:read("*a")
+    fd:close()
+    
+    if content and content ~= "" then
+        local ok, data = pcall(json.parse, content)
+        if ok and data and data.alerts then
+            return data
+        end
+    end
+    
+    return {alerts = {}}
+end
+
+local function save_arp_alert_to_history(alert)
+    local history = load_arp_alert_history()
+    
+    -- 添加新记录
+    table.insert(history.alerts, 1, {
+        id = os.time() .. math.random(1000, 9999),
+        type = alert.type,
+        severity = alert.severity,
+        mac = alert.mac or "",
+        ip = alert.ip or "",
+        mac_old = alert.mac_old or "",
+        mac_new = alert.mac_new or "",
+        message = alert.message or "",
+        timestamp = os.time(),
+        handled = false,
+        handle_action = nil,
+        handle_time = nil
+    })
+    
+    -- 限制历史记录数量
+    while #history.alerts > MAX_ALERT_HISTORY do
+        table.remove(history.alerts)
+    end
+    
+    -- 保存到文件
+    local json = require("luci.jsonc")
+    local dir = ARP_ALERT_HISTORY_FILE:match("^(.+)/[^/]+$")
+    if dir then
+        os.execute("mkdir -p '" .. dir .. "' 2>/dev/null")
+    end
+    local fd = io.open(ARP_ALERT_HISTORY_FILE, "w")
+    if fd then
+        fd:write(json.stringify(history))
+        fd:close()
+    end
+end
+
+-- 在检测到ARP欺骗时自动保存到历史记录
+local function detect_and_log_arp_spoofing()
+    local alerts = detect_arp_spoofing()
+    
+    -- 将当前告警保存到历史（只保存未处理的新告警）
+    for _, alert in ipairs(alerts) do
+        if not alert.is_likely_false_positive then
+            save_arp_alert_to_history(alert)
+        end
+    end
+    
+    return alerts
+end
+
+-- API: 获取ARP告警历史
+function api_get_arp_alert_history()
+    local response_data = nil
+    collectgarbage("collect")
+    
+    local ok, err = pcall(function()
+        local history = load_arp_alert_history()
+        
+        -- 统计数据
+        local total_count = #history.alerts
+        local unhandled_count = 0
+        local high_risk_count = 0
+        
+        for _, alert in ipairs(history.alerts) do
+            if not alert.handled then
+                unhandled_count = unhandled_count + 1
+            end
+            if alert.severity == "high" then
+                high_risk_count = high_risk_count + 1
+            end
+        end
+        
+        response_data = success_response({
+            alerts = history.alerts,
+            total_count = total_count,
+            unhandled_count = unhandled_count,
+            high_risk_count = high_risk_count
+        })
+    end)
+    
+    if not ok then
+        response_data = error_response(-1, "获取告警历史失败", tostring(err))
+    end
+    
+    luci.http.prepare_content("application/json")
+    luci.http.write_json(response_data)
+end
+
+-- API: 处理ARP告警（隔离/忽略）
+function api_handle_arp_alert()
+    if not require_csrf_token() then return end
+    
+    local response_data = nil
+    collectgarbage("collect")
+    
+    local alert_id = luci.http.formvalue("alert_id") or ""
+    local action = luci.http.formvalue("action") or ""  -- isolate / ignore / whitelist
+    local note = luci.http.formvalue("note") or ""
+    
+    local ok, err = pcall(function()
+        if not alert_id or alert_id == "" then
+            response_data = error_response(-1, "告警ID不能为空")
+            return
+        end
+        
+        if not action or (action ~= "isolate" and action ~= "ignore" and action ~= "whitelist") then
+            response_data = error_response(-1, "无效的操作类型")
+            return
+        end
+        
+        local history = load_arp_alert_history()
+        local found = false
+        local target_mac = ""
+        
+        -- 查找并更新告警状态
+        for i, alert in ipairs(history.alerts) do
+            if tostring(alert.id) == alert_id then
+                alert.handled = true
+                alert.handle_action = action
+                alert.handle_time = os.time()
+                target_mac = alert.mac or alert.mac_old or alert.mac_new or ""
+                found = true
+                break
+            end
+        end
+        
+        if not found then
+            response_data = error_response(-1, "未找到该告警记录")
+            return
+        end
+        
+        -- 根据操作执行相应动作
+        if action == "whitelist" and target_mac ~= "" then
+            -- 加入白名单
+            local whitelist = load_security_whitelist()
+            if not whitelist.macs then
+                whitelist.macs = {}
+            end
+            local clean_mac = target_mac:gsub(":", ""):gsub("-", ""):upper()
+            whitelist.macs[clean_mac] = {
+                added_time = os.time(),
+                note = note or "从ARP告警中添加",
+                source = "auto"
+            }
+            save_security_whitelist(whitelist)
+        elseif action == "isolate" and target_mac ~= "" then
+            -- 隔离设备：添加到黑名单并记录
+            local blacklist_file = "/tmp/router_assistant/blacklist_macs.json"
+            local json = require("luci.jsonc")
+            
+            local blacklist = {}
+            local bl_fd = io.open(blacklist_file, "r")
+            if bl_fd then
+                local content = bl_fd:read("*a")
+                bl_fd:close()
+                if content and content ~= "" then
+                    local bl_ok, bl_data = pcall(json.parse, content)
+                    if bl_ok and bl_data then
+                        blacklist = bl_data.macs or {}
+                    end
+                end
+            end
+            
+            local clean_mac = target_mac:gsub(":", ""):gsub("-", ""):upper()
+            blacklist[clean_mac] = {
+                reason = note or "ARP异常行为",
+                added_time = os.time(),
+                source = "arp_detection"
+            }
+            
+            local dir = blacklist_file:match("^(.+)/[^/]+$")
+            if dir then
+                os.execute("mkdir -p '" .. dir .. "' 2>/dev/null")
+            end
+            local new_fd = io.open(blacklist_file, "w")
+            if new_fd then
+                new_fd:write(json.stringify({macs = blacklist}))
+                new_fd:close()
+            end
+        end
+        
+        -- 保存更新的历史记录
+        local json = require("luci.jsonc")
+        local fd = io.open(ARP_ALERT_HISTORY_FILE, "w")
+        if fd then
+            fd:write(json.stringify(history))
+            fd:close()
+        end
+        
+        local action_text
+        if action == "isolate" then
+            action_text = "已隔离"
+        elseif action == "ignore" then
+            action_text = "已忽略"
+        else
+            action_text = "已加入白名单"
+        end
+        
+        response_data = success_response({
+            message = "告警" .. action_text,
+            alert_id = alert_id,
+            action = action,
+            target_mac = target_mac
+        })
+    end)
+    
+    if not ok then
+        response_data = error_response(-1, "处理告警失败", tostring(err))
+    end
+    
+    luci.http.prepare_content("application/json")
+    luci.http.write_json(response_data)
+end
+
+-- API: 清空告警历史
+function api_clear_arp_history()
+    if not require_csrf_token() then return end
+    
+    local response_data = nil
+    collectgarbage("collect")
+    
+    local ok, err = pcall(function()
+        -- 清空历史文件
+        local fd = io.open(ARP_ALERT_HISTORY_FILE, "w")
+        if fd then
+            fd:write('{"alerts":[]}')
+            fd:close()
+        end
+        
+        response_data = success_response({
+            message = "告警历史已清空",
+            timestamp = os.time()
+        })
+    end)
+    
+    if not ok then
+        response_data = error_response(-1, "清空历史失败", tostring(err))
+    end
+    
+    luci.http.prepare_content("application/json")
+    luci.http.write_json(response_data)
+end
+
+-- API: 刷新安全数据
+function api_refresh_security_data()
+    if not require_csrf_token() then return end
+    
+    local response_data = nil
+    collectgarbage("collect")
+    
+    local ok, err = pcall(function()
+        save_arp_cache()
+        
+        response_data = success_response({
+            message = "安全数据已刷新",
+            timestamp = os.time()
+        })
+    end)
+    
+    if not ok then
+        response_data = error_response(-1, "刷新安全数据失败", tostring(err))
+    end
+    
+    luci.http.prepare_content("application/json")
+    luci.http.write_json(response_data)
+end
+
+-- ============================================================
+-- 安全白名单管理API
+-- ============================================================
+
+-- 保存白名单到文件
+local function save_security_whitelist(whitelist)
+    local json = require("luci.jsonc")
+    local dir = SECURITY_WHITELIST_FILE:match("^(.+)/[^/]+$")
+    if dir then
+        os.execute("mkdir -p '" .. dir .. "' 2>/dev/null")
+    end
+    local json_str = json.stringify(whitelist) or '{"macs":{}}'
+    local fd = io.open(SECURITY_WHITELIST_FILE, "w")
+    if fd then
+        fd:write(json_str)
+        fd:close()
+    end
+end
+
+-- API: 获取安全白名单
+function api_get_security_whitelist()
+    local response_data = nil
+    collectgarbage("collect")
+    
+    local ok, err = pcall(function()
+        local whitelist = load_security_whitelist()
+        local mac_list = {}
+        
+        if whitelist and whitelist.macs then
+            for mac, _ in pairs(whitelist.macs) do
+                table.insert(mac_list, mac)
+            end
+        end
+        
+        -- 添加自动识别的本地管理MAC（建议加入白名单）
+        local auto_suggested = {}
+        local arp_table = get_arp_table()
+        for _, entry in ipairs(arp_table) do
+            if is_locally_administered_mac(entry.mac) and not is_mac_whitelisted(entry.mac) then
+                table.insert(auto_suggested, {
+                    mac = entry.mac,
+                    reason = "本地管理MAC（虚拟接口）",
+                    ip_count = 0
+                })
+            end
+        end
+        
+        response_data = success_response({
+            whitelisted_macs = mac_list,
+            suggested_macs = auto_suggested,
+            total_whitelisted = #mac_list,
+            total_suggested = #auto_suggested
+        })
+    end)
+    
+    if not ok then
+        response_data = error_response(-1, "获取白名单失败", tostring(err))
+    end
+    
+    luci.http.prepare_content("application/json")
+    luci.http.write_json(response_data)
+end
+
+-- API: 添加到白名单
+function api_add_security_whitelist()
+    if not require_csrf_token() then return end
+    
+    local response_data = nil
+    collectgarbage("collect")
+    
+    local mac = luci.http.formvalue("mac") or ""
+    local note = luci.http.formvalue("note") or ""
+    
+    local ok, err = pcall(function()
+        if not mac or mac == "" then
+            response_data = error_response(-1, "MAC地址不能为空")
+            return
+        end
+        
+        local clean_mac = mac:upper():gsub("[^A-F0-9]", "")
+        if #clean_mac < 12 then
+            response_data = error_response(-1, "无效的MAC地址格式")
+            return
+        end
+        
+        local whitelist = load_security_whitelist()
+        if not whitelist.macs then
+            whitelist.macs = {}
+        end
+        
+        whitelist.macs[clean_mac] = {
+            added_time = os.time(),
+            note = note,
+            source = "manual"
+        }
+        
+        save_security_whitelist(whitelist)
+        
+        -- 清除缓存使更改立即生效
+        _security_whitelist_cache = nil
+        
+        response_data = success_response({
+            message = "已将 " .. mac .. " 添加到白名单",
+            mac = clean_mac
+        })
+    end)
+    
+    if not ok then
+        response_data = error_response(-1, "添加白名单失败", tostring(err))
+    end
+    
+    luci.http.prepare_content("application/json")
+    luci.http.write_json(response_data)
+end
+
+-- API: 从白名单移除
+function api_remove_security_whitelist()
+    if not require_csrf_token() then return end
+    
+    local response_data = nil
+    collectgarbage("collect")
+    
+    local mac = luci.http.formvalue("mac") or ""
+    
+    local ok, err = pcall(function()
+        if not mac or mac == "" then
+            response_data = error_response(-1, "MAC地址不能为空")
+            return
+        end
+        
+        local clean_mac = mac:upper():gsub("[^A-F0-9]", "")
+        local whitelist = load_security_whitelist()
+        
+        if whitelist.macs and whitelist.macs[clean_mac] then
+            whitelist.macs[clean_mac] = nil
+            save_security_whitelist(whitelist)
+            
+            -- 清除缓存
+            _security_whitelist_cache = nil
+            
+            response_data = success_response({
+                message = "已从白名单移除 " .. mac,
+                mac = clean_mac
+            })
+        else
+            response_data = error_response(-1, "该MAC不在白名单中")
+        end
+    end)
+    
+    if not ok then
+        response_data = error_response(-1, "移除失败", tostring(err))
+    end
+    
+    luci.http.prepare_content("application/json")
+    luci.http.write_json(response_data)
 end

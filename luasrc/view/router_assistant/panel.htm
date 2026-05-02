@@ -443,6 +443,13 @@ window.DEBUG_MODE = false;
         border-radius: 2px;
     }
 
+    .rm-card-actions {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+    }
+
     .rm-card-body {
         padding: 0;
     }
@@ -1802,6 +1809,473 @@ window.DEBUG_MODE = false;
         border-radius: 3px;
         transition: width 0.3s ease;
     }
+
+    /* 实时网速曲线图样式 */
+    .rm-speed-info {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+    }
+
+    .rm-speed-display {
+        display: flex;
+        justify-content: center;
+        align-items: stretch;
+        gap: 40px;
+        padding: 30px 20px;
+    }
+
+    .rm-speed-main {
+        display: flex;
+        align-items: center;
+        gap: 20px;
+        flex: 1;
+        max-width: 280px;
+        padding: 20px 24px;
+        border-radius: 16px;
+        background: rgba(0, 20, 40, 0.4);
+        transition: all 0.3s ease;
+    }
+
+    .rm-speed-main:hover {
+        transform: translateY(-2px);
+    }
+
+    .rm-speed-main.rx {
+        border: 1px solid rgba(0, 212, 255, 0.25);
+        box-shadow: 0 4px 20px rgba(0, 212, 255, 0.1);
+    }
+
+    .rm-speed-main.tx {
+        border: 1px solid rgba(0, 230, 118, 0.25);
+        box-shadow: 0 4px 20px rgba(0, 230, 118, 0.1);
+    }
+
+    .rm-speed-icon {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 56px;
+        height: 56px;
+        border-radius: 14px;
+        flex-shrink: 0;
+    }
+
+    .rm-speed-main.rx .rm-speed-icon {
+        background: linear-gradient(135deg, rgba(0, 212, 255, 0.2) 0%, rgba(0, 150, 200, 0.15) 100%);
+        color: #00d4ff;
+    }
+
+    .rm-speed-main.tx .rm-speed-icon {
+        background: linear-gradient(135deg, rgba(0, 230, 118, 0.2) 0%, rgba(0, 180, 100, 0.15) 100%);
+        color: #00e676;
+    }
+
+    .rm-speed-data {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        min-width: 140px;
+    }
+
+    .rm-speed-value {
+        font-size: 28px;
+        font-weight: 700;
+        font-family: 'SF Mono', 'Monaco', 'Consolas', monospace;
+        line-height: 1.2;
+        letter-spacing: -0.5px;
+    }
+
+    .rm-speed-main.rx .rm-speed-value {
+        color: #00d4ff;
+    }
+
+    .rm-speed-main.tx .rm-speed-value {
+        color: #00e676;
+    }
+
+    .rm-speed-label {
+        font-size: 12px;
+        color: var(--text-secondary);
+        font-weight: 500;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+    }
+
+    .rm-speed-divider {
+        width: 1px;
+        background: linear-gradient(180deg, transparent 0%, rgba(139, 157, 195, 0.3) 50%, transparent 100%);
+        margin: 10px 0;
+    }
+
+    .rm-speed-footer {
+        text-align: center;
+        padding-top: 12px;
+        border-top: 1px solid rgba(139, 157, 195, 0.1);
+    }
+
+    .rm-speed-update-time {
+        font-size: 11px;
+        color: var(--text-secondary);
+        opacity: 0.7;
+    }
+    }
+
+    .rm-chart-tooltip-speed {
+        color: var(--text-primary);
+        font-weight: 600;
+        font-family: 'SF Mono', 'Monaco', 'Consolas', monospace;
+    }
+
+    .rm-chart-legend {
+        display: flex;
+        justify-content: center;
+        gap: 24px;
+        margin-top: 12px;
+    }
+
+    .rm-legend-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 12px;
+        color: var(--text-secondary);
+    }
+
+    .rm-legend-item .rm-legend-color {
+        width: 16px;
+        height: 3px;
+        border-radius: 2px;
+    }
+
+    .rm-legend-item.rx .rm-legend-color {
+        background: linear-gradient(90deg, #00d4ff, #0099cc);
+    }
+
+    .rm-legend-item.tx .rm-legend-color {
+        background: linear-gradient(90deg, #00e676, #00c853);
+    }
+
+    /* 网络拓扑图样式 */
+    .topology-tooltip {
+        position: absolute;
+        background: var(--bg-card);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        padding: 12px 16px;
+        font-size: 13px;
+        color: var(--text-primary);
+        pointer-events: none;
+        z-index: 100;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+        backdrop-filter: blur(10px);
+        max-width: 280px;
+    }
+
+    .topology-tooltip-title {
+        font-weight: 600;
+        margin-bottom: 8px;
+        color: var(--accent-cyan);
+        font-size: 14px;
+    }
+
+    .topology-tooltip-row {
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 4px;
+        font-size: 12px;
+    }
+
+    .topology-tooltip-label {
+        color: var(--text-secondary);
+    }
+
+    .topology-tooltip-value {
+        color: var(--text-primary);
+        font-weight: 500;
+    }
+
+    .topology-legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 20px;
+        padding: 16px;
+    }
+
+    .topology-legend-item {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 16px;
+        background: var(--bg-secondary);
+        border-radius: 8px;
+        border: 1px solid var(--border-color);
+    }
+
+    .topology-legend-icon {
+        width: 36px;
+        height: 36px;
+        border-radius: 8px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--text-secondary);
+    }
+
+    .topology-legend-icon svg {
+        width: 22px;
+        height: 22px;
+    }
+
+    /* 图例图标颜色 - 与拓扑图节点颜色一致 */
+    .topology-legend-icon.router-icon { color: var(--accent-cyan); }
+    .topology-legend-icon.phone-icon { color: var(--accent-orange); }
+    .topology-legend-icon.laptop-icon { color: var(--accent-green); }
+    .topology-legend-icon.desktop-icon { color: var(--accent-green); }
+    .topology-legend-icon.tv-icon { color: #BA55D3; }
+    .topology-legend-icon.smart-home-icon { color: var(--accent-red); }
+    .topology-legend-icon.camera-icon { color: var(--accent-red); }
+    .topology-legend-icon.printer-icon { color: #8b9dc3; }
+    .topology-legend-icon.wearable-icon { color: var(--accent-orange); }
+    .topology-legend-icon.gaming-icon { color: #BA55D3; }
+    .topology-legend-icon.server-icon { color: var(--accent-green); }
+    .topology-legend-icon.unknown-icon { color: var(--text-secondary); }
+
+    .topology-legend-item span {
+        font-size: 13px;
+        color: var(--text-primary);
+    }
+
+    #topology-canvas {
+        width: 100%;
+        height: 100%;
+        display: block;
+    }
+
+    @media (max-width: 768px) {
+        .topology-legend {
+            gap: 8px;
+            padding: 10px;
+            justify-content: center;
+        }
+
+        .topology-legend-item {
+            padding: 5px 10px;
+            font-size: 11px;
+            flex-direction: column;
+            text-align: center;
+            gap: 4px;
+        }
+
+        .topology-legend-icon {
+            width: 28px;
+            height: 28px;
+        }
+
+        .topology-legend-emoji {
+            font-size: 22px;
+        }
+
+        #topology-container {
+            min-height: 400px !important;
+        }
+
+        .topology-tooltip {
+            font-size: 11px;
+            padding: 8px 12px;
+            max-width: 220px;
+        }
+    }
+
+    /* 手机端适配 - 小屏设备 */
+    @media (max-width: 480px) {
+        .rm-card-actions {
+            flex-direction: column;
+            width: 100%;
+        }
+
+        .rm-card-actions .rm-btn {
+            width: 100%;
+            text-align: center;
+        }
+
+        #topology-container {
+            min-height: 350px !important;
+        }
+
+        .topology-legend {
+            gap: 6px;
+            padding: 8px;
+        }
+
+        .topology-legend-item {
+            padding: 4px 8px;
+            font-size: 10px;
+        }
+
+        .topology-legend-icon {
+            width: 24px;
+            height: 24px;
+        }
+
+        .topology-legend-emoji {
+            font-size: 18px;
+        }
+    }
+
+    /* 平板横屏适配 */
+    @media (max-width: 1024px) and (orientation: landscape) {
+        #topology-container {
+            min-height: 380px !important;
+        }
+    }
+
+    /* 手机横屏适配 */
+    @media (max-width: 768px) and (orientation: landscape) {
+        #topology-container {
+            min-height: 300px !important;
+        }
+
+        .topology-tooltip {
+            max-width: 180px;
+            font-size: 10px;
+        }
+    }
+
+    /* ============================================================
+     * 实时网速监控 - 响应式适配
+     * ============================================================ */
+    
+    /* 平板端 (768px - 1024px) */
+    @media screen and (max-width: 1024px) and (min-width: 769px) {
+        .rm-speed-display {
+            gap: 24px;
+            padding: 24px 16px;
+        }
+
+        .rm-speed-main {
+            gap: 14px;
+            max-width: 240px;
+            padding: 16px 20px;
+        }
+
+        .rm-speed-icon {
+            width: 48px;
+            height: 48px;
+        }
+
+        .rm-speed-icon svg {
+            width: 24px;
+            height: 24px;
+        }
+
+        .rm-speed-value {
+            font-size: 24px;
+        }
+
+        .rm-speed-data {
+            min-width: 120px;
+        }
+    }
+
+    /* 手机端 (<768px) */
+    @media screen and (max-width: 768px) {
+        .rm-speed-display {
+            flex-direction: column;
+            gap: 16px;
+            padding: 20px 12px;
+        }
+
+        .rm-speed-main {
+            width: 100%;
+            max-width: none;
+            gap: 14px;
+            padding: 16px 18px;
+            border-radius: 12px;
+        }
+
+        .rm-speed-icon {
+            width: 44px;
+            height: 44px;
+            border-radius: 10px;
+        }
+
+        .rm-speed-icon svg {
+            width: 22px;
+            height: 22px;
+        }
+
+        .rm-speed-data {
+            min-width: auto;
+            flex: 1;
+        }
+
+        .rm-speed-value {
+            font-size: 22px;
+            letter-spacing: -0.3px;
+        }
+
+        .rm-speed-label {
+            font-size: 11px;
+        }
+
+        .rm-speed-divider {
+            display: none;
+        }
+
+        .rm-speed-footer {
+            padding-top: 10px;
+        }
+
+        .rm-speed-update-time {
+            font-size: 10px;
+        }
+    }
+
+    /* 超小屏手机 (<480px) */
+    @media screen and (max-width: 480px) {
+        .rm-speed-main {
+            gap: 12px;
+            padding: 14px 16px;
+        }
+
+        .rm-speed-icon {
+            width: 40px;
+            height: 40px;
+        }
+
+        .rm-speed-icon svg {
+            width: 20px;
+            height: 20px;
+        }
+
+        .rm-speed-value {
+            font-size: 20px;
+        }
+
+        .rm-speed-label {
+            font-size: 10px;
+        }
+    }
+
+    /* 横屏模式 (高度较小) */
+    @media screen and (max-height: 600px) and (orientation: landscape) {
+        .rm-speed-display {
+            padding: 16px 20px;
+        }
+
+        .rm-speed-main {
+            padding: 12px 18px;
+        }
+
+        .rm-speed-value {
+            font-size: 22px;
+        }
+
+        .rm-speed-footer {
+            display: none;
+        }
+    }
 </style>
 
 <div class="rm-container">
@@ -1973,6 +2447,29 @@ window.DEBUG_MODE = false;
             </svg>
             WiFi管理
         </button>
+        <button class="rm-tab" data-tab="security" aria-label="安全中心标签">
+            <!-- 安全中心图标 -->
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="margin-right:6px;">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                <path d="M9 12l2 2 4-4"/>
+            </svg>
+            安全中心
+        </button>
+        <button class="rm-tab" data-tab="topology" aria-label="网络拓扑标签">
+            <!-- 网络拓扑图标 -->
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="margin-right:6px;">
+                <circle cx="12" cy="12" r="3"/>
+                <circle cx="4" cy="6" r="2"/>
+                <circle cx="20" cy="6" r="2"/>
+                <circle cx="4" cy="18" r="2"/>
+                <circle cx="20" cy="18" r="2"/>
+                <line x1="9.5" y1="10" x2="5.5" y2="7"/>
+                <line x1="14.5" y1="10" x2="18.5" y2="7"/>
+                <line x1="9.5" y1="14" x2="5.5" y2="17"/>
+                <line x1="14.5" y1="14" x2="18.5" y2="17"/>
+            </svg>
+            网络拓扑
+        </button>
     </div>
 
     <div id="tab-devices" class="rm-tab-content active">
@@ -2070,6 +2567,131 @@ window.DEBUG_MODE = false;
                 </div>
             </div>
         </div>
+
+        <!-- 网络安全检测卡片 -->
+        <div class="rm-card" style="margin-top: 20px;">
+            <div class="rm-card-header">
+                <div class="rm-card-title">网络安全检测</div>
+                <div style="display:flex;align-items:center;gap:8px;">
+                    <span style="font-size:11px;color:var(--text-secondary);background:var(--bg-secondary);padding:2px 8px;border-radius:4px;">⚠️ 参考性质</span>
+                    <div class="rm-card-actions">
+                        <button class="rm-btn rm-btn-primary" onclick="runFullSecurityScan()">一键安全扫描</button>
+                    </div>
+                </div>
+            </div>
+            <div class="rm-card-body">
+                <!-- 参考说明 -->
+                <div style="margin-bottom:12px;padding:10px 14px;background:rgba(0,200,255,0.08);border-left:3px solid var(--accent-cyan);border-radius:4px;font-size:12px;line-height:1.6;">
+                    <strong style="color:var(--accent-cyan);">📋 检测说明：</strong>
+                    本检测结果仅供参考，不代表绝对安全标准。标记为"危险"的项目请逐一确认是否为路由器正常工作所需。建议定期更新密码（即使显示强密码），并关注官方安全公告。
+                </div>
+                
+                <!-- 扫描结果概览 -->
+                <div id="security-scan-overview" style="display:none;margin-bottom:15px;padding:15px;background:var(--bg-secondary);border-radius:8px;">
+                    <div style="display:flex;align-items:center;gap:25px;flex-wrap:wrap;">
+                        <div style="text-align:center;">
+                            <div id="scan-total-score" style="font-size:32px;font-weight:700;color:var(--accent-cyan);">-</div>
+                            <div style="color:var(--text-secondary);font-size:11px;">综合评分</div>
+                            <div id="scan-level-badge" style="font-size:11px;padding:2px 8px;border-radius:4px;display:inline-block;margin-top:4px;background:var(--accent-green);color:#000;">-</div>
+                        </div>
+                        <div style="width:1px;height:40px;background:var(--border-color);"></div>
+                        <div id="scan-ports-summary" style="flex:1;min-width:120px;text-align:center;cursor:pointer;" onclick="showScanDetail('ports')">
+                            <div style="font-size:18px;font-weight:600;color:var(--accent-orange);">-</div>
+                            <div style="color:var(--text-secondary);font-size:11px;">开放端口</div>
+                        </div>
+                        <div id="scan-dns-summary" style="flex:1;min-width:120px;text-align:center;cursor:pointer;" onclick="showScanDetail('dns')">
+                            <div style="font-size:18px;font-weight:600;color:var(--accent-red);">-</div>
+                            <div style="color:var(--text-secondary);font-size:11px;">DNS状态</div>
+                        </div>
+                        <div id="scan-pwd-summary" style="flex:1;min-width:120px;text-align:center;cursor:pointer;" onclick="showScanDetail('password')">
+                            <div style="font-size:18px;font-weight:600;color:var(--accent-purple);">-</div>
+                            <div style="color:var(--text-secondary);font-size:11px;">密码强度</div>
+                        </div>
+                    </div>
+                    
+                    <!-- 风险原因显示区域 -->
+                    <div id="risk-reasons-container" style="display:none;margin-top:15px;padding-top:15px;border-top:1px solid var(--border-color);">
+                        <div style="font-size:12px;font-weight:600;margin-bottom:10px;color:var(--accent-red);">⚠️ 发现以下安全风险：</div>
+                        <div id="risk-reasons-list"></div>
+                    </div>
+                </div>
+
+                <!-- 开放端口检测结果 -->
+                <div id="scan-detail-ports" style="display:none;margin-bottom:15px;padding:15px;background:rgba(255,145,0,0.03);border-radius:8px;border:1px solid rgba(255,145,0,0.15);">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+                        <span style="color:var(--accent-orange);font-weight:600;font-size:13px;">🔓 开放端口检测</span>
+                        <button class="rm-btn" onclick="checkOpenPorts()" style="padding:4px 14px;font-size:11px;">重新检测</button>
+                    </div>
+                    <div id="open-ports-result">
+                        <div class="rm-table-wrapper">
+                            <table class="rm-table" style="font-size:12px;">
+                                <thead>
+                                    <tr><th>端口</th><th>服务名称</th><th>绑定地址</th><th>风险等级</th><th>说明</th></tr>
+                                </thead>
+                                <tbody id="open-ports-tbody"><tr><td colspan="5" style="text-align:center;padding:20px;color:var(--text-secondary);">点击"重新检测"</td></tr></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- DNS劫持检测结果 -->
+                <div id="scan-detail-dns" style="display:none;margin-bottom:15px;padding:15px;background:rgba(255,82,82,0.03);border-radius:8px;border:1px solid rgba(255,82,82,0.15);">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+                        <span style="color:var(--accent-red);font-weight:600;font-size:13px;">🌐 DNS劫持检测</span>
+                        <button class="rm-btn" onclick="checkDnsHijack()" style="padding:4px 14px;font-size:11px;">重新检测</button>
+                    </div>
+                    <div id="dns-check-result">
+                        <div class="rm-table-wrapper">
+                            <table class="rm-table" style="font-size:12px;">
+                                <thead>
+                                    <tr><th>域名</th><th>解析IP</th><th>状态</th></tr>
+                                </thead>
+                                <tbody id="dns-check-tbody"><tr><td colspan="3" style="text-align:center;padding:20px;color:var(--text-secondary);">点击"重新检测"</td></tr></tbody>
+                            </table>
+                        </div>
+                        <div id="dns-servers-info" style="margin-top:10px;padding:10px;background:rgba(0,212,255,0.05);border-radius:6px;font-size:11px;color:var(--text-secondary);">
+                            当前DNS服务器: <span id="current-dns-servers" style="color:var(--accent-cyan);">-</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 弱密码检测结果 -->
+                <div id="scan-detail-password" style="display:none;margin-bottom:15px;padding:15px;background:rgba(156,39,176,0.03);border-radius:8px;border:1px solid rgba(156,39,176,0.15);">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+                        <span style="color:var(--accent-purple);font-weight:600;font-size:13px;">🔑 弱密码检测</span>
+                        <button class="rm-btn" onclick="checkWeakPasswords()" style="padding:4px 14px;font-size:11px;">重新检测</button>
+                    </div>
+                    
+                    <!-- WiFi密码结果 -->
+                    <div id="wifi-password-results" style="margin-bottom:10px;">
+                        <div style="color:var(--text-secondary);font-size:12px;margin-bottom:8px;">WiFi密码强度:</div>
+                        <div id="wifi-pwd-list"></div>
+                    </div>
+                    
+                    <!-- 管理后台密码结果 -->
+                    <div id="admin-password-result">
+                        <div style="color:var(--text-secondary);font-size:12px;margin-bottom:8px;">管理后台密码:</div>
+                        <div id="admin-pwd-info"></div>
+                    </div>
+                </div>
+
+                <!-- 默认空状态 -->
+                <div id="security-scan-empty" style="text-align: center; padding: 40px; color: var(--text-secondary);">
+                    <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="margin-bottom: 12px; opacity: 0.5;">
+                        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                        <path d="M9 12l2 2 4-4"/>
+                    </svg>
+                    <p style="font-size:14px;margin-bottom:8px;">网络安全检测</p>
+                    <p style="font-size:12px;opacity:0.7;">点击"一键安全扫描"检查端口、DNS和密码安全</p>
+                </div>
+
+                <!-- 加载状态 -->
+                <div id="security-scan-loading" style="display:none;text-align:center;padding:30px;">
+                    <div class="rm-loading-spinner"></div>
+                    <p style="margin-top:10px;color:var(--text-secondary);">正在执行安全扫描...</p>
+                </div>
+            </div>
+        </div>
     </div>
 
     <div id="tab-traffic" class="rm-tab-content">
@@ -2113,6 +2735,44 @@ window.DEBUG_MODE = false;
                 </div>
                 <div class="rm-stat-value purple" id="stat-offline-count">0</div>
                 <div class="rm-stat-desc">7天内离线的设备数</div>
+            </div>
+        </div>
+
+        <!-- 实时网速监控 -->
+        <div class="rm-card" style="margin-bottom: 20px;">
+            <div class="rm-card-header">
+                <div class="rm-card-title">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:8px;">
+                        <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
+                    </svg>
+                    实时网速监控
+                </div>
+            </div>
+            <div class="rm-card-body">
+                <div class="rm-speed-display">
+                    <div class="rm-speed-main rx">
+                        <div class="rm-speed-icon">
+                            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14"/><path d="M19 12l-7 7-7-7"/></svg>
+                        </div>
+                        <div class="rm-speed-data">
+                            <span class="rm-speed-value" id="realtime-speed-rx">0 B/s</span>
+                            <span class="rm-speed-label">下载 (RX)</span>
+                        </div>
+                    </div>
+                    <div class="rm-speed-divider"></div>
+                    <div class="rm-speed-main tx">
+                        <div class="rm-speed-icon">
+                            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg>
+                        </div>
+                        <div class="rm-speed-data">
+                            <span class="rm-speed-value" id="realtime-speed-tx">0 B/s</span>
+                            <span class="rm-speed-label">上传 (TX)</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="rm-speed-footer">
+                    <span class="rm-speed-update-time" id="speed-update-time">正在采集...</span>
+                </div>
             </div>
         </div>
 
@@ -2400,18 +3060,438 @@ window.DEBUG_MODE = false;
                 <div class="rm-card-title">网络诊断工具</div>
             </div>
             <div class="rm-card-body">
-                <div style="display: flex; gap: 10px; margin-bottom: 15px; flex-wrap: wrap;">
+                <div style="display: flex; gap: 10px; margin-bottom: 15px; flex-wrap: wrap; align-items: center;">
                     <select id="diagnose-type" class="rm-select" style="padding: 8px 12px; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-secondary); color: var(--text-primary);">
                         <option value="ping">Ping 测试</option>
                         <option value="traceroute">路由追踪</option>
                         <option value="dns">DNS 查询</option>
                         <option value="port">端口检测</option>
                     </select>
+                    <select id="dns-subtype" class="rm-select" style="padding: 8px 12px; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-secondary); color: var(--text-primary); display: none;">
+                        <option value="query">DNS查询</option>
+                        <option value="speed">DNS测速</option>
+                    </select>
+                    <select id="port-scan-type" class="rm-select" style="padding: 8px 12px; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-secondary); color: var(--text-primary); display: none;">
+                        <option value="single">单端口</option>
+                        <option value="range">端口范围</option>
+                    </select>
                     <input type="text" id="diagnose-target" placeholder="输入目标地址（IP或域名）" style="flex: 1; min-width: 200px; padding: 8px 12px; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-secondary); color: var(--text-primary);">
                     <input type="number" id="diagnose-port" placeholder="端口" style="width: 80px; padding: 8px 12px; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-secondary); color: var(--text-primary); display: none;">
+                    <input type="number" id="diagnose-port-end" placeholder="结束端口" style="width: 100px; padding: 8px 12px; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-secondary); color: var(--text-primary); display: none;">
                     <button class="rm-btn rm-btn-primary" onclick="runDiagnose()" id="diagnose-btn">开始诊断</button>
                 </div>
                 <div id="diagnose-output" style="background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 8px; padding: 15px; font-family: monospace; font-size: 12px; color: var(--text-secondary); white-space: pre-wrap; max-height: 300px; overflow-y: auto; display: none;"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 安全中心标签页 -->
+    <div id="tab-security" class="rm-tab-content">
+        <!-- 安全概览卡片 -->
+        <div class="rm-stats">
+            <div class="rm-stat-card cyan">
+                <div class="rm-stat-header">
+                    <span class="rm-stat-label">安全评分</span>
+                    <span class="rm-stat-tag cyan" id="security-level-tag">检测中</span>
+                </div>
+                <div class="rm-stat-value cyan" id="security-score">--</div>
+                <div class="rm-stat-desc">网络安全综合评分</div>
+            </div>
+            <div class="rm-stat-card green">
+                <div class="rm-stat-header">
+                    <span class="rm-stat-label">ARP表条目</span>
+                    <span class="rm-stat-tag green">监控</span>
+                </div>
+                <div class="rm-stat-value green" id="arp-table-count">0</div>
+                <div class="rm-stat-desc">当前ARP缓存条目数</div>
+            </div>
+            <div class="rm-stat-card orange">
+                <div class="rm-stat-header">
+                    <span class="rm-stat-label">安全告警</span>
+                    <span class="rm-stat-tag orange" id="alert-count-tag">0</span>
+                </div>
+                <div class="rm-stat-value orange" id="total-alerts">0</div>
+                <div class="rm-stat-desc">待处理的安全告警</div>
+            </div>
+        </div>
+
+        <!-- ARP欺骗检测卡片 -->
+        <div class="rm-card" style="margin-top: 20px;">
+            <div class="rm-card-header">
+                <div class="rm-card-title">ARP欺骗检测</div>
+                <div class="rm-card-actions">
+                    <label style="display:flex;align-items:center;gap:6px;cursor:pointer;margin-right:10px;color:var(--text-secondary);font-size:12px;">
+                        <input type="checkbox" id="auto-monitor-toggle" onchange="toggleAutoMonitor()" checked style="cursor:pointer;">
+                        自动监控 (30秒)
+                        <span id="monitor-status" style="display:inline-block;padding:2px 8px;background:var(--accent-green);color:#000;border-radius:4px;font-size:11px;">运行中</span>
+                    </label>
+                    <button class="rm-btn rm-btn-secondary" onclick="refreshArpDetection()">刷新检测</button>
+                    <button class="rm-btn" onclick="showArpHistory()" style="background:rgba(0,212,255,0.1);border-color:rgba(0,212,255,0.3);color:var(--accent-cyan);padding:6px 14px;font-size:12px;">历史记录</button>
+                </div>
+            </div>
+            <div class="rm-card-body">
+                <!-- 历史记录面板（默认隐藏） -->
+                <div id="arp-history-panel" style="display:none;margin-bottom:15px;padding:15px;background:rgba(0,212,255,0.03);border-radius:8px;border:1px solid rgba(0,212,255,0.15);">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+                        <span style="color:var(--accent-cyan);font-weight:600;font-size:13px;">📋 告警历史记录</span>
+                        <div style="display:flex;gap:8px;">
+                            <span id="history-stats" style="font-size:11px;color:var(--text-secondary);"></span>
+                            <button class="rm-btn" onclick="hideArpHistory()" style="padding:4px 12px;font-size:11px;background:transparent;border-color:var(--border-color);">关闭</button>
+                            <button class="rm-btn" onclick="clearArpHistory()" style="padding:4px 12px;font-size:11px;background:rgba(255,82,82,0.1);border-color:rgba(255,82,82,0.3);color:var(--accent-red);">清空</button>
+                        </div>
+                    </div>
+                    <div id="history-table-wrapper" style="max-height:250px;overflow-y:auto;">
+                        <table class="rm-table" style="font-size:12px;">
+                            <thead>
+                                <tr>
+                                    <th>时间</th>
+                                    <th>类型</th>
+                                    <th>MAC地址</th>
+                                    <th>严重程度</th>
+                                    <th>状态</th>
+                                    <th>操作</th>
+                                </tr>
+                            </thead>
+                            <tbody id="arp-history-tbody"></tbody>
+                        </table>
+                    </div>
+                    <div id="history-empty" style="display:none;text-align:center;padding:20px;color:var(--text-secondary);font-size:12px;">
+                        暂无告警历史记录
+                    </div>
+                </div>
+
+                <div id="arp-alerts-container">
+                    <div id="arp-alerts-loading" class="rm-loading" style="display: none;">
+                        <div class="rm-loading-spinner"></div>
+                        <p>正在检测ARP欺骗...</p>
+                    </div>
+                    <div id="arp-alerts-empty" style="text-align: center; padding: 30px; color: var(--text-secondary);">
+                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="margin-bottom: 10px; color: var(--accent-green);">
+                            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                            <path d="M9 12l2 2 4-4"/>
+                        </svg>
+                        <p>未检测到ARP欺骗行为</p>
+                    </div>
+                    <div id="arp-alerts-table" style="display: none;">
+                        <div class="rm-table-wrapper">
+                            <table class="rm-table">
+                                <thead>
+                                    <tr>
+                                        <th>告警类型</th>
+                                        <th>IP地址</th>
+                                        <th>MAC地址</th>
+                                        <th>严重程度</th>
+                                        <th>描述</th>
+                                        <th>操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="arp-alerts-tbody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 端口扫描检测卡片 -->
+        <div class="rm-card" style="margin-top: 20px;">
+            <div class="rm-card-header">
+                <div class="rm-card-title">端口扫描检测</div>
+                <div class="rm-card-actions">
+                    <button class="rm-btn rm-btn-primary" onclick="startPortScan()">开始扫描</button>
+                    <button class="rm-btn" onclick="showPortScanHistory()" style="background:rgba(0,212,255,0.1);border-color:rgba(0,212,255,0.3);color:var(--accent-cyan);padding:6px 14px;font-size:12px;">历史记录</button>
+                </div>
+            </div>
+            <div class="rm-card-body">
+                <!-- 历史记录面板（默认隐藏） -->
+                <div id="port-scan-history-panel" style="display:none;margin-bottom:15px;padding:15px;background:rgba(255,145,0,0.03);border-radius:8px;border:1px solid rgba(255,145,0,0.15);">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+                        <span style="color:var(--accent-orange);font-weight:600;font-size:13px;">📡 扫描历史记录</span>
+                        <div style="display:flex;gap:8px;">
+                            <span id="port-history-stats" style="font-size:11px;color:var(--text-secondary);"></span>
+                            <button class="rm-btn" onclick="hidePortScanHistory()" style="padding:4px 12px;font-size:11px;background:transparent;border-color:var(--border-color);">关闭</button>
+                        </div>
+                    </div>
+                    <div id="port-history-table-wrapper" style="max-height:250px;overflow-y:auto;">
+                        <table class="rm-table" style="font-size:12px;">
+                            <thead>
+                                <tr>
+                                    <th>时间</th>
+                                    <th>来源IP</th>
+                                    <th>端口数</th>
+                                    <th>连接数</th>
+                                    <th>严重程度</th>
+                                    <th>状态</th>
+                                    <th>操作</th>
+                                </tr>
+                            </thead>
+                            <tbody id="port-history-tbody"></tbody>
+                        </table>
+                    </div>
+                    <div id="port-history-empty" style="display:none;text-align:center;padding:20px;color:var(--text-secondary);font-size:12px;">
+                        暂无扫描历史记录
+                    </div>
+                </div>
+
+                <!-- 扫描结果区域 -->
+                <div id="port-scan-container">
+                    <div id="port-scan-empty" style="text-align: center; padding: 30px; color: var(--text-secondary);">
+                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="margin-bottom: 10px; color: var(--accent-green);">
+                            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                            <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                        </svg>
+                        <p>点击"开始扫描"检测外部连接</p>
+                    </div>
+                    
+                    <div id="port-scan-loading" class="rm-loading" style="display: none;">
+                        <div class="rm-loading-spinner"></div>
+                        <p>正在分析网络连接...</p>
+                    </div>
+                    
+                    <div id="port-scan-result" style="display: none;">
+                        <div style="margin-bottom:15px;padding:12px;background:var(--bg-secondary);border-radius:8px;display:flex;gap:20px;flex-wrap:wrap;">
+                            <div style="flex:1;min-width:100px;text-align:center;">
+                                <div style="color:var(--text-secondary);font-size:11px;">外部IP</div>
+                                <div id="scan-external-ips" style="color:var(--accent-cyan);font-size:18px;font-weight:700;">-</div>
+                            </div>
+                            <div style="flex:1;min-width:100px;text-align:center;">
+                                <div style="color:var(--text-secondary);font-size:11px;">总连接</div>
+                                <div id="scan-total-conns" style="color:var(--accent-green);font-size:18px;font-weight:700;">-</div>
+                            </div>
+                            <div style="flex:1;min-width:100px;text-align:center;">
+                                <div style="color:var(--text-secondary);font-size:11px;">可疑行为</div>
+                                <div id="scan-suspicious" style="color:var(--accent-red);font-size:18px;font-weight:700;">-</div>
+                            </div>
+                        </div>
+                        
+                        <div id="port-scan-alerts-section" style="display:none;">
+                            <div style="color:var(--accent-red);font-weight:600;font-size:13px;margin-bottom:10px;">⚠️ 可疑连接</div>
+                            <div class="rm-table-wrapper">
+                                <table class="rm-table" style="font-size:12px;">
+                                    <thead>
+                                        <tr>
+                                            <th>来源IP</th>
+                                            <th>目标端口</th>
+                                            <th>连接数</th>
+                                            <th>风险分</th>
+                                            <th>原因</th>
+                                            <th>操作</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="port-scan-alerts-tbody"></tbody>
+                                </table>
+                            </div>
+                        </div>
+                        
+                        <div id="port-scan-normal-section" style="margin-top:10px;">
+                            <div style="color:var(--accent-green);font-weight:600;font-size:13px;margin-bottom:10px;">✅ 正常外部连接</div>
+                            <div id="port-scan-normal-list" style="max-height:200px;overflow-y:auto;"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- 网络拓扑图标签页 -->
+    <div id="tab-topology" class="rm-tab-content">
+        <div class="rm-stats">
+            <div class="rm-stat-card cyan">
+                <div class="rm-stat-header">
+                    <span class="rm-stat-label">路由器</span>
+                    <span class="rm-stat-tag cyan">核心</span>
+                </div>
+                <div class="rm-stat-value cyan" id="topology-router-count">1</div>
+                <div class="rm-stat-desc">网络核心设备</div>
+            </div>
+            <div class="rm-stat-card green">
+                <div class="rm-stat-header">
+                    <span class="rm-stat-label">有线设备</span>
+                    <span class="rm-stat-tag green">稳定</span>
+                </div>
+                <div class="rm-stat-value green" id="topology-wired-count">0</div>
+                <div class="rm-stat-desc">通过网线连接</div>
+            </div>
+            <div class="rm-stat-card orange">
+                <div class="rm-stat-header">
+                    <span class="rm-stat-label">无线设备</span>
+                    <span class="rm-stat-tag orange">WiFi</span>
+                </div>
+                <div class="rm-stat-value orange" id="topology-wifi-count">0</div>
+                <div class="rm-stat-desc">通过WiFi连接</div>
+            </div>
+        </div>
+
+        <div class="rm-card">
+            <div class="rm-card-header">
+                <div class="rm-card-title">网络拓扑图</div>
+                <div class="rm-card-actions">
+                    <button class="rm-btn rm-btn-secondary" onclick="refreshTopology()">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px;">
+                            <path d="M23 4v6h-6"/>
+                            <path d="M1 20v-6h6"/>
+                            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+                        </svg>
+                        刷新
+                    </button>
+                </div>
+            </div>
+            <div class="rm-card-body">
+                <div id="topology-loading" class="rm-loading">
+                    <div class="rm-loading-spinner"></div>
+                    <p>正在加载网络拓扑...</p>
+                </div>
+                <div id="topology-empty" class="rm-empty" style="display:none;">
+                    <div class="rm-empty-icon">
+                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="12" cy="12" r="3"/>
+                            <circle cx="4" cy="6" r="2"/>
+                            <circle cx="20" cy="6" r="2"/>
+                            <circle cx="4" cy="18" r="2"/>
+                            <circle cx="20" cy="18" r="2"/>
+                            <line x1="9.5" y1="10" x2="5.5" y2="7"/>
+                            <line x1="14.5" y1="10" x2="18.5" y2="7"/>
+                            <line x1="9.5" y1="14" x2="5.5" y2="17"/>
+                            <line x1="14.5" y1="14" x2="18.5" y2="17"/>
+                        </svg>
+                    </div>
+                    <p>暂无设备连接</p>
+                </div>
+                <div id="topology-container" style="display:none; position: relative; min-height: 500px; background: var(--bg-secondary); border-radius: 12px; overflow: hidden;">
+                    <canvas id="topology-canvas"></canvas>
+                    <div id="topology-tooltip" class="topology-tooltip" style="display: none;"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 设备图例 -->
+        <div class="rm-card" style="margin-top: 20px;">
+            <div class="rm-card-header">
+                <div class="rm-card-title">设备图例</div>
+            </div>
+            <div class="rm-card-body">
+                <div class="topology-legend">
+                    <div class="topology-legend-item">
+                        <div class="topology-legend-icon router-icon">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <rect x="2" y="6" width="20" height="12" rx="2"/>
+                                <circle cx="6" cy="12" r="1" fill="currentColor"/>
+                                <circle cx="10" cy="12" r="1" fill="currentColor"/>
+                                <line x1="14" y1="12" x2="20" y2="12"/>
+                            </svg>
+                        </div>
+                        <span>路由器</span>
+                    </div>
+                    <div class="topology-legend-item">
+                        <div class="topology-legend-icon phone-icon">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <rect x="5" y="2" width="14" height="20" rx="2"/>
+                                <line x1="12" y1="18" x2="12" y2="18.01"/>
+                            </svg>
+                        </div>
+                        <span>手机/平板</span>
+                    </div>
+                    <div class="topology-legend-item">
+                        <div class="topology-legend-icon laptop-icon">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <rect x="2" y="3" width="20" height="14" rx="2"/>
+                                <line x1="8" y1="21" x2="16" y2="21"/>
+                                <line x1="12" y1="17" x2="12" y2="21"/>
+                            </svg>
+                        </div>
+                        <span>笔记本</span>
+                    </div>
+                    <div class="topology-legend-item">
+                        <div class="topology-legend-icon desktop-icon">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <rect x="2" y="3" width="20" height="14" rx="2"/>
+                                <line x1="8" y1="21" x2="16" y2="21"/>
+                                <line x1="12" y1="17" x2="12" y2="21"/>
+                            </svg>
+                        </div>
+                        <span>台式机</span>
+                    </div>
+                    <div class="topology-legend-item">
+                        <div class="topology-legend-icon tv-icon">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <rect x="2" y="7" width="20" height="15" rx="2"/>
+                                <polyline points="17 2 12 7 7 2"/>
+                            </svg>
+                        </div>
+                        <span>电视/盒子</span>
+                    </div>
+                    <div class="topology-legend-item">
+                        <div class="topology-legend-icon smart-home-icon">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+                                <polyline points="9 22 9 12 15 12 15 22"/>
+                            </svg>
+                        </div>
+                        <span>智能家居</span>
+                    </div>
+                    <div class="topology-legend-item">
+                        <div class="topology-legend-icon camera-icon">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+                                <circle cx="12" cy="13" r="4"/>
+                            </svg>
+                        </div>
+                        <span>摄像头</span>
+                    </div>
+                    <div class="topology-legend-item">
+                        <div class="topology-legend-icon printer-icon">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <polyline points="6 9 6 2 18 2 18 9"/>
+                                <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>
+                                <rect x="6" y="14" width="12" height="8"/>
+                            </svg>
+                        </div>
+                        <span>打印机</span>
+                    </div>
+                    <div class="topology-legend-item">
+                        <div class="topology-legend-icon wearable-icon">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <rect x="5" y="2" width="14" height="20" rx="2"/>
+                                <line x1="12" y1="18" x2="12" y2="18.01"/>
+                            </svg>
+                        </div>
+                        <span>穿戴设备</span>
+                    </div>
+                    <div class="topology-legend-item">
+                        <div class="topology-legend-icon gaming-icon">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <line x1="6" y1="11" x2="10" y2="11"/>
+                                <line x1="8" y1="9" x2="8" y2="13"/>
+                                <line x1="15" y1="12" x2="15.01" y2="12"/>
+                                <line x1="18" y1="10" x2="18.01" y2="10"/>
+                                <path d="M17.32 5H6.68a4 4 0 0 0-3.978 3.59c-.006.052-.01.101-.017.152C2.604 9.416 2 14.456 2 16a3 3 0 0 0 3 3c1 0 1.5-.5 2-1l1.414-1.414A2 2 0 0 1 9.828 16h4.344a2 2 0 0 1 1.414.586L17 18c.5.5 1 1 2 1a3 3 0 0 0 3-3c0-1.545-.604-6.584-.685-7.258A4 4 0 0 0 17.32 5z"/>
+                            </svg>
+                        </div>
+                        <span>游戏机</span>
+                    </div>
+                    <div class="topology-legend-item">
+                        <div class="topology-legend-icon server-icon">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <rect x="2" y="2" width="20" height="8" rx="2" ry="2"/>
+                                <rect x="2" y="14" width="20" height="8" rx="2" ry="2"/>
+                                <line x1="6" y1="6" x2="6.01" y2="6"/>
+                                <line x1="6" y1="18" x2="6.01" y2="18"/>
+                            </svg>
+                        </div>
+                        <span>服务器/NAS</span>
+                    </div>
+                    <div class="topology-legend-item">
+                        <div class="topology-legend-icon unknown-icon">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <circle cx="12" cy="12" r="10"/>
+                                <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
+                                <line x1="12" y1="17" x2="12.01" y2="17"/>
+                            </svg>
+                        </div>
+                        <span>未知设备</span>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -2912,7 +3992,7 @@ function silentRefreshDeviceData(mac) {
 
 // 静默加载设备列表（无loading提示）
 function loadDevicesSilent() {
-    safeXHRget('<%=luci.dispatcher.build_url("admin/status/router_assistant/get_devices")%>',
+    safeXHR('<%=luci.dispatcher.build_url("admin/status/router_assistant/get_devices")%>',
         function(res) {
             if (res.code === 0 && res.data) {
                 // 更新本地数据但不强制重新渲染整个表格
@@ -2935,7 +4015,7 @@ function loadDevicesSilent() {
 
 // 静默加载流量统计
 function loadTrafficSilent() {
-    safeXHRget('<%=luci.dispatcher.build_url("admin/status/router_assistant/get_traffic")%>',
+    safeXHR('<%=luci.dispatcher.build_url("admin/status/router_assistant/get_traffic")%>',
         function(res) {
             if (res.code === 0 && res.data) {
                 // 同上，静默更新数据
@@ -3722,9 +4802,13 @@ function getDeviceIcon(deviceType, isWifi) {
         printer: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#9E9E9E" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>',
         wearable: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#E91E63" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="7"/><polyline points="12 9 12 12 13.5 13.5"/><path d="M16.51 17.35l-.35 3.83a2 2 0 0 1-2 1.82H9.83a2 2 0 0 1-2-1.82l-.35-3.83m.01-10.7l.35-3.83A2 2 0 0 1 9.83 1h4.35a2 2 0 0 1 2 1.82l.35 3.83"/></svg>',
         gaming: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#F44336" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="12" x2="10" y2="12"/><line x1="8" y1="10" x2="8" y2="14"/><line x1="15" y1="13" x2="15.01" y2="13"/><line x1="18" y1="11" x2="18.01" y2="11"/><rect x="2" y="6" width="20" height="12" rx="2"/></svg>',
+        console: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#F44336" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="12" x2="10" y2="12"/><line x1="8" y1="10" x2="8" y2="14"/><line x1="15" y1="13" x2="15.01" y2="13"/><line x1="18" y1="11" x2="18.01" y2="11"/><rect x="2" y="6" width="20" height="12" rx="2"/></svg>',
         server: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#795548" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>',
+        nas: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#795548" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>',
         router: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#3F51B5" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>',
-        unknown: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#9E9E9E" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/><line x1="9" y1="6" x2="15" y2="6"/><line x1="12" y1="6" x2="12" y2="10"/></svg>'
+        switch: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#3F51B5" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><line x1="6" y1="12" x2="6.01" y2="12"/><line x1="10" y1="12" x2="10.01" y2="12"/><line x1="14" y1="12" x2="14.01" y2="12"/><line x1="18" y1="12" x2="18.01" y2="12"/></svg>',
+        robot: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#00BCD4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>',
+        unknown: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#9E9E9E" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>'
     };
     return icons[deviceType] || icons.unknown;
 }
@@ -4513,6 +5597,440 @@ function renderWifiStatusByIndex(statusList, index) {
     if (channelEl) channelEl.textContent = status.channel || '-';
 }
 
+// ============================================================
+// 实时网速曲线图
+// ============================================================
+
+var speedChartData = {
+    points: [],
+    maxPoints: 120,
+    canvas: null,
+    ctx: null,
+    animationId: null,
+    lastUpdateTime: 0,
+    updateInterval: 1000
+};
+
+/**
+ * 初始化实时网速监控
+ */
+function initSpeedChart() {
+    // 开始定时刷新网速数据
+    startSpeedChartUpdate();
+}
+
+/**
+ * 启动网速数据定时更新
+ */
+function startSpeedChartUpdate() {
+    // 立即获取一次数据
+    fetchSpeedChartData();
+    
+    // 每秒自动刷新
+    setInterval(fetchSpeedChartData, 1000);
+}
+
+/**
+ * 调整曲线图尺寸
+ */
+function resizeSpeedChart() {
+    if (!speedChartData.canvas || !speedChartData.ctx) return;
+    
+    var container = speedChartData.canvas.parentElement;
+    if (!container) return;
+    
+    var rect = container.getBoundingClientRect();
+    
+    // 容器尺寸有效性检查
+    if (rect.width <= 0 || rect.height <= 0) {
+        console.warn('[resizeSpeedChart] 容器尺寸无效:', rect.width, 'x', rect.height);
+        return;
+    }
+    
+    // 设置实际像素尺寸（考虑设备像素比）
+    var dpr = window.devicePixelRatio || 1;
+    
+    // 重置transform矩阵（避免累积缩放）并设置新尺寸
+    speedChartData.canvas.width = Math.floor(rect.width * dpr);
+    speedChartData.canvas.height = Math.floor(rect.height * dpr);
+    
+    // 使用setTransform重置变换矩阵（关键修复：避免scale累积）
+    speedChartData.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    
+    console.log('[resizeSpeedChart] 尺寸已更新:', rect.width, 'x', rect.height, 'DPR:', dpr);
+    
+    // 重绘
+    drawSpeedChart();
+}
+
+/**
+ * 开始定时刷新曲线图
+ */
+function startSpeedChartUpdate() {
+    // 立即更新一次
+    fetchSpeedChartData();
+    
+    // 定时刷新
+    setInterval(function() {
+        fetchSpeedChartData();
+    }, speedChartData.updateInterval);
+}
+
+/**
+ * 获取实时网速数据
+ */
+function fetchSpeedChartData() {
+    safeXHR(
+        '<%=luci.dispatcher.build_url("admin/status/router_assistant/get_traffic_history")%>',
+        function(res) {
+            if (res && res.code === 0) {
+                var data = extractData(res);
+                
+                if (data) {
+                    // 更新当前网速显示
+                    if (data.current_speed) {
+                        var rxE1 = document.getElementById('realtime-speed-rx');
+                        var txE1 = document.getElementById('realtime-speed-tx');
+                        var timeE1 = document.getElementById('speed-update-time');
+                        
+                        if (rxE1) rxE1.textContent = data.current_speed.rx_display || '0 B/s';
+                        if (txE1) txE1.textContent = data.current_speed.tx_display || '0 B/s';
+                        
+                        // 更新时间戳
+                        if (timeE1 && data.points && data.points.length > 0) {
+                            var lastPoint = data.points[data.points.length - 1];
+                            if (lastPoint && lastPoint.display_time) {
+                                timeE1.textContent = '最后更新: ' + lastPoint.display_time;
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        function(error) {
+            console.error('[fetchSpeedChartData] 获取数据失败:', error);
+        }
+    );
+}
+
+/**
+ * 绘制曲线图
+ */
+function drawSpeedChart() {
+    var ctx = speedChartData.ctx;
+    var canvas = speedChartData.canvas;
+    if (!ctx || !canvas) {
+        console.warn('[drawSpeedChart] canvas或context不存在');
+        return;
+    }
+    
+    var dpr = window.devicePixelRatio || 1;
+    var width = canvas.width / dpr;
+    var height = canvas.height / dpr;
+    
+    // 尺寸有效性检查
+    if (width <= 0 || height <= 0) {
+        console.warn('[drawSpeedChart] canvas尺寸无效:', width, 'x', height);
+        return;
+    }
+    
+    var padding = { top: 20, right: 20, bottom: 30, left: 72 };
+    var chartWidth = width - padding.left - padding.right;
+    var chartHeight = height - padding.top - padding.bottom;
+    
+    // 清空画布
+    ctx.clearRect(0, 0, width, height);
+    
+    var points = speedChartData.points;
+    
+    // 没有数据时显示提示
+    if (!points || points.length === 0) {
+        ctx.fillStyle = 'rgba(139, 157, 195, 0.5)';
+        ctx.font = '14px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('正在采集数据...', width / 2, height / 2);
+        return;
+    }
+    
+    // 只有1个数据点时显示等待状态
+    if (points.length === 1) {
+        ctx.fillStyle = 'rgba(139, 157, 195, 0.5)';
+        ctx.font = '14px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('等待更多数据...', width / 2, height / 2);
+        
+        // 显示当前速度
+        var p = points[0];
+        ctx.fillStyle = '#00d4ff';
+        ctx.font = 'bold 16px "SF Mono", Monaco, Consolas, monospace';
+        ctx.fillText('↓ ' + (p.speed_rx_display || '0 B/s'), width / 2 - 80, height / 2 + 30);
+        ctx.fillStyle = '#00e676';
+        ctx.fillText('↑ ' + (p.speed_tx_display || '0 B/s'), width / 2 + 80, height / 2 + 30);
+        return;
+    }
+    
+    // 计算最大值（使用绝对最大值，确保所有数据点可见）
+    var allSpeeds = [];
+    for (var i = 0; i < points.length; i++) {
+        if (points[i].speed_rx > 0) allSpeeds.push(points[i].speed_rx);
+        if (points[i].speed_tx > 0) allSpeeds.push(points[i].speed_tx);
+    }
+    
+    // 取绝对最大值（包含所有峰值）
+    var absoluteMax = Math.max.apply(null, allSpeeds.length > 0 ? allSpeeds : [1024]);
+    
+    // 向上取整10%作为顶部空间，确保峰值不紧贴顶部
+    var maxSpeed = absoluteMax * 1.1;
+    
+    // 向上取整到美观的数值
+    var magnitude = Math.pow(10, Math.floor(Math.log10(maxSpeed)));
+    var normalized = maxSpeed / magnitude;
+    maxSpeed = Math.ceil(normalized * 10) / 10 * magnitude;
+    
+    // 确保最小值
+    maxSpeed = Math.max(maxSpeed, 1024);
+    
+    // 绘制网格线
+    ctx.strokeStyle = 'rgba(100, 200, 255, 0.08)';
+    ctx.lineWidth = 1;
+    
+    // 水平网格线（5条，动态数值）
+    for (var i = 0; i <= 4; i++) {
+        var y = padding.top + (chartHeight / 4) * i;
+        ctx.beginPath();
+        ctx.moveTo(padding.left, y);
+        ctx.lineTo(width - padding.right, y);
+        ctx.stroke();
+        
+        // Y轴标签（动态计算的实际值）
+        var speedVal = maxSpeed * (1 - i / 4);
+        ctx.fillStyle = 'rgba(139, 157, 195, 0.7)';
+        ctx.font = '10px "SF Mono", Monaco, Consolas, monospace';
+        ctx.textAlign = 'right';
+        ctx.fillText(formatSpeed(speedVal), padding.left - 6, y + 3);
+    }
+    
+    // 限制显示的数据点数量
+    var MAX_DISPLAY_POINTS = 60;
+    var displayPoints = points.length > MAX_DISPLAY_POINTS ? points.slice(-MAX_DISPLAY_POINTS) : points;
+    
+    // 计算每个数据点的X坐标
+    function getPointX(index) {
+        return padding.left + (index / Math.max(displayPoints.length - 1, 1)) * chartWidth;
+    }
+    
+    // 将速度值转换为Y坐标（带负数保护）
+    function speedToY(speed) {
+        // 负数保护：网速不可能为负
+        var safeSpeed = Math.max(0, speed || 0);
+        return padding.top + chartHeight - (safeSpeed / maxSpeed) * chartHeight;
+    }
+    
+    // 基线位置
+    var baseY = padding.top + chartHeight;
+    
+    /**
+     * 绘制单条平滑折线（带填充）
+     */
+    function drawSmoothLine(dataKey, strokeColor, fillColor) {
+        if (displayPoints.length < 2) return;
+        
+        // 构建坐标点数组
+        var pts = [];
+        for (var i = 0; i < displayPoints.length; i++) {
+            pts.push({
+                x: getPointX(i),
+                y: speedToY(displayPoints[i][dataKey] || 0)
+            });
+        }
+        
+        // ====== 绘制填充区域 ======
+        ctx.beginPath();
+        
+        // 从左下角开始
+        ctx.moveTo(pts[0].x, baseY);
+        
+        // 连接到第一个数据点
+        ctx.lineTo(pts[0].x, pts[0].y);
+        
+        // 用折线连接所有数据点（上边界）
+        for (var i = 1; i < pts.length; i++) {
+            ctx.lineTo(pts[i].x, pts[i].y);
+        }
+        
+        // 闭合到基线
+        ctx.lineTo(pts[pts.length - 1].x, baseY);
+        ctx.closePath();
+        
+        // 渐变填充
+        var gradient = ctx.createLinearGradient(0, padding.top, 0, baseY);
+        gradient.addColorStop(0, fillColor);
+        gradient.addColorStop(0.5, 'rgba(0, 212, 255, 0.05)');
+        gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+        ctx.fillStyle = gradient;
+        ctx.fill();
+        
+        // ====== 绘制折线 ======
+        ctx.beginPath();
+        ctx.moveTo(pts[0].x, pts[0].y);
+        
+        // 折线连接所有数据点
+        for (var li = 1; li < pts.length; li++) {
+            ctx.lineTo(pts[li].x, pts[li].y);
+        }
+        
+        ctx.strokeStyle = strokeColor;
+        ctx.lineWidth = 2;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.stroke();
+    }
+    
+    // 绘制TX曲线（上传）- 底层
+    drawSmoothLine('speed_tx', '#00e676', 'rgba(0, 230, 118, 0.12)');
+    
+    // 绘制RX曲线（下载）- 上层
+    drawSmoothLine('speed_rx', '#00d4ff', 'rgba(0, 212, 255, 0.12)');
+    
+    // 绘制基线（0 B/s 线）
+    var baseY = padding.top + chartHeight;
+    ctx.beginPath();
+    ctx.moveTo(padding.left, baseY);
+    ctx.lineTo(width - padding.right, baseY);
+    ctx.strokeStyle = 'rgba(100, 200, 255, 0.3)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 4]);
+    ctx.stroke();
+    ctx.setLineDash([]);  // 重置虚线样式
+    
+    // 基线标签
+    ctx.fillStyle = 'rgba(139, 157, 195, 0.6)';
+    ctx.font = '10px "SF Mono", Monaco, Consolas, monospace';
+    ctx.textAlign = 'right';
+    ctx.fillText('0', padding.left - 6, baseY + 3);
+    
+    // 绘制X轴时间标签（与数据点对齐）
+    ctx.fillStyle = 'rgba(139, 157, 195, 0.7)';
+    ctx.font = '10px "SF Mono", Monaco, Consolas, monospace';
+    ctx.textAlign = 'center';
+    
+    var labelCount = Math.min(6, displayPoints.length);
+    if (labelCount > 1) {
+        for (var i = 0; i < labelCount; i++) {
+            var idx = Math.floor(i * (displayPoints.length - 1) / (labelCount - 1));
+            var x = padding.left + (idx / Math.max(displayPoints.length - 1, 1)) * chartWidth;
+            var time = displayPoints[idx].display_time || '';
+            ctx.fillText(time, x, height - 8);
+        }
+    } else if (displayPoints.length === 1) {
+        ctx.fillText(displayPoints[0].display_time || '', padding.left + chartWidth/2, height - 8);
+    }
+}
+
+/**
+ * 计算合适的最大值（向上取整到美观的刻度）
+ */
+/**
+ * 格式化速度显示
+ */
+function formatSpeed(bytesPerSec) {
+    if (bytesPerSec < 1024) {
+        return bytesPerSec.toFixed(0) + ' B/s';
+    } else if (bytesPerSec < 1024 * 1024) {
+        return (bytesPerSec / 1024).toFixed(1) + ' KB/s';
+    } else if (bytesPerSec < 1024 * 1024 * 1024) {
+        return (bytesPerSec / 1024 / 1024).toFixed(1) + ' MB/s';
+    } else {
+        return (bytesPerSec / 1024 / 1024 / 1024).toFixed(2) + ' GB/s';
+    }
+}
+
+/**
+ * 处理鼠标移动事件（显示tooltip）
+ */
+function handleChartMouseMove(e) {
+    var canvas = speedChartData.canvas;
+    if (!canvas || !speedChartData.points || speedChartData.points.length < 2) return;
+    
+    var rect = canvas.getBoundingClientRect();
+    var x = e.clientX - rect.left;
+    var y = e.clientY - rect.top;
+    
+    // 使用与绘制相同的参数
+    var MAX_DISPLAY_POINTS = 60;
+    var displayPoints = speedChartData.points;
+    if (speedChartData.points.length > MAX_DISPLAY_POINTS) {
+        displayPoints = speedChartData.points.slice(speedChartData.points.length - MAX_DISPLAY_POINTS);
+    }
+    
+    var dpr = window.devicePixelRatio || 1;
+    var width = canvas.width / dpr;
+    var height = canvas.height / dpr;
+    var padding = { top: 20, right: 20, bottom: 30, left: 72 };
+    var chartWidth = width - padding.left - padding.right;
+    
+    // 计算最近的数据点索引（基于显示的数据点）
+    var relX = x - padding.left;
+    if (relX < 0 || relX > chartWidth) {
+        hideChartTooltip();
+        return;
+    }
+    
+    var idx = Math.round((relX / chartWidth) * (displayPoints.length - 1));
+    idx = Math.max(0, Math.min(idx, displayPoints.length - 1));
+    
+    var point = displayPoints[idx];
+    if (!point) {
+        hideChartTooltip();
+        return;
+    }
+    
+    // 显示tooltip
+    var tooltip = document.getElementById('chart-tooltip');
+    var timeEl = document.getElementById('tooltip-time');
+    var speedEl = document.getElementById('tooltip-speed');
+    
+    if (tooltip && timeEl && speedEl) {
+        timeEl.textContent = point.display_time || '';
+        speedEl.innerHTML = 
+            '<span style="color:#00d4ff;">↓ ' + (point.speed_rx_display || '0 B/s') + '</span><br>' +
+            '<span style="color:#00e676;">↑ ' + (point.speed_tx_display || '0 B/s') + '</span>';
+        
+        tooltip.style.display = 'block';
+        
+        // 智能定位：根据鼠标位置决定tooltip显示在左边还是右边
+        var tooltipWidth = 140;  // 预估tooltip宽度
+        var containerWidth = canvas.parentElement.offsetWidth;
+        
+        if (x + tooltipWidth + 20 > containerWidth) {
+            // 右侧空间不足，显示在左边
+            tooltip.style.left = (x - tooltipWidth - 15) + 'px';
+        } else {
+            // 正常显示在右边
+            tooltip.style.left = (x + 15) + 'px';
+        }
+        
+        // 垂直位置：确保不超出顶部
+        var tooltipY = y - 40;
+        if (tooltipY < 5) tooltipY = y + 15;
+        tooltip.style.top = tooltipY + 'px';
+    }
+}
+
+/**
+ * 隐藏tooltip
+ */
+function hideChartTooltip() {
+    var tooltip = document.getElementById('chart-tooltip');
+    if (tooltip) {
+        tooltip.style.display = 'none';
+    }
+}
+
+// ============================================================
+// 实时网速曲线图结束
+// ============================================================
+
 var speedTestRunning = false;
 
 function startSpeedTest() {
@@ -4580,14 +6098,52 @@ function startSpeedTest() {
 // ============================================================
 
 document.getElementById('diagnose-type').addEventListener('change', function() {
+    var type = this.value;
     var portInput = document.getElementById('diagnose-port');
-    portInput.style.display = this.value === 'port' ? 'block' : 'none';
+    var portEndInput = document.getElementById('diagnose-port-end');
+    var portScanType = document.getElementById('port-scan-type');
+    var dnsSubtype = document.getElementById('dns-subtype');
+    
+    // 重置所有子选项显示
+    portInput.style.display = 'none';
+    portEndInput.style.display = 'none';
+    portScanType.style.display = 'none';
+    dnsSubtype.style.display = 'none';
+    
+    if (type === 'port') {
+        portScanType.style.display = 'block';
+        var scanType = portScanType.value;
+        if (scanType === 'single') {
+            portInput.style.display = 'block';
+            portInput.placeholder = '端口';
+        } else {
+            portInput.style.display = 'block';
+            portEndInput.style.display = 'block';
+            portInput.placeholder = '起始端口';
+        }
+    } else if (type === 'dns') {
+        dnsSubtype.style.display = 'block';
+    }
+});
+
+document.getElementById('port-scan-type').addEventListener('change', function() {
+    var portInput = document.getElementById('diagnose-port');
+    var portEndInput = document.getElementById('diagnose-port-end');
+    
+    if (this.value === 'single') {
+        portEndInput.style.display = 'none';
+        portInput.placeholder = '端口';
+    } else {
+        portEndInput.style.display = 'block';
+        portInput.placeholder = '起始端口';
+    }
 });
 
 function runDiagnose() {
     var type = document.getElementById('diagnose-type').value;
     var target = document.getElementById('diagnose-target').value.trim();
     var port = document.getElementById('diagnose-port').value;
+    var portEnd = document.getElementById('diagnose-port-end').value;
     var outputDiv = document.getElementById('diagnose-output');
     var btn = document.getElementById('diagnose-btn');
 
@@ -4602,13 +6158,24 @@ function runDiagnose() {
     outputDiv.textContent = '正在执行 ' + type + ' 测试，请稍候...';
 
     var params = 'type=' + encodeURIComponent(type) + '&target=' + encodeURIComponent(target) + '&token=' + encodeURIComponent(LUCI_TOKEN);
-    if (type === 'port' && port) {
-        params += '&port=' + encodeURIComponent(port);
+    
+    if (type === 'port') {
+        var scanType = document.getElementById('port-scan-type').value;
+        params += '&scan_type=' + encodeURIComponent(scanType);
+        if (port) {
+            params += '&port=' + encodeURIComponent(port);
+        }
+        if (scanType === 'range' && portEnd) {
+            params += '&port_end=' + encodeURIComponent(portEnd);
+        }
+    } else if (type === 'dns') {
+        var dnsType = document.getElementById('dns-subtype').value;
+        params += '&dns_type=' + encodeURIComponent(dnsType);
     }
 
     var xhr = new XMLHttpRequest();
     xhr.open('POST', '<%=luci.dispatcher.build_url("admin/status/router_assistant/network_diagnose")%>', true);
-    xhr.timeout = 30000;
+    xhr.timeout = 60000;
     xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
 
     xhr.onload = function() {
@@ -4644,6 +6211,2033 @@ function runDiagnose() {
     };
 
     xhr.send(params);
+}
+
+// ============================================================
+// 安全中心功能
+// ============================================================
+
+/**
+ * 加载安全概览数据
+ */
+function loadSecurityOverview() {
+    console.log('[loadSecurityOverview] 开始加载安全概览...');
+    safeXHR(
+        '<%=luci.dispatcher.build_url("admin/status/router_assistant/get_security_overview")%>',
+        function(res) {
+            console.log('[loadSecurityOverview] 收到响应:', JSON.stringify(res));
+            if (res.code === 0) {
+                var data = extractData(res);
+                console.log('[loadSecurityOverview] 提取数据:', data);
+                if (data) {
+                    document.getElementById('security-score').textContent = data.security_score || 0;
+                    document.getElementById('arp-table-count').textContent = data.arp_table_count || 0;
+                    document.getElementById('total-alerts').textContent = (data.high_risk_count || 0) + (data.medium_risk_count || 0);
+                    
+                    var levelTag = document.getElementById('security-level-tag');
+                    var alertTag = document.getElementById('alert-count-tag');
+                    
+                    if (data.security_score >= 80) {
+                        levelTag.textContent = '安全';
+                        levelTag.className = 'rm-stat-tag green';
+                    } else if (data.security_score >= 60) {
+                        levelTag.textContent = '一般';
+                        levelTag.className = 'rm-stat-tag orange';
+                    } else if (data.security_score >= 40) {
+                        levelTag.textContent = '风险';
+                        levelTag.className = 'rm-stat-tag red';
+                    } else {
+                        levelTag.textContent = '危险';
+                        levelTag.className = 'rm-stat-tag red';
+                    }
+                    
+                    var totalAlerts = (data.high_risk_count || 0) + (data.medium_risk_count || 0);
+                    alertTag.textContent = totalAlerts;
+                    if (totalAlerts > 0) {
+                        alertTag.className = 'rm-stat-tag red';
+                    } else {
+                        alertTag.className = 'rm-stat-tag green';
+                    }
+                }
+            }
+        },
+        function(error) {
+            console.error('[loadSecurityOverview] 加载失败:', error);
+        }
+    );
+}
+
+/**
+ * 刷新ARP欺骗检测
+ */
+function refreshArpDetection() {
+    document.getElementById('arp-alerts-loading').style.display = 'block';
+    document.getElementById('arp-alerts-empty').style.display = 'none';
+    document.getElementById('arp-alerts-table').style.display = 'none';
+    
+    safeXHR(
+        '<%=luci.dispatcher.build_url("admin/status/router_assistant/get_arp_spoof_detection")%>',
+        function(res) {
+            document.getElementById('arp-alerts-loading').style.display = 'none';
+            
+            if (res.code === 0) {
+                var data = extractData(res);
+                var alerts = data && data.alerts ? data.alerts : [];
+                
+                if (alerts.length > 0) {
+                    var html = '';
+                    alerts.forEach(function(alert) {
+                        var severityClass = alert.severity === 'high' ? 'style="color:var(--accent-red);font-weight:600;"' : 
+                                          (alert.severity === 'medium' ? 'style="color:var(--accent-orange);"' : 'style="color:var(--text-secondary);"');
+                        var severityText = alert.severity === 'high' ? '高危' : (alert.severity === 'medium' ? '中危' : '低危');
+                        var typeText = alert.type === 'ip_conflict' ? 'IP冲突' : (alert.type === 'arp_change' ? 'MAC变更' : '多IP绑定');
+                        
+                        // 添加误判提示
+                        var falsePositiveHint = '';
+                        if (alert.is_likely_false_positive) {
+                            falsePositiveHint = '<span style="color:var(--text-secondary);font-size:11px;margin-left:8px;">（可能是网关/AP）</span>';
+                        }
+                        
+                        // 构建详细信息
+                        var detailInfo = '';
+                        if (alert.type === 'mac_multi_ip' && alert.ips) {
+                            detailInfo = '<div style="margin-top:4px;font-size:11px;color:var(--text-secondary);">关联IP: ' + alert.ips.slice(0, 5).join(', ') + (alert.ips.length > 5 ? ' ...共' + alert.ip_count + '个' : '') + '</div>';
+                        } else if (alert.type === 'arp_change') {
+                            detailInfo = '<div style="margin-top:4px;font-size:11px;color:var(--text-secondary);">变更: ' + (alert.mac_old || '-') + ' → ' + (alert.mac_new || '-') + '</div>';
+                        }
+                        
+                        html += '<tr>' +
+                            '<td>' + typeText + falsePositiveHint + '</td>' +
+                            '<td>' + escapeHtml(alert.ip || '-') + '</td>' +
+                            '<td><span class="rm-mac">' + escapeHtml(alert.mac || alert.mac_old || alert.mac_new || '-') + '</span></td>' +
+                            '<td ' + severityClass + '>' + severityText + '</td>' +
+                            '<td>' +
+                                '<div>' + escapeHtml(alert.message || '-') + '</div>' +
+                                detailInfo +
+                            '</td>' +
+                            '</tr>';
+                    });
+                    
+                    document.getElementById('arp-alerts-tbody').innerHTML = html;
+                    document.getElementById('arp-alerts-table').style.display = 'block';
+                } else {
+                    document.getElementById('arp-alerts-empty').style.display = 'block';
+                }
+            }
+        },
+        function(error) {
+            document.getElementById('arp-alerts-loading').style.display = 'none';
+            showToast('检测失败: ' + error, 'error');
+        }
+    );
+}
+
+// ============================================================
+// ARP告警历史记录与管理
+// ============================================================
+
+var arpAutoMonitorTimer = null;
+var ARP_MONITOR_INTERVAL = 30000;  // 30秒
+
+/**
+ * 显示ARP告警历史记录
+ */
+function showArpHistory() {
+    document.getElementById('arp-history-panel').style.display = 'block';
+    loadArpHistory();
+}
+
+/**
+ * 隐藏ARP告警历史记录
+ */
+function hideArpHistory() {
+    document.getElementById('arp-history-panel').style.display = 'none';
+}
+
+/**
+ * 加载ARP告警历史
+ */
+function loadArpHistory() {
+    safeXHR(
+        '<%=luci.dispatcher.build_url("admin/status/router_assistant/get_arp_alert_history")%>',
+        function(res) {
+            if (res.code === 0) {
+                var data = extractData(res);
+                var alerts = data && data.alerts ? data.alerts : [];
+                
+                // 更新统计信息
+                document.getElementById('history-stats').textContent = 
+                    '共' + (data.total_count || 0) + '条 | 未处理: ' + (data.unhandled_count || 0) + ' | 高危: ' + (data.high_risk_count || 0);
+                
+                var tbody = document.getElementById('arp-history-tbody');
+                var emptyEl = document.getElementById('history-empty');
+                var tableWrapper = document.getElementById('history-table-wrapper');
+                
+                if (alerts.length > 0) {
+                    var html = '';
+                    alerts.forEach(function(alert) {
+                        var timeStr = alert.timestamp ? new Date(alert.timestamp * 1000).toLocaleString() : '-';
+                        var severityClass = alert.severity === 'high' ? 'color:var(--accent-red);font-weight:600;' : 
+                                          (alert.severity === 'medium' ? 'color:var(--accent-orange);' : 'color:var(--text-secondary);');
+                        var severityText = alert.severity === 'high' ? '高危' : (alert.severity === 'medium' ? '中危' : '低危');
+                        var typeText = alert.type === 'ip_conflict' ? 'IP冲突' : (alert.type === 'arp_change' ? 'MAC变更' : '多IP绑定');
+                        
+                        // 状态显示
+                        var statusHtml = '';
+                        if (alert.handled) {
+                            var actionText = alert.handle_action === 'isolate' ? '已隔离' : 
+                                           (alert.handle_action === 'ignore' ? '已忽略' : '已白名单');
+                            statusHtml = '<span style="color:var(--accent-green);">' + actionText + '</span>';
+                        } else {
+                            statusHtml = '<span style="color:var(--accent-orange);">未处理</span>';
+                        }
+                        
+                        // 操作按钮
+                        var actionBtns = '';
+                        if (!alert.handled) {
+                            actionBtns = '<div style="display:flex;gap:4px;">' +
+                                '<button class="rm-btn" onclick="handleAlert(\'' + alert.id + '\',\'whitelist\')" style="padding:2px 8px;font-size:10px;background:rgba(0,230,118,0.1);border-color:rgba(0,230,118,0.3);color:var(--accent-green);">白名单</button>' +
+                                '<button class="rm-btn" onclick="handleAlert(\'' + alert.id + '\',\'isolate\')" style="padding:2px 8px;font-size:10px;background:rgba(255,82,82,0.1);border-color:rgba(255,82,82,0.3);color:var(--accent-red);">隔离</button>' +
+                                '<button class="rm-btn" onclick="handleAlert(\'' + alert.id + '\',\'ignore\')" style="padding:2px 8px;font-size:10px;background:transparent;border-color:var(--border-color);">忽略</button>' +
+                                '</div>';
+                        }
+                        
+                        html += '<tr>' +
+                            '<td style="font-size:11px;white-space:nowrap;">' + timeStr + '</td>' +
+                            '<td>' + typeText + '</td>' +
+                            '<td><span class="rm-mac" style="font-size:11px;">' + escapeHtml(alert.mac || alert.mac_old || '-') + '</span></td>' +
+                            '<td style="' + severityClass + '">' + severityText + '</td>' +
+                            '<td>' + statusHtml + '</td>' +
+                            '<td>' + actionBtns + '</td>' +
+                            '</tr>';
+                    });
+                    
+                    tbody.innerHTML = html;
+                    tableWrapper.style.display = 'block';
+                    emptyEl.style.display = 'none';
+                } else {
+                    tableWrapper.style.display = 'none';
+                    emptyEl.style.display = 'block';
+                }
+            }
+        },
+        function(error) {
+            console.error('[loadArpHistory] 加载失败:', error);
+        }
+    );
+}
+
+/**
+ * 处理ARP告警（隔离/白名单/忽略）
+ */
+function handleAlert(alertId, action) {
+    safeXHRpost(
+        '<%=luci.dispatcher.build_url("admin/status/router_assistant/handle_arp_alert")%>',
+        'alert_id=' + encodeURIComponent(alertId) + '&action=' + encodeURIComponent(action),
+        function(res) {
+            if (res.code === 0) {
+                showToast(res.message || '操作成功', 'success');
+                loadArpHistory();  // 刷新历史
+                refreshArpDetection(); // 刷新当前检测
+            } else {
+                showToast('操作失败: ' + (res.message || '未知错误'), 'error');
+            }
+        },
+        function(error) {
+            showToast('操作失败: ' + error, 'error');
+        }
+    );
+}
+
+/**
+ * 清空ARP告警历史
+ */
+function clearArpHistory() {
+    if (!confirm('确定要清空所有告警历史记录吗？')) return;
+    
+    safeXHRpost(
+        '<%=luci.dispatcher.build_url("admin/status/router_assistant/clear_arp_history")%>',
+        '',
+        function(res) {
+            if (res.code === 0) {
+                showToast('历史记录已清空', 'success');
+                loadArpHistory();
+            } else {
+                showToast('清空失败: ' + (res.message || '未知错误'), 'error');
+            }
+        },
+        function(error) {
+            showToast('清空失败: ' + error, 'error');
+        }
+    );
+}
+
+/**
+ * 切换自动监控状态
+ */
+function toggleAutoMonitor() {
+    var toggle = document.getElementById('auto-monitor-toggle');
+    var statusSpan = document.getElementById('monitor-status');
+    
+    if (toggle.checked) {
+        // 启动自动监控
+        startArpAutoMonitor();
+        statusSpan.style.display = 'inline-block';
+        showToast('已开启自动监控（每30秒刷新）', 'success');
+    } else {
+        // 停止自动监控
+        stopArpAutoMonitor();
+        statusSpan.style.display = 'none';
+        showToast('已关闭自动监控', 'info');
+    }
+}
+
+/**
+ * 启动ARP自动监控定时器
+ */
+function startArpAutoMonitor() {
+    stopArpAutoMonitor();
+    
+    arpAutoMonitorTimer = setInterval(function() {
+        refreshArpDetectionSilent();
+    }, ARP_MONITOR_INTERVAL);
+}
+
+/**
+ * 停止ARP自动监控定时器
+ */
+function stopArpAutoMonitor() {
+    if (arpAutoMonitorTimer) {
+        clearInterval(arpAutoMonitorTimer);
+        arpAutoMonitorTimer = null;
+    }
+}
+
+/**
+ * 静默刷新ARP检测（不显示loading，用于自动监控）
+ */
+function refreshArpDetectionSilent() {
+    console.log('[ARP Monitor] 执行自动检测...');
+    safeXHR(
+        '<%=luci.dispatcher.build_url("admin/status/router_assistant/get_arp_spoof_detection")%>',
+        function(res) {
+            console.log('[ARP Monitor] 检测完成，响应码:', res.code);
+            if (res.code === 0) {
+                var data = extractData(res);
+                var alerts = data && data.alerts ? data.alerts : [];
+
+                console.log('[ARP Monitor] 检测到 ' + alerts.length + ' 条告警');
+
+                if (alerts.length > 0) {
+                    // 有新的告警，更新显示
+                    refreshArpDetection();
+
+                    // 检查是否有未处理的高危告警
+                    var hasUnhandledHighRisk = alerts.some(function(a) {
+                        return a.severity === 'high' && !a.is_likely_false_positive;
+                    });
+
+                    if (hasUnhandledHighRisk) {
+                        console.warn('[ARP Monitor] ⚠️ 检测到高危ARP告警!');
+                        showToast('⚠️ 检测到高危ARP告警，请查看详情', 'error');
+                    }
+                }
+            } else {
+                console.error('[ARP Monitor] 检测失败:', res.message);
+            }
+        },
+        function(error) {
+            console.error('[refreshArpDetectionSilent] 自动监控刷新失败:', error);
+        }
+    );
+}
+
+// ============================================================
+// 端口扫描检测功能
+// ============================================================
+
+/**
+ * 开始端口扫描检测
+ */
+function startPortScan() {
+    document.getElementById('port-scan-empty').style.display = 'none';
+    document.getElementById('port-scan-result').style.display = 'none';
+    document.getElementById('port-scan-loading').style.display = 'block';
+    
+    safeXHRpost(
+        '<%=luci.dispatcher.build_url("admin/status/router_assistant/start_port_scan")%>',
+        '',
+        function(res) {
+            document.getElementById('port-scan-loading').style.display = 'none';
+            
+            if (res.code === 0) {
+                var data = extractData(res);
+                if (data) {
+                    console.log('[端口扫描] 扫描结果:', data);
+
+                    // 显示统计信息
+                    document.getElementById('scan-external-ips').textContent = data.total_external_ips || 0;
+                    document.getElementById('scan-total-conns').textContent = data.total_connections || 0;
+                    document.getElementById('scan-suspicious').textContent = data.suspicious_count || 0;
+                    
+                    // 显示结果区域
+                    document.getElementById('port-scan-result').style.display = 'block';
+                    
+                    var alerts = data.alerts || [];
+                    
+                    if (alerts.length > 0) {
+                        // 有可疑连接
+                        document.getElementById('port-scan-alerts-section').style.display = 'block';
+                        document.getElementById('port-scan-normal-section').style.display = 'none';
+                        
+                        var html = '';
+                        alerts.forEach(function(alert, index) {
+                            var severityClass = alert.severity === 'high' ? 'color:var(--accent-red);font-weight:600;' : 
+                                              (alert.severity === 'medium' ? 'color:var(--accent-orange);' : 'color:var(--text-secondary);');
+                            var severityText = alert.severity === 'high' ? '高危' : (alert.severity === 'medium' ? '中危' : '低危');
+                            
+                            // 构建端口列表
+                            var portList = [];
+                            if (alert.ports) {
+                                for (var p in alert.ports) {
+                                    if (alert.ports[p]) {
+                                        portList.push(p + '(' + (alert.ports[p].name || '') + ')');
+                                    }
+                                }
+                            }
+                            
+                            // 构建原因列表
+                            var reasonsHtml = '';
+                            if (alert.reasons && Array.isArray(alert.reasons)) {
+                                reasonsHtml = '<div style="margin-top:4px;">' + 
+                                    alert.reasons.map(function(r) { return escapeHtml(r); }).join('<br>') + 
+                                    '</div>';
+                            }
+                            
+                            html += '<tr>' +
+                                '<td>' + escapeHtml(alert.ip || '-') + '</td>' +
+                                '<td style="font-size:11px;max-width:150px;word-wrap:break-word;">' + escapeHtml(portList.slice(0, 3).join(', ')) + (portList.length > 3 ? '...' : '') + '</td>' +
+                                '<td>' + (alert.connection_count || 0) + '</td>' +
+                                '<td style="' + severityClass + '">' + (alert.suspicious_score || 0) + '</td>' +
+                                '<td style="font-size:11px;">' + reasonsHtml + '</td>' +
+                                '<td><div style="display:flex;gap:4px;flex-wrap:wrap;">' +
+                                    '<button class="rm-btn" onclick="handlePortScanAlert(\'' + alert.id + '\',\'block\')" style="padding:2px 8px;font-size:10px;background:rgba(255,82,82,0.1);border-color:rgba(255,82,82,0.3);color:var(--accent-red);">阻止</button>' +
+                                    '<button class="rm-btn" onclick="handlePortScanAlert(\'' + alert.id + '\',\'ignore\')" style="padding:2px 8px;font-size:10px;background:transparent;border-color:var(--border-color);">忽略</button>' +
+                                '</div></td>' +
+                                '</tr>';
+                        });
+                        
+                        document.getElementById('port-scan-alerts-tbody').innerHTML = html;
+                    } else {
+                        // 无可疑连接，显示正常外部IP列表
+                        document.getElementById('port-scan-alerts-section').style.display = 'none';
+                        document.getElementById('port-scan-normal-section').style.display = 'block';
+                        
+                        var connections = data.connections || {};
+                        var normalHtml = '<div style="display:flex;flex-wrap:wrap;gap:8px;padding:10px;">';
+                        
+                        for (var ip in connections) {
+                            if (connections[ip] && !connections[ip].is_suspicious) {
+                                var conn = connections[ip];
+                                var ports = [];
+                                for (var p in conn.ports) {
+                                    if (conn.ports[p]) {
+                                        ports.push(p);
+                                    }
+                                }
+                                
+                                normalHtml += '<div style="padding:8px 12px;background:rgba(0,230,118,0.05);border-radius:6px;border:1px solid rgba(0,230,118,0.2);min-width:200px;">' +
+                                    '<div style="color:var(--text-primary);font-weight:600;font-size:12px;margin-bottom:4px;">' + escapeHtml(ip) + '</div>' +
+                                    '<div style="color:var(--text-secondary);font-size:11px;">端口: ' + escapeHtml(ports.join(', ')) + ' | 连接数: ' + (conn.connection_count || 0) + '</div>' +
+                                    '</div>';
+                            }
+                        }
+                        
+                        normalHtml += '</div>';
+                        
+                        if (Object.keys(connections).length === 0) {
+                            normalHtml = '<div style="text-align:center;color:var(--text-secondary);padding:20px;">暂无外部连接</div>';
+                        }
+                        
+                        document.getElementById('port-scan-normal-list').innerHTML = normalHtml;
+                    }
+                }
+            } else {
+                showToast('扫描失败: ' + (res.message || '未知错误'), 'error');
+                document.getElementById('port-scan-empty').style.display = 'block';
+            }
+        },
+        function(error) {
+            document.getElementById('port-scan-loading').style.display = 'none';
+            showToast('扫描失败: ' + error, 'error');
+            document.getElementById('port-scan-empty').style.display = 'block';
+        }
+    );
+}
+
+/**
+ * 显示端口扫描历史记录
+ */
+function showPortScanHistory() {
+    document.getElementById('port-scan-history-panel').style.display = 'block';
+    loadPortScanHistory();
+}
+
+/**
+ * 隐藏端口扫描历史记录
+ */
+function hidePortScanHistory() {
+    document.getElementById('port-scan-history-panel').style.display = 'none';
+}
+
+/**
+ * 加载端口扫描历史
+ */
+function loadPortScanHistory() {
+    safeXHR(
+        '<%=luci.dispatcher.build_url("admin/status/router_assistant/get_port_scan_history")%>',
+        function(res) {
+            if (res.code === 0) {
+                var data = extractData(res);
+                var scans = data && data.scans ? data.scans : [];
+                
+                // 更新统计信息
+                document.getElementById('port-history-stats').textContent = 
+                    '共' + (data.total_count || 0) + '条 | 未处理: ' + (data.unhandled_count || 0) + ' | 高危: ' + (data.high_risk_count || 0);
+                
+                var tbody = document.getElementById('port-history-tbody');
+                var emptyEl = document.getElementById('port-history-empty');
+                var tableWrapper = document.getElementById('port-history-table-wrapper');
+                
+                if (scans.length > 0) {
+                    var html = '';
+                    scans.forEach(function(scan) {
+                        var timeStr = scan.timestamp ? new Date(scan.timestamp * 1000).toLocaleString() : '-';
+                        var severityClass = scan.severity === 'high' ? 'color:var(--accent-red);font-weight:600;' : 
+                                          (scan.severity === 'medium' ? 'color:var(--accent-orange);' : 'color:var(--text-secondary);');
+                        var severityText = scan.severity === 'high' ? '高危' : (scan.severity === 'medium' ? '中危' : '低危');
+                        
+                        var statusHtml = '';
+                        if (scan.handled) {
+                            var actionText = scan.handle_action === 'block' ? '已阻止' : 
+                                           (scan.handle_action === 'ignore' ? '已忽略' : '已白名单');
+                            statusHtml = '<span style="color:var(--accent-green);">' + actionText + '</span>';
+                        } else {
+                            statusHtml = '<span style="color:var(--accent-orange);">未处理</span>';
+                        }
+                        
+                        var actionBtns = '';
+                        if (!scan.handled) {
+                            actionBtns = '<div style="display:flex;gap:4px;">' +
+                                '<button class="rm-btn" onclick="handlePortScanAlert(\'' + scan.id + '\',\'block\')" style="padding:2px 8px;font-size:10px;background:rgba(255,82,82,0.1);border-color:rgba(255,82,82,0.3);color:var(--accent-red);">阻止</button>' +
+                                '<button class="rm-btn" onclick="handlePortScanAlert(\'' + scan.id + '\',\'ignore\')" style="padding:2px 8px;font-size:10px;background:transparent;border-color:var(--border-color);">忽略</button>' +
+                                '</div>';
+                        }
+                        
+                        html += '<tr>' +
+                            '<td style="font-size:11px;white-space:nowrap;">' + timeStr + '</td>' +
+                            '<td>' + escapeHtml(scan.ip || '-') + '</td>' +
+                            '<td>' + (scan.port_count || 0) + '</td>' +
+                            '<td>' + (scan.connection_count || 0) + '</td>' +
+                            '<td style="' + severityClass + '">' + severityText + '</td>' +
+                            '<td>' + statusHtml + '</td>' +
+                            '<td>' + actionBtns + '</td>' +
+                            '</tr>';
+                    });
+                    
+                    tbody.innerHTML = html;
+                    tableWrapper.style.display = 'block';
+                    emptyEl.style.display = 'none';
+                } else {
+                    tableWrapper.style.display = 'none';
+                    emptyEl.style.display = 'block';
+                }
+            }
+        },
+        function(error) {
+            console.error('[loadPortScanHistory] 加载失败:', error);
+        }
+    );
+}
+
+/**
+ * 处理端口扫描告警（阻止/忽略）
+ */
+function handlePortScanAlert(alertId, action) {
+    safeXHRpost(
+        '<%=luci.dispatcher.build_url("admin/status/router_assistant/handle_port_scan_alert")%>',
+        'alert_id=' + encodeURIComponent(alertId) + '&action=' + encodeURIComponent(action),
+        function(res) {
+            if (res.code === 0) {
+                showToast(res.message || '操作成功', 'success');
+                loadPortScanHistory();
+                startPortScan();  // 刷新扫描结果
+            } else {
+                showToast('操作失败: ' + (res.message || '未知错误'), 'error');
+            }
+        },
+        function(error) {
+            showToast('操作失败: ' + error, 'error');
+        }
+    );
+}
+
+/**
+ * 添加到白名单
+ */
+function addToWhitelist(mac) {
+    safeXHRpost(
+        '<%=luci.dispatcher.build_url("admin/status/router_assistant/add_security_whitelist")%>',
+        'mac=' + encodeURIComponent(mac),
+        function(res) {
+            if (res.code === 0) {
+                showToast(res.message || '已添加到白名单', 'success');
+                refreshArpDetection();
+            } else {
+                showToast('添加失败: ' + (res.message || '未知错误'), 'error');
+            }
+        },
+        function(error) {
+            showToast('添加失败: ' + error, 'error');
+        }
+    );
+}
+
+/**
+ * 从白名单移除
+ */
+function removeFromWhitelist(mac) {
+    safeXHRpost(
+        '<%=luci.dispatcher.build_url("admin/status/router_assistant/remove_security_whitelist")%>',
+        'mac=' + encodeURIComponent(mac),
+        function(res) {
+            if (res.code === 0) {
+                showToast(res.message || '已从白名单移除', 'success');
+                refreshArpDetection();
+            } else {
+                showToast('移除失败: ' + (res.message || '未知错误'), 'error');
+            }
+        },
+        function(error) {
+            showToast('移除失败: ' + error, 'error');
+        }
+    );
+}
+
+// ============================================================
+// 网络安全检测功能
+// ============================================================
+
+/**
+ * 运行完整安全扫描
+ */
+function runFullSecurityScan() {
+    console.log('[安全扫描] 开始执行完整安全扫描...');
+
+    document.getElementById('security-scan-empty').style.display = 'none';
+    document.getElementById('security-scan-overview').style.display = 'none';
+    document.getElementById('scan-detail-ports').style.display = 'none';
+    document.getElementById('scan-detail-dns').style.display = 'none';
+    document.getElementById('scan-detail-password').style.display = 'none';
+    document.getElementById('security-scan-loading').style.display = 'block';
+
+    safeXHRpost(
+        '<%=luci.dispatcher.build_url("admin/status/router_assistant/run_security_scan")%>',
+        '',
+        function(res) {
+            console.log('[安全扫描] 收到响应:', res);
+
+            document.getElementById('security-scan-loading').style.display = 'none';
+
+            if (res.code === 0) {
+                var data = extractData(res);
+                if (data) {
+                    console.log('[安全扫描] 扫描数据:', data);
+
+                    // 显示概览
+                    document.getElementById('security-scan-overview').style.display = 'block';
+
+                    var score = data.security_score || 0;
+                    document.getElementById('scan-total-score').textContent = score;
+
+                    var levelBadge = document.getElementById('scan-level-badge');
+                    var level = data.security_level || '-';
+                    levelBadge.textContent = level;
+
+                    // 根据评分设置颜色
+                    if (score >= 85) {
+                        levelBadge.style.background = 'var(--accent-green)';
+                    } else if (score >= 70) {
+                        levelBadge.style.background = 'var(--accent-cyan)';
+                    } else if (score >= 55) {
+                        levelBadge.style.background = 'var(--accent-orange)';
+                    } else if (score >= 40) {
+                        levelBadge.style.background = '#ff9800';
+                    } else {
+                        levelBadge.style.background = 'var(--accent-red)';
+                    }
+                    levelBadge.style.color = score >= 70 ? '#000' : '#fff';
+
+                    // 更新各模块摘要
+                    var portsData = data.open_ports || {};
+                    var externalCount = portsData.external_count || 0;
+                    var totalOpen = portsData.total_open || 0;
+                    var portsSummaryText = externalCount + '/' + totalOpen;
+
+                    var portsSummaryEl = document.getElementById('scan-ports-summary').querySelector('div:first-child');
+                    if (portsSummaryEl) {
+                        portsSummaryEl.textContent = portsSummaryText;
+                        portsSummaryEl.style.color = externalCount > 2 ? 'var(--accent-red)' : (externalCount > 0 ? 'var(--accent-orange)' : 'var(--accent-green)');
+                    }
+
+                    var dnsData = data.dns_check || {};
+                    console.log('[安全扫描] DNS详细数据:', JSON.stringify(dnsData));
+                    console.log('[安全扫描] is_safe值:', dnsData.is_safe, '类型:', typeof dnsData.is_safe);
+                    
+                    // DNS状态判断：优先使用is_safe字段，如果没有则根据suspicious_count判断
+                    var dnsIsSafe = false;
+                    if (dnsData.is_safe !== undefined && dnsData.is_safe !== null) {
+                        dnsIsSafe = !!dnsData.is_safe;  // 转换为布尔值
+                    } else if (dnsData.suspicious_count !== undefined) {
+                        // 兼容旧版本：没有可疑就认为正常
+                        dnsIsSafe = (dnsData.suspicious_count === 0);
+                    } else {
+                        // 默认认为正常（避免误报）
+                        dnsIsSafe = true;
+                    }
+                    
+                    var dnsStatus = dnsIsSafe ? '正常' : '异常';
+                    console.log('[安全扫描] DNS最终判断:', dnsStatus, 'isSafe:', dnsIsSafe);
+
+                    var dnsSummaryEl = document.getElementById('scan-dns-summary').querySelector('div:first-child');
+                    if (dnsSummaryEl) {
+                        dnsSummaryEl.textContent = dnsStatus;
+                        dnsSummaryEl.style.color = dnsIsSafe ? 'var(--accent-green)' : 'var(--accent-red)';
+                    }
+
+                    var pwdData = data.password_check || {};
+                    var pwdSummary = pwdData.summary || {};
+                    var weakCount = (pwdSummary.weak_count || 0) + (pwdSummary.critical_count || 0);
+                    var pwdText = weakCount > 0 ? (weakCount + '个弱') : '全部强';
+
+                    var pwdSummaryEl = document.getElementById('scan-pwd-summary').querySelector('div:first-child');
+                    if (pwdSummaryEl) {
+                        pwdSummaryEl.textContent = pwdText;
+                        pwdSummaryEl.style.color = weakCount > 0 ? 'var(--accent-red)' : 'var(--accent-green)';
+                    }
+
+                    // 填充详细结果
+                    displayOpenPortsResult(portsData.ports || []);
+                    displayDnsCheckResult(dnsData.tests || [], dnsData.dns_servers || []);
+                    displayPasswordResult(pwdData.wifi || [], pwdData.admin || []);
+                    
+                    // 显示风险原因
+                    displayRiskReasons(data.risk_reasons || [], score);
+
+                    showToast('安全扫描完成，综合评分: ' + score + '分', 'success');
+                } else {
+                    console.error('[安全扫描] 数据提取失败');
+                    showToast('扫描数据解析失败', 'error');
+                    document.getElementById('security-scan-empty').style.display = 'block';
+                }
+            } else {
+                console.error('[安全扫描] 接口返回错误:', res);
+                showToast('扫描失败: ' + (res.message || '未知错误'), 'error');
+                document.getElementById('security-scan-empty').style.display = 'block';
+            }
+        },
+        function(error) {
+            console.error('[安全扫描] 请求失败:', error);
+            document.getElementById('security-scan-loading').style.display = 'none';
+            showToast('网络请求失败，请检查网络连接', 'error');
+            document.getElementById('security-scan-empty').style.display = 'block';
+        }
+    );
+}
+
+/**
+ * 显示扫描详情
+ */
+function showScanDetail(type) {
+    console.log('[安全扫描] 显示详情类型:', type);
+
+    // 隐藏所有详情
+    document.getElementById('scan-detail-ports').style.display = 'none';
+    document.getElementById('scan-detail-dns').style.display = 'none';
+    document.getElementById('scan-detail-password').style.display = 'none';
+
+    // 显示指定详情并重新检测
+    if (type === 'ports') {
+        document.getElementById('scan-detail-ports').style.display = 'block';
+        checkOpenPorts();
+    } else if (type === 'dns') {
+        document.getElementById('scan-detail-dns').style.display = 'block';
+        checkDnsHijack();
+    } else if (type === 'password') {
+        document.getElementById('scan-detail-password').style.display = 'block';
+        checkWeakPasswords();
+    }
+}
+
+/**
+ * 检测开放端口
+ */
+function checkOpenPorts() {
+    console.log('[开放端口] 开始检测...');
+
+    safeXHR(
+        '<%=luci.dispatcher.build_url("admin/status/router_assistant/check_open_ports")%>',
+        function(res) {
+            console.log('[开放端口] 检测结果:', res);
+
+            if (res.code === 0) {
+                var data = extractData(res);
+                displayOpenPortsResult(data.ports || []);
+            } else {
+                console.error('[开放端口] 检测失败:', res);
+                showToast('开放端口检测失败: ' + (res.message || ''), 'error');
+            }
+        },
+        function(error) {
+            console.error('[开放端口] 请求失败:', error);
+            showToast('网络请求失败', 'error');
+        }
+    );
+}
+
+/**
+ * 显示开放端口检测结果
+ */
+function displayOpenPortsResult(ports) {
+    console.log('[开放端口] 显示结果，端口数量:', ports ? ports.length : 0);
+
+    var tbody = document.getElementById('open-ports-tbody');
+
+    if (!tbody) {
+        console.error('[开放端口] 找不到表格元素');
+        return;
+    }
+
+    if (!ports || ports.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:20px;color:var(--accent-green);">✓ 未发现危险端口对外开放</td></tr>';
+        return;
+    }
+
+    var html = '';
+    ports.forEach(function(port, index) {
+        if (!port) {
+            console.warn('[开放端口] 端口数据为空，索引:', index);
+            return;
+        }
+
+        var riskClass = port.risk === 'critical' ? 'color:#ff1744;font-weight:700;background:rgba(255,23,68,0.1);padding:2px 6px;border-radius:3px;' :
+                         port.risk === 'high' ? 'color:var(--accent-red);font-weight:600;' :
+                         port.risk === 'medium' ? 'color:var(--accent-orange);' : 'color:var(--text-secondary);';
+
+        var riskText = port.risk === 'critical' ? '极危' :
+                       (port.risk === 'high' ? '高危' :
+                       (port.risk === 'medium' ? '中危' : '低'));
+
+        var externalTag = port.is_external ? '<span style="font-size:10px;padding:1px 5px;background:rgba(255,82,82,0.15);color:var(--accent-red);border-radius:3px;margin-left:4px;">外部</span>' : '';
+
+        html += '<tr>' +
+            '<td style="font-weight:600;">' + (port.port || '-') + '</td>' +
+            '<td>' + escapeHtml(port.name || '-') + '</td>' +
+            '<td style="font-size:11px;word-break:break-all;max-width:120px;">' + escapeHtml(port.bind_addr || '-') + externalTag + '</td>' +
+            '<td ' + riskClass + '>' + riskText + '</td>' +
+            '<td style="font-size:11px;color:var(--text-secondary);">' + escapeHtml(port.description || '') + (port.process ? '<br><span style="color:var(--text-muted);font-size:10px;">进程: ' + escapeHtml(port.process) + '</span>' : '') + '</td>' +
+            '</tr>';
+    });
+
+    tbody.innerHTML = html;
+}
+
+/**
+ * 检测DNS劫持
+ */
+function checkDnsHijack() {
+    console.log('[DNS检测] 开始检测...');
+
+    safeXHR(
+        '<%=luci.dispatcher.build_url("admin/status/router_assistant/check_dns_hijack")%>',
+        function(res) {
+            console.log('[DNS检测] 检测结果:', res);
+
+            if (res.code === 0) {
+                var data = extractData(res);
+                displayDnsCheckResult(data.tests || [], data.dns_servers || []);
+            } else {
+                console.error('[DNS检测] 检测失败:', res);
+                showToast('DNS劫持检测失败: ' + (res.message || ''), 'error');
+            }
+        },
+        function(error) {
+            console.error('[DNS检测] 请求失败:', error);
+            showToast('网络请求失败', 'error');
+        }
+    );
+}
+
+/**
+ * 显示DNS检测结果
+ */
+function displayDnsCheckResult(tests, dnsServers) {
+    console.log('[DNS检测] 显示结果，测试数量:', tests ? tests.length : 0);
+
+    var tbody = document.getElementById('dns-check-tbody');
+
+    if (!tbody) {
+        console.error('[DNS检测] 找不到表格元素');
+        return;
+    }
+
+    if (!tests || tests.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;padding:20px;color:var(--text-secondary);">无检测结果</td></tr>';
+        return;
+    }
+
+    var html = '';
+    tests.forEach(function(test, index) {
+        if (!test) {
+            console.warn('[DNS检测] 测试数据为空，索引:', index);
+            return;
+        }
+
+        var statusClass = test.is_normal && !test.suspicion ? 'color:var(--accent-green);' :
+                          (test.error ? 'color:var(--text-secondary);' : 'color:var(--accent-red);font-weight:600;');
+        var statusText = test.is_normal && !test.suspicion ? '正常' :
+                           (test.error ? (test.error || '超时') : '可疑!');
+
+        html += '<tr>' +
+            '<td style="font-family:monospace;">' + escapeHtml(test.domain || '-') + '</td>' +
+            '<td style="font-family:monospace;">' + escapeHtml(test.resolved_ip || '-') + '</td>' +
+            '<td ' + statusClass + '>' + statusText + '</td>' +
+            '</tr>';
+    });
+
+    tbody.innerHTML = html;
+
+    // 显示DNS服务器信息
+    if (dnsServers && dnsServers.length > 0) {
+        document.getElementById('current-dns-servers').textContent = dnsServers.join(', ');
+    } else {
+        document.getElementById('current-dns-servers').textContent = '未配置或自动获取';
+    }
+}
+
+/**
+ * 检测弱密码
+ */
+function checkWeakPasswords() {
+    console.log('[弱密码检测] 开始检测...');
+
+    safeXHR(
+        '<%=luci.dispatcher.build_url("admin/status/router_assistant/check_weak_passwords")%>',
+        function(res) {
+            console.log('[弱密码检测] 检测结果:', res);
+
+            if (res.code === 0) {
+                var data = extractData(res);
+                displayPasswordResult(data.wifi || [], data.admin || []);
+            } else {
+                console.error('[弱密码检测] 检测失败:', res);
+                showToast('弱密码检测失败: ' + (res.message || ''), 'error');
+            }
+        },
+        function(error) {
+            console.error('[弱密码检测] 请求失败:', error);
+            showToast('网络请求失败', 'error');
+        }
+    );
+}
+
+/**
+ * 显示密码检测结果
+ */
+function displayPasswordResult(wifiResults, adminResults) {
+    console.log('[弱密码检测] 显示结果 - WiFi:', wifiResults ? wifiResults.length : 0, 'Admin:', adminResults ? adminResults.length : 0);
+    
+    // 输出详细的WiFi密码检测结果
+    if (wifiResults && wifiResults.length > 0) {
+        console.log('[弱密码检测] ===== WiFi密码详细检测结果 =====');
+        wifiResults.forEach(function(wifi, index) {
+            console.log('[弱密码检测] WiFi #' + (index + 1) + ':', {
+                name: wifi.name,
+                strength: wifi.strength,
+                score: wifi.score,
+                password_length: wifi.password_length,
+                encryption: wifi.encryption,
+                issues: wifi.issues
+            });
+        });
+        console.log('[弱密码检测] ==============================');
+    }
+
+    // WiFi密码结果
+    var wifiList = document.getElementById('wifi-pwd-list');
+
+    if (!wifiList) {
+        console.error('[弱密码检测] 找不到WiFi列表元素');
+        return;
+    }
+
+    if (!wifiResults || wifiResults.length === 0) {
+        wifiList.innerHTML = '<div style="padding:10px;text-align:center;color:var(--text-secondary);font-size:12px;">未找到WiFi配置或WiFi已加密</div>';
+    } else {
+        var wifiHtml = '';
+        wifiResults.forEach(function(wifi, index) {
+            if (!wifi) {
+                console.warn('[弱密码检测] WiFi数据为空，索引:', index);
+                return;
+            }
+
+            var strengthColor = wifi.strength === 'strong' ? 'var(--accent-green)' :
+                               (wifi.strength === 'medium' ? 'var(--accent-orange)' :
+                               (wifi.strength === 'critical' ? '#ff1744' : 'var(--accent-red)'));
+            var strengthText = wifi.strength === 'strong' ? '强' :
+                              (wifi.strength === 'medium' ? '中' :
+                              (wifi.strength === 'critical' ? '危' : '弱'));
+
+            var bgColor = wifi.strength === 'strong' ? 'rgba(0,230,118,0.1)' :
+                         (wifi.strength === 'medium' ? 'rgba(255,145,0,0.1)' :
+                         (wifi.strength === 'critical' ? 'rgba(255,23,68,0.1)' : 'rgba(255,82,82,0.1)'));
+
+            wifiHtml += '<div style="margin-bottom:8px;padding:10px;background:var(--bg-primary);border-radius:6px;border-left:3px solid ' + strengthColor + ';">' +
+                '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">' +
+                    '<span style="font-weight:600;font-size:12px;">' + escapeHtml(wifi.name || '-') + '</span>' +
+                    '<span style="font-size:11px;padding:2px 8px;border-radius:4px;color:' + strengthColor + ';background:' + bgColor + ';">' + strengthText + ' (' + (wifi.score || 0) + '分)</span>' +
+                '</div>';
+
+            if (wifi.issues && wifi.issues.length > 0) {
+                wifiHtml += '<div style="font-size:11px;color:var(--accent-orange);">';
+                wifi.issues.forEach(function(issue) {
+                    wifiHtml += '• ' + escapeHtml(issue) + '<br>';
+                });
+                wifiHtml += '</div>';
+            }
+
+            wifiHtml += '</div>';
+        });
+
+        wifiList.innerHTML = wifiHtml;
+    }
+
+    // 管理后台密码结果
+    var adminInfo = document.getElementById('admin-pwd-info');
+    
+    // 输出详细的管理密码检测结果
+    if (adminResults && adminResults.length > 0) {
+        console.log('[弱密码检测] ===== 管理密码详细检测结果 =====');
+        adminResults.forEach(function(admin, index) {
+            console.log('[弱密码检测] Admin #' + (index + 1) + ':', {
+                name: admin.name,
+                strength: admin.strength,
+                score: admin.score,
+                has_password: admin.has_password,
+                issues: admin.issues
+            });
+        });
+        console.log('[弱密码检测] ==============================');
+    }
+
+    if (!adminInfo) {
+        console.error('[弱密码检测] 找不到管理密码信息元素');
+        return;
+    }
+
+    if (!adminResults || adminResults.length === 0) {
+        adminInfo.innerHTML = '<div style="padding:10px;text-align:center;color:var(--text-secondary);font-size:12px;">无法获取管理密码信息</div>';
+    } else {
+        var adminHtml = '';
+        adminResults.forEach(function(admin, index) {
+            if (!admin) {
+                console.warn('[弱密码检测] 管理密码数据为空，索引:', index);
+                return;
+            }
+
+            var adminColor = admin.strength === 'strong' ? 'var(--accent-green)' :
+                             (admin.strength === 'medium' ? 'var(--accent-orange)' :
+                             (admin.strength === 'critical' || admin.strength === 'error' ? 'var(--accent-red)' : 'var(--accent-orange)'));
+
+            if (!admin.has_password && admin.has_password !== undefined) {
+                adminHtml += '<div style="padding:10px;background:rgba(255,23,68,0.08);border-radius:6px;border:1px solid rgba(255,23,68,0.2);">' +
+                    '<span style="color:var(--accent-red);font-weight:600;">⚠️ 危险：未设置管理密码!</span><br>' +
+                    '<span style="font-size:11px;color:var(--text-secondary);">' + (admin.recommendation || '') + '</span>' +
+                    '</div>';
+            } else if (admin.strength === 'error') {
+                adminHtml += '<div style="padding:10px;background:rgba(255,145,0,0.05);border-radius:6px;border:1px solid rgba(255,145,0,0.2);">' +
+                    '<span style="color:var(--accent-orange);">⚠️ ' + escapeHtml(admin.name || '检查失败') + '</span><br>' +
+                    '<span style="font-size:11px;color:var(--text-secondary);">' + ((admin.error || '') + (admin.issues && admin.issues.length > 0 ? '<br>• ' + admin.issues.join('<br>• ') : '')) + '</span>' +
+                    '</div>';
+            } else {
+                var adminBgColor = admin.strength === 'strong' ? 'rgba(0,230,118,0.1)' :
+                                  (admin.strength === 'medium' ? 'rgba(255,145,0,0.1)' : 'rgba(255,82,82,0.1)');
+
+                adminHtml += '<div style="padding:10px;background:var(--bg-primary);border-radius:6px;border-left:3px solid ' + adminColor + ';">' +
+                    '<div style="display:flex;justify-content:space-between;margin-bottom:6px;">' +
+                        '<span>管理后台密码</span>' +
+                        '<span style="font-size:11px;padding:2px 8px;border-radius:4px;color:' + adminColor + ';background:' + adminBgColor + '">' +
+                              (admin.strength === 'strong' ? '强' : (admin.strength === 'medium' ? '中' : '弱')) + '</span>' +
+                    '</div>';
+
+                if (admin.issues && admin.issues.length > 0) {
+                    adminHtml += '<div style="font-size:11px;color:var(--accent-orange);">';
+                    admin.issues.forEach(function(issue) {
+                        adminHtml += '• ' + escapeHtml(issue) + '<br>';
+                    });
+                    adminHtml += '</div>';
+                }
+
+                if (admin.recommendation) {
+                    adminHtml += '<div style="margin-top:6px;font-size:11px;color:var(--accent-cyan);padding:6px;background:rgba(0,212,255,0.05);border-radius:4px;">💡 ' + escapeHtml(admin.recommendation) + '</div>';
+                }
+
+                adminHtml += '</div>';
+            }
+        });
+
+        adminInfo.innerHTML = adminHtml;
+    }
+}
+
+/**
+ * 显示风险原因
+ */
+function displayRiskReasons(reasons, score) {
+    var container = document.getElementById('risk-reasons-container');
+    var list = document.getElementById('risk-reasons-list');
+    
+    if (!container || !list) return;
+    
+    // 如果评分低于75分或有风险原因，显示风险区域
+    if (reasons.length > 0 || score < 75) {
+        container.style.display = 'block';
+        
+        if (reasons.length === 0) {
+            // 评分低但没有具体风险原因时，显示通用提示
+            list.innerHTML = '<div style="font-size:12px;color:var(--text-secondary);padding:8px;background:rgba(255,152,0,0.08);border-radius:4px;margin-bottom:8px;">当前安全配置有待改进，建议检查各项安全设置。</div>';
+        } else {
+            // 显示具体风险原因
+            var html = '';
+            
+            // 按风险等级排序
+            reasons.sort(function(a, b) {
+                var levelOrder = { 'critical': 0, 'high': 1, 'medium': 2, 'low': 3 };
+                return (levelOrder[a.level] || 3) - (levelOrder[b.level] || 3);
+            });
+            
+            reasons.forEach(function(reason, index) {
+                var levelConfig = {
+                    'critical': { color: 'var(--accent-red)', bg: 'rgba(244,67,54,0.1)', icon: '🔴', label: '严重' },
+                    'high': { color: 'var(--accent-orange)', bg: 'rgba(255,152,0,0.1)', icon: '🟠', label: '高危' },
+                    'medium': { color: 'var(--accent-cyan)', bg: 'rgba(0,212,255,0.1)', icon: '🟡', label: '中等' },
+                    'low': { color: 'var(--accent-green)', bg: 'rgba(76,175,80,0.1)', icon: '🟢', label: '低危' }
+                };
+                
+                var config = levelConfig[reason.level] || levelConfig['medium'];
+                var categoryIcons = {
+                    'ports': '🔓',
+                    'dns': '🌐',
+                    'password': '🔑'
+                };
+                var categoryIcon = categoryIcons[reason.category] || '⚠️';
+                
+                html += '<div style="font-size:12px;padding:10px;background:' + config.bg + ';border-radius:6px;margin-bottom:8px;border-left:3px solid ' + config.color + ';">';
+                html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">';
+                html += '<span style="font-size:14px;">' + config.icon + '</span>';
+                html += '<span style="font-weight:600;color:' + config.color + ';">' + escapeHtml(reason.reason) + '</span>';
+                html += '<span style="font-size:10px;padding:2px 6px;border-radius:3px;background:' + config.color + ';color:#fff;margin-left:auto;">' + config.label + '</span>';
+                html += '</div>';
+                html += '<div style="color:var(--text-secondary);font-size:11px;padding-left:22px;">💡 ' + escapeHtml(reason.suggestion) + '</div>';
+                html += '</div>';
+            });
+            
+            list.innerHTML = html;
+        }
+    } else {
+        container.style.display = 'none';
+    }
+}
+
+/* ============================================================
+ * 网络拓扑图模块
+ * ============================================================ */
+
+var topologyData = {
+    devices: [],
+    canvas: null,
+    ctx: null,
+    width: 0,
+    height: 0,
+    routerNode: null,
+    deviceNodes: [],
+    animationId: null,
+    hoveredNode: null,
+    mouseX: 0,
+    mouseY: 0
+};
+
+/**
+ * 初始化网络拓扑图
+ */
+function initTopology() {
+    var container = document.getElementById('topology-container');
+    var canvas = document.getElementById('topology-canvas');
+    
+    if (!container || !canvas) return;
+    
+    topologyData.canvas = canvas;
+    topologyData.ctx = canvas.getContext('2d');
+    
+    resizeTopologyCanvas();
+    
+    window.addEventListener('resize', function() {
+        if (document.getElementById('tab-topology').classList.contains('active')) {
+            resizeTopologyCanvas();
+            drawTopology();
+        }
+    });
+    
+    canvas.addEventListener('mousemove', handleTopologyMouseMove);
+    canvas.addEventListener('mouseleave', handleTopologyMouseLeave);
+    canvas.addEventListener('click', handleTopologyClick);
+}
+
+/**
+ * 调整画布大小
+ */
+function resizeTopologyCanvas() {
+    var container = document.getElementById('topology-container');
+    var canvas = topologyData.canvas;
+    
+    if (!container || !canvas) return;
+    
+    var rect = container.getBoundingClientRect();
+    var dpr = window.devicePixelRatio || 1;
+    
+    topologyData.width = rect.width;
+    topologyData.height = Math.max(500, rect.height);
+    
+    canvas.width = topologyData.width * dpr;
+    canvas.height = topologyData.height * dpr;
+    canvas.style.width = topologyData.width + 'px';
+    canvas.style.height = topologyData.height + 'px';
+    
+    topologyData.ctx.scale(dpr, dpr);
+}
+
+/**
+ * 加载网络拓扑数据
+ */
+function loadTopologyData() {
+    var loading = document.getElementById('topology-loading');
+    var empty = document.getElementById('topology-empty');
+    var container = document.getElementById('topology-container');
+    
+    if (loading) loading.style.display = 'block';
+    if (empty) empty.style.display = 'none';
+    if (container) container.style.display = 'none';
+    
+    safeXHR(
+        '<%=luci.dispatcher.build_url("admin/status/router_assistant/get_devices")%>',
+        function(res) {
+            if (loading) loading.style.display = 'none';
+            
+            var devices = extractData(res, 'devices');
+            if (res.code === 0 && devices && devices.length > 0) {
+                topologyData.devices = devices;
+                if (container) container.style.display = 'block';
+                setTimeout(function() {
+                    resizeTopologyCanvas();
+                    processTopologyData();
+                    drawTopology();
+                }, 50);
+                updateTopologyStats();
+            } else {
+                if (empty) empty.style.display = 'block';
+            }
+        },
+        function(error) {
+            if (loading) loading.style.display = 'none';
+            if (empty) {
+                empty.style.display = 'block';
+                empty.innerHTML = '<div class="rm-empty-icon"><svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg></div><p>加载失败，请重试</p>';
+            }
+        }
+    );
+}
+
+/**
+ * 获取响应式布局参数
+ */
+function getResponsiveParams() {
+    var width = window.innerWidth;
+    var isMobile = width <= 768;
+    var isSmallPhone = width <= 480;
+    var isLandscape = window.innerHeight < window.innerHeight && width > height;
+    
+    if (isSmallPhone) {
+        return {
+            routerRadius: 28,
+            deviceRadius: 22,
+            innerRatio: 0.2,
+            outerRatio: 0.32,
+            fontSize: { router: 9, sub: 7, device: 8, label: 8 },
+            iconScale: 0.4
+        };
+    } else if (isMobile) {
+        return {
+            routerRadius: 35,
+            deviceRadius: 26,
+            innerRatio: 0.22,
+            outerRatio: 0.34,
+            fontSize: { router: 10, sub: 8, device: 9, label: 9 },
+            iconScale: 0.45
+        };
+    } else {
+        return {
+            routerRadius: 50,
+            deviceRadius: 35,
+            innerRatio: 0.25,
+            outerRatio: 0.38,
+            fontSize: { router: 12, sub: 10, device: 10, label: 10 },
+            iconScale: 0.5
+        };
+    }
+}
+
+/**
+ * 处理拓扑数据，计算节点位置
+ */
+function processTopologyData() {
+    var devices = topologyData.devices;
+    var width = topologyData.width;
+    var height = topologyData.height;
+    
+    var params = getResponsiveParams();
+    
+    var centerX = width / 2;
+    var centerY = height / 2;
+    
+    topologyData.routerNode = {
+        x: centerX,
+        y: centerY,
+        radius: params.routerRadius,
+        type: 'router',
+        name: '路由器',
+        color: '#00d4ff',
+        fontSize: params.fontSize
+    };
+    
+    topologyData.deviceNodes = [];
+    
+    var wifiDevices = devices.filter(function(d) { return d.is_wifi; });
+    var wiredDevices = devices.filter(function(d) { return !d.is_wifi; });
+    
+    var allDevices = wiredDevices.concat(wifiDevices);
+    var total = allDevices.length;
+    
+    if (total === 0) return;
+    
+    var minDim = Math.min(width, height);
+    var innerRadius = minDim * params.innerRatio;
+    var outerRadius = minDim * params.outerRatio;
+    
+    allDevices.forEach(function(device, index) {
+        var angle = (index / total) * Math.PI * 2 - Math.PI / 2;
+        var radius = device.is_wifi ? outerRadius : innerRadius;
+        
+        var nodeColor = getDeviceNodeColor(device);
+        
+        topologyData.deviceNodes.push({
+            x: centerX + Math.cos(angle) * radius,
+            y: centerY + Math.sin(angle) * radius,
+            radius: params.deviceRadius,
+            type: device.device_type || 'unknown',
+            isWifi: device.is_wifi,
+            device: device,
+            color: nodeColor,
+            angle: angle,
+            baseRadius: radius,
+            iconScale: params.iconScale,
+            fontSize: params.fontSize
+        });
+    });
+}
+
+/**
+ * 获取设备节点颜色
+ */
+function getDeviceNodeColor(device) {
+    var type = device.device_type || 'unknown';
+    var colorMap = {
+        'phone': '#ff9100',
+        'tablet': '#ff9100',
+        'laptop': '#00e676',
+        'desktop': '#00e676',
+        'tv': '#BA55D3',
+        'smart_home': '#ff5252',
+        'camera': '#ff5252',
+        'printer': '#8b9dc3',
+        'wearable': '#ff9100',
+        'gaming': '#BA55D3',
+        'server': '#00e676',
+        'router': '#00d4ff',
+        'unknown': '#8b9dc3'
+    };
+    return colorMap[type] || colorMap['unknown'];
+}
+
+/**
+ * 绘制网络拓扑图
+ */
+function drawTopology() {
+    var ctx = topologyData.ctx;
+    var width = topologyData.width;
+    var height = topologyData.height;
+    
+    ctx.clearRect(0, 0, width, height);
+    
+    drawBackground(ctx, width, height);
+    
+    if (topologyData.routerNode) {
+        topologyData.deviceNodes.forEach(function(node) {
+            drawConnection(ctx, topologyData.routerNode, node);
+        });
+    }
+    
+    if (topologyData.routerNode) {
+        drawRouterNode(ctx, topologyData.routerNode);
+    }
+    
+    topologyData.deviceNodes.forEach(function(node) {
+        drawDeviceNode(ctx, node);
+    });
+}
+
+/**
+ * 绘制背景
+ */
+function drawBackground(ctx, width, height) {
+    var gradient = ctx.createRadialGradient(width/2, height/2, 0, width/2, height/2, Math.max(width, height)/2);
+    gradient.addColorStop(0, 'rgba(0, 212, 255, 0.03)');
+    gradient.addColorStop(0.5, 'rgba(0, 100, 150, 0.02)');
+    gradient.addColorStop(1, 'rgba(10, 22, 40, 0)');
+    
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, width, height);
+    
+    ctx.strokeStyle = 'rgba(0, 212, 255, 0.05)';
+    ctx.lineWidth = 1;
+    
+    var gridSize = window.innerWidth <= 480 ? 25 : (window.innerWidth <= 768 ? 30 : 40);
+    for (var x = 0; x < width; x += gridSize) {
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, height);
+        ctx.stroke();
+    }
+    for (var y = 0; y < height; y += gridSize) {
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(width, y);
+        ctx.stroke();
+    }
+}
+
+/**
+ * 绘制连接线
+ */
+function drawConnection(ctx, router, device) {
+    var gradient = ctx.createLinearGradient(router.x, router.y, device.x, device.y);
+    
+    if (device.isWifi) {
+        gradient.addColorStop(0, 'rgba(255, 145, 0, 0.6)');
+        gradient.addColorStop(1, 'rgba(255, 145, 0, 0.2)');
+    } else {
+        gradient.addColorStop(0, 'rgba(0, 230, 118, 0.6)');
+        gradient.addColorStop(1, 'rgba(0, 230, 118, 0.2)');
+    }
+    
+    ctx.beginPath();
+    ctx.strokeStyle = gradient;
+    ctx.lineWidth = 2;
+    ctx.setLineDash([5, 5]);
+    ctx.moveTo(router.x, router.y);
+    ctx.lineTo(device.x, device.y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    
+    if (device.isWifi) {
+        drawWifiWaves(ctx, router, device);
+    }
+}
+
+/**
+ * 绘制WiFi波纹效果
+ */
+function drawWifiWaves(ctx, router, device) {
+    var midX = (router.x + device.x) / 2;
+    var midY = (router.y + device.y) / 2;
+    
+    ctx.strokeStyle = 'rgba(255, 145, 0, 0.15)';
+    ctx.lineWidth = 1;
+    
+    var waveSize = Math.max(4, Math.min(router.radius, device.radius) * 0.15);
+    for (var i = 1; i <= 3; i++) {
+        ctx.beginPath();
+        ctx.arc(midX, midY, i * waveSize, 0, Math.PI * 2);
+        ctx.stroke();
+    }
+}
+
+/**
+ * 绘制路由器节点
+ */
+function drawRouterNode(ctx, node) {
+    ctx.save();
+    
+    var glowGradient = ctx.createRadialGradient(node.x, node.y, 0, node.x, node.y, node.radius * 2);
+    glowGradient.addColorStop(0, 'rgba(0, 212, 255, 0.3)');
+    glowGradient.addColorStop(0.5, 'rgba(0, 212, 255, 0.1)');
+    glowGradient.addColorStop(1, 'rgba(0, 212, 255, 0)');
+    
+    ctx.fillStyle = glowGradient;
+    ctx.beginPath();
+    ctx.arc(node.x, node.y, node.radius * 2, 0, Math.PI * 2);
+    ctx.fill();
+    
+    var nodeGradient = ctx.createRadialGradient(node.x - 10, node.y - 10, 0, node.x, node.y, node.radius);
+    nodeGradient.addColorStop(0, '#1a3a5c');
+    nodeGradient.addColorStop(1, '#0d1b2a');
+    
+    ctx.fillStyle = nodeGradient;
+    ctx.beginPath();
+    ctx.arc(node.x, node.y, node.radius, 0, Math.PI * 2);
+    ctx.fill();
+    
+    ctx.strokeStyle = node.color;
+    ctx.lineWidth = node.radius > 35 ? 3 : 2;
+    ctx.beginPath();
+    ctx.arc(node.x, node.y, node.radius, 0, Math.PI * 2);
+    ctx.stroke();
+    
+    var fs = node.fontSize || { router: 12, sub: 10 };
+    ctx.fillStyle = node.color;
+    ctx.font = 'bold ' + fs.router + 'px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('路由器', node.x, node.y - node.radius * 0.16);
+    
+    ctx.font = fs.sub + 'px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+    ctx.fillStyle = 'rgba(0, 212, 255, 0.7)';
+    ctx.fillText('核心设备', node.x, node.y + node.radius * 0.2);
+    
+    ctx.restore();
+}
+
+/**
+ * 绘制设备节点
+ */
+function drawDeviceNode(ctx, node) {
+    ctx.save();
+    
+    var isHovered = topologyData.hoveredNode === node;
+    var radius = isHovered ? node.radius * 1.1 : node.radius;
+    
+    var glowGradient = ctx.createRadialGradient(node.x, node.y, 0, node.x, node.y, radius * 1.5);
+    glowGradient.addColorStop(0, node.color.replace(')', ', 0.3)').replace('rgb', 'rgba'));
+    glowGradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+    
+    ctx.fillStyle = glowGradient;
+    ctx.beginPath();
+    ctx.arc(node.x, node.y, radius * 1.5, 0, Math.PI * 2);
+    ctx.fill();
+    
+    var offset = Math.max(2, radius * 0.15);
+    var nodeGradient = ctx.createRadialGradient(node.x - offset, node.y - offset, 0, node.x, node.y, radius);
+    nodeGradient.addColorStop(0, '#1a2a3a');
+    nodeGradient.addColorStop(1, '#0d1520');
+    
+    ctx.fillStyle = nodeGradient;
+    ctx.beginPath();
+    ctx.arc(node.x, node.y, radius, 0, Math.PI * 2);
+    ctx.fill();
+    
+    ctx.strokeStyle = isHovered ? '#ffffff' : node.color;
+    ctx.lineWidth = isHovered ? (radius > 30 ? 3 : 2) : (radius > 30 ? 2 : 1.5);
+    ctx.beginPath();
+    ctx.arc(node.x, node.y, radius, 0, Math.PI * 2);
+    ctx.stroke();
+    
+    drawDeviceIcon(ctx, node, radius);
+    
+    var device = node.device;
+    var fs = node.fontSize || { label: 10 };
+    
+    // 优先显示备注名称，其次hostname，最后显示IP地址
+    var displayName = '';
+    var macKey = normalizeMacKey(device.mac);
+    if (deviceNotes[macKey] && deviceNotes[macKey].note && deviceNotes[macKey].note.trim() !== '') {
+        displayName = deviceNotes[macKey].note;
+    } else if (device.hostname && device.hostname !== '' && device.hostname !== '*') {
+        displayName = device.hostname;
+    } else if (device.ip && device.ip !== '-') {
+        displayName = device.ip;
+    } else {
+        displayName = 'Unknown';
+    }
+    
+    var maxLen = window.innerWidth <= 480 ? 6 : (window.innerWidth <= 768 ? 8 : 10);
+    if (displayName.length > maxLen) {
+        displayName = displayName.substring(0, maxLen) + '...';
+    }
+    
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold ' + fs.label + 'px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(displayName, node.x, node.y + radius + Math.max(12, radius * 0.4));
+    
+    ctx.restore();
+}
+
+/**
+ * 绘制设备图标 - 使用与设备列表相同的SVG路径
+ */
+function drawDeviceIcon(ctx, node, radius) {
+    var type = node.type;
+    var x = node.x;
+    var y = node.y;
+    var size = radius * 0.5;
+    
+    ctx.strokeStyle = node.color;
+    ctx.fillStyle = node.color;
+    ctx.lineWidth = Math.max(1.2, radius * 0.04);
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    
+    switch(type) {
+        case 'phone':
+        case 'tablet':
+            // 手机/平板图标 - 与设备列表一致
+            ctx.beginPath();
+            ctx.roundRect(x - size * 0.3, y - size * 0.55, size * 0.6, size * 1.1, size * 0.1);
+            ctx.stroke();
+            // 屏幕
+            ctx.beginPath();
+            ctx.roundRect(x - size * 0.2, y - size * 0.4, size * 0.4, size * 0.7, size * 0.05);
+            ctx.stroke();
+            // 底部按钮
+            ctx.beginPath();
+            ctx.arc(x, y + size * 0.38, size * 0.06, 0, Math.PI * 2);
+            ctx.stroke();
+            break;
+            
+        case 'laptop':
+            // 笔记本图标 - 与设备列表一致
+            ctx.beginPath();
+            ctx.roundRect(x - size * 0.45, y - size * 0.3, size * 0.9, size * 0.55, size * 0.06);
+            ctx.stroke();
+            // 屏幕
+            ctx.beginPath();
+            ctx.roundRect(x - size * 0.35, y - size * 0.22, size * 0.7, size * 0.4, size * 0.04);
+            ctx.stroke();
+            // 底座
+            ctx.beginPath();
+            ctx.moveTo(x - size * 0.55, y + size * 0.3);
+            ctx.lineTo(x + size * 0.55, y + size * 0.3);
+            ctx.lineWidth = Math.max(1.5, radius * 0.05);
+            ctx.stroke();
+            ctx.lineWidth = Math.max(1.2, radius * 0.04);
+            break;
+            
+        case 'desktop':
+            // 台式机图标 - 与设备列表一致
+            ctx.beginPath();
+            ctx.roundRect(x - size * 0.4, y - size * 0.45, size * 0.8, size * 0.6, size * 0.06);
+            ctx.stroke();
+            // 屏幕内框
+            ctx.beginPath();
+            ctx.roundRect(x - size * 0.3, y - size * 0.35, size * 0.6, size * 0.4, size * 0.04);
+            ctx.stroke();
+            // 支架
+            ctx.beginPath();
+            ctx.moveTo(x, y + size * 0.2);
+            ctx.lineTo(x, y + size * 0.45);
+            ctx.stroke();
+            // 底座
+            ctx.beginPath();
+            ctx.moveTo(x - size * 0.2, y + size * 0.45);
+            ctx.lineTo(x + size * 0.2, y + size * 0.45);
+            ctx.lineWidth = Math.max(1.5, radius * 0.05);
+            ctx.stroke();
+            ctx.lineWidth = Math.max(1.2, radius * 0.04);
+            break;
+            
+        case 'tv':
+            // 电视/盒子图标 - 与设备列表一致
+            ctx.beginPath();
+            ctx.roundRect(x - size * 0.45, y - size * 0.3, size * 0.9, size * 0.55, size * 0.06);
+            ctx.stroke();
+            // 屏幕
+            ctx.beginPath();
+            ctx.roundRect(x - size * 0.35, y - size * 0.2, size * 0.7, size * 0.35, size * 0.04);
+            ctx.stroke();
+            // 天线
+            ctx.beginPath();
+            ctx.moveTo(x - size * 0.15, y - size * 0.45);
+            ctx.lineTo(x - size * 0.05, y - size * 0.3);
+            ctx.moveTo(x + size * 0.15, y - size * 0.45);
+            ctx.lineTo(x + size * 0.05, y - size * 0.3);
+            ctx.stroke();
+            break;
+            
+        case 'smart_home':
+            // 智能家居图标 - 房子形状
+            ctx.beginPath();
+            ctx.moveTo(x, y - size * 0.45);
+            ctx.lineTo(x - size * 0.45, y - size * 0.1);
+            ctx.lineTo(x - size * 0.45, y + size * 0.35);
+            ctx.lineTo(x + size * 0.45, y + size * 0.35);
+            ctx.lineTo(x + size * 0.45, y - size * 0.1);
+            ctx.closePath();
+            ctx.stroke();
+            // 门
+            ctx.beginPath();
+            ctx.roundRect(x - size * 0.12, y + size * 0.05, size * 0.24, size * 0.3, size * 0.03);
+            ctx.stroke();
+            break;
+            
+        case 'camera':
+            // 摄像头图标 - 与设备列表一致
+            ctx.beginPath();
+            ctx.roundRect(x - size * 0.4, y - size * 0.25, size * 0.8, size * 0.45, size * 0.06);
+            ctx.stroke();
+            // 镜头
+            ctx.beginPath();
+            ctx.arc(x, y, size * 0.15, 0, Math.PI * 2);
+            ctx.stroke();
+            // 镜头中心
+            ctx.beginPath();
+            ctx.arc(x, y, size * 0.06, 0, Math.PI * 2);
+            ctx.fill();
+            // 指示灯
+            ctx.beginPath();
+            ctx.arc(x + size * 0.25, y - size * 0.15, size * 0.04, 0, Math.PI * 2);
+            ctx.fill();
+            break;
+            
+        case 'printer':
+            // 打印机图标 - 与设备列表一致
+            ctx.beginPath();
+            ctx.roundRect(x - size * 0.35, y - size * 0.3, size * 0.7, size * 0.35, size * 0.05);
+            ctx.stroke();
+            // 纸张
+            ctx.beginPath();
+            ctx.moveTo(x - size * 0.2, y + size * 0.05);
+            ctx.lineTo(x - size * 0.2, y + size * 0.35);
+            ctx.lineTo(x + size * 0.2, y + size * 0.35);
+            ctx.lineTo(x + size * 0.2, y + size * 0.05);
+            ctx.stroke();
+            // 纸张线条
+            ctx.beginPath();
+            ctx.moveTo(x - size * 0.1, y + size * 0.15);
+            ctx.lineTo(x + size * 0.1, y + size * 0.15);
+            ctx.moveTo(x - size * 0.1, y + size * 0.22);
+            ctx.lineTo(x + size * 0.08, y + size * 0.22);
+            ctx.stroke();
+            break;
+            
+        case 'wearable':
+            // 穿戴设备图标 - 手表
+            ctx.beginPath();
+            ctx.roundRect(x - size * 0.2, y - size * 0.35, size * 0.4, size * 0.5, size * 0.08);
+            ctx.stroke();
+            // 表带
+            ctx.beginPath();
+            ctx.moveTo(x - size * 0.1, y - size * 0.45);
+            ctx.lineTo(x - size * 0.1, y - size * 0.35);
+            ctx.moveTo(x + size * 0.1, y - size * 0.45);
+            ctx.lineTo(x + size * 0.1, y - size * 0.35);
+            ctx.moveTo(x - size * 0.1, y + size * 0.15);
+            ctx.lineTo(x - size * 0.1, y + size * 0.25);
+            ctx.moveTo(x + size * 0.1, y + size * 0.15);
+            ctx.lineTo(x + size * 0.1, y + size * 0.25);
+            ctx.stroke();
+            break;
+            
+        case 'gaming':
+            // 游戏机图标 - 游戏手柄
+            ctx.beginPath();
+            ctx.roundRect(x - size * 0.45, y - size * 0.2, size * 0.9, size * 0.4, size * 0.1);
+            ctx.stroke();
+            // 方向键
+            ctx.beginPath();
+            ctx.moveTo(x - size * 0.2, y - size * 0.05);
+            ctx.lineTo(x - size * 0.2, y + size * 0.05);
+            ctx.moveTo(x - size * 0.25, y);
+            ctx.lineTo(x - size * 0.15, y);
+            ctx.stroke();
+            // 按钮
+            ctx.beginPath();
+            ctx.arc(x + size * 0.15, y - size * 0.05, size * 0.05, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.beginPath();
+            ctx.arc(x + size * 0.25, y + size * 0.02, size * 0.05, 0, Math.PI * 2);
+            ctx.fill();
+            break;
+            
+        case 'server':
+            // 服务器/NAS图标 - 服务器机架
+            ctx.beginPath();
+            ctx.roundRect(x - size * 0.35, y - size * 0.45, size * 0.7, size * 0.9, size * 0.05);
+            ctx.stroke();
+            // 指示灯行
+            for (var i = 0; i < 3; i++) {
+                ctx.beginPath();
+                ctx.moveTo(x - size * 0.22, y - size * 0.3 + i * size * 0.22);
+                ctx.lineTo(x + size * 0.22, y - size * 0.3 + i * size * 0.22);
+                ctx.stroke();
+                // 小圆点
+                ctx.beginPath();
+                ctx.arc(x - size * 0.15, y - size * 0.3 + i * size * 0.22 + size * 0.11, size * 0.04, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            break;
+            
+        default:
+            // 未知设备 - 问号
+            ctx.beginPath();
+            ctx.arc(x, y - size * 0.1, size * 0.25, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.arc(x, y + size * 0.25, size * 0.04, 0, Math.PI * 2);
+            ctx.fill();
+            break;
+    }
+}
+
+/**
+ * 处理鼠标移动事件
+ */
+function handleTopologyMouseMove(e) {
+    var rect = topologyData.canvas.getBoundingClientRect();
+    var x = e.clientX - rect.left;
+    var y = e.clientY - rect.top;
+    
+    topologyData.mouseX = x;
+    topologyData.mouseY = y;
+    
+    var foundNode = null;
+    
+    topologyData.deviceNodes.forEach(function(node) {
+        var dx = x - node.x;
+        var dy = y - node.y;
+        var distance = Math.sqrt(dx * dx + dy * dy);
+        
+        if (distance <= node.radius) {
+            foundNode = node;
+        }
+    });
+    
+    if (foundNode !== topologyData.hoveredNode) {
+        topologyData.hoveredNode = foundNode;
+        drawTopology();
+        
+        if (foundNode) {
+            showTopologyTooltip(foundNode, e.clientX, e.clientY);
+            topologyData.canvas.style.cursor = 'pointer';
+        } else {
+            hideTopologyTooltip();
+            topologyData.canvas.style.cursor = 'default';
+        }
+    } else if (foundNode) {
+        updateTooltipPosition(e.clientX, e.clientY);
+    }
+}
+
+/**
+ * 处理鼠标离开事件
+ */
+function handleTopologyMouseLeave() {
+    topologyData.hoveredNode = null;
+    hideTopologyTooltip();
+    drawTopology();
+    topologyData.canvas.style.cursor = 'default';
+}
+
+/**
+ * 处理点击事件
+ */
+function handleTopologyClick(e) {
+    if (topologyData.hoveredNode) {
+        var device = topologyData.hoveredNode.device;
+        if (device && device.mac) {
+            // 优先使用备注名称作为设备名
+            var displayName = '';
+            var macKey = normalizeMacKey(device.mac);
+            if (deviceNotes[macKey] && deviceNotes[macKey].note && deviceNotes[macKey].note.trim() !== '') {
+                displayName = deviceNotes[macKey].note;
+            } else if (device.hostname && device.hostname !== '' && device.hostname !== '*') {
+                displayName = device.hostname;
+            } else if (device.ip && device.ip !== '-') {
+                displayName = device.ip;
+            } else {
+                displayName = 'Unknown';
+            }
+            openNoteModal(device.mac, displayName);
+        }
+    }
+}
+
+/**
+ * 显示拓扑图提示框
+ */
+function showTopologyTooltip(node, clientX, clientY) {
+    var tooltip = document.getElementById('topology-tooltip');
+    var device = node.device;
+    
+    if (!tooltip || !device) return;
+    
+    var signalText = device.is_wifi ? (device.signal || 0) + ' dBm' : '有线连接';
+    var typeText = getDeviceTypeName(device.device_type);
+    var connectionText = device.is_wifi ? 'WiFi' + (device.frequency_band ? ' (' + device.frequency_band + ')' : '') : '有线';
+    
+    // 优先显示备注名称
+    var tooltipName = '';
+    var macKey = normalizeMacKey(device.mac);
+    if (deviceNotes[macKey] && deviceNotes[macKey].note && deviceNotes[macKey].note.trim() !== '') {
+        tooltipName = deviceNotes[macKey].note;
+    } else if (device.hostname && device.hostname !== '' && device.hostname !== '*') {
+        tooltipName = device.hostname;
+    } else if (device.ip && device.ip !== '-') {
+        tooltipName = device.ip;
+    } else {
+        tooltipName = 'Unknown';
+    }
+    
+    tooltip.innerHTML = 
+        '<div class="topology-tooltip-title">' + escapeHtml(tooltipName) + '</div>' +
+        '<div class="topology-tooltip-row"><span class="topology-tooltip-label">IP地址</span><span class="topology-tooltip-value">' + escapeHtml(device.ip || '-') + '</span></div>' +
+        '<div class="topology-tooltip-row"><span class="topology-tooltip-label">MAC地址</span><span class="topology-tooltip-value">' + escapeHtml(device.mac || '-') + '</span></div>' +
+        '<div class="topology-tooltip-row"><span class="topology-tooltip-label">设备类型</span><span class="topology-tooltip-value">' + escapeHtml(typeText) + '</span></div>' +
+        '<div class="topology-tooltip-row"><span class="topology-tooltip-label">连接方式</span><span class="topology-tooltip-value">' + escapeHtml(connectionText) + '</span></div>' +
+        '<div class="topology-tooltip-row"><span class="topology-tooltip-label">信号强度</span><span class="topology-tooltip-value">' + escapeHtml(signalText) + '</span></div>';
+    
+    tooltip.style.display = 'block';
+    updateTooltipPosition(clientX, clientY);
+}
+
+/**
+ * 更新提示框位置
+ */
+function updateTooltipPosition(clientX, clientY) {
+    var tooltip = document.getElementById('topology-tooltip');
+    var container = document.getElementById('topology-container');
+    
+    if (!tooltip || !container) return;
+    
+    var rect = container.getBoundingClientRect();
+    var x = clientX - rect.left + 15;
+    var y = clientY - rect.top + 15;
+    
+    var tooltipRect = tooltip.getBoundingClientRect();
+    
+    if (x + tooltipRect.width > rect.width) {
+        x = clientX - rect.left - tooltipRect.width - 15;
+    }
+    if (y + tooltipRect.height > rect.height) {
+        y = clientY - rect.top - tooltipRect.height - 15;
+    }
+    
+    tooltip.style.left = x + 'px';
+    tooltip.style.top = y + 'px';
+}
+
+/**
+ * 隐藏拓扑图提示框
+ */
+function hideTopologyTooltip() {
+    var tooltip = document.getElementById('topology-tooltip');
+    if (tooltip) {
+        tooltip.style.display = 'none';
+    }
+}
+
+/**
+ * 获取设备类型名称
+ */
+function getDeviceTypeName(type) {
+    var typeNames = {
+        'phone': '手机',
+        'tablet': '平板',
+        'laptop': '笔记本',
+        'desktop': '台式机',
+        'tv': '电视/盒子',
+        'smart_home': '智能家居',
+        'camera': '摄像头',
+        'printer': '打印机',
+        'wearable': '穿戴设备',
+        'gaming': '游戏机',
+        'server': '服务器/NAS',
+        'router': '路由器',
+        'unknown': '未知设备'
+    };
+    return typeNames[type] || '未知设备';
+}
+
+/**
+ * 更新拓扑图统计信息
+ */
+function updateTopologyStats() {
+    var devices = topologyData.devices;
+    var wiredCount = 0;
+    var wifiCount = 0;
+    
+    devices.forEach(function(device) {
+        if (device.is_wifi) {
+            wifiCount++;
+        } else {
+            wiredCount++;
+        }
+    });
+    
+    document.getElementById('topology-wired-count').textContent = wiredCount;
+    document.getElementById('topology-wifi-count').textContent = wifiCount;
+}
+
+/**
+ * 刷新拓扑图
+ */
+function refreshTopology() {
+    loadTopologyData();
+}
+
+/**
+ * Canvas roundRect polyfill
+ */
+if (!CanvasRenderingContext2D.prototype.roundRect) {
+    CanvasRenderingContext2D.prototype.roundRect = function(x, y, width, height, radius) {
+        if (typeof radius === 'undefined') radius = 5;
+        if (typeof radius === 'number') {
+            radius = {tl: radius, tr: radius, br: radius, bl: radius};
+        } else {
+            radius = {...{tl: 0, tr: 0, br: 0, bl: 0}, ...radius};
+        }
+        this.beginPath();
+        this.moveTo(x + radius.tl, y);
+        this.lineTo(x + width - radius.tr, y);
+        this.quadraticCurveTo(x + width, y, x + width, y + radius.tr);
+        this.lineTo(x + width, y + height - radius.br);
+        this.quadraticCurveTo(x + width, y + height, x + width - radius.br, y + height);
+        this.lineTo(x + radius.bl, y + height);
+        this.quadraticCurveTo(x, y + height, x, y + height - radius.bl);
+        this.lineTo(x, y + radius.tl);
+        this.quadraticCurveTo(x, y, x + radius.tl, y);
+        this.closePath();
+        return this;
+    };
 }
 
 function stopAllTimers() {
@@ -4691,6 +8285,9 @@ function startRefresh() {
 
 function startTabRefresh(tabName) {
     currentTab = tabName;
+    if (tabName === 'topology') {
+        loadTopologyData();
+    }
 }
 
 document.querySelectorAll('.rm-tab').forEach(function(tab) {
@@ -4712,6 +8309,13 @@ document.addEventListener('DOMContentLoaded', function() {
     loadDeviceNotes();
     loadAlerts();
     startRefresh();
+    initSpeedChart();
+    loadSecurityOverview();
+    initTopology();
+    
+    // 默认开启ARP自动监控
+    startArpAutoMonitor();
+    console.log('[ARP Monitor] 自动监控已启动，间隔: ' + (ARP_MONITOR_INTERVAL / 1000) + '秒');
 
     // 模态框事件冒泡控制：防止点击模态框内容时触发关闭
     var noteModal = document.getElementById('note-modal');
