@@ -8824,6 +8824,9 @@ function testDnsEncryptionConnection() {
     formData.append('server', server);
     formData.append('custom_url', customUrl ? customUrl.value : '');
     formData.append('custom_host', customHost ? customHost.value : '');
+    if (typeof LUCI_TOKEN !== 'undefined' && LUCI_TOKEN) {
+        formData.append('token', LUCI_TOKEN);
+    }
     showToast('正在测试DNS加密连接...', 'info');
     fetch('<%=luci.dispatcher.build_url("admin/status/router_assistant/test_dns_encryption")%>', {
         method: 'POST',
@@ -8879,6 +8882,9 @@ function saveDnsEncryptionConfig() {
     formData.append('custom_url', customUrl ? customUrl.value : '');
     formData.append('custom_host', customHost ? customHost.value : '');
     formData.append('dnssec', dnssec ? '1' : '0');
+    if (typeof LUCI_TOKEN !== 'undefined' && LUCI_TOKEN) {
+        formData.append('token', LUCI_TOKEN);
+    }
     showToast('正在保存DNS加密配置...', 'info');
     fetch('<%=luci.dispatcher.build_url("admin/status/router_assistant/save_dns_encryption_config")%>', {
         method: 'POST',

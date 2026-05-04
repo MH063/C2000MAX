@@ -4571,15 +4571,23 @@ function api_get_wifi()
                     real_ssid = real_ssid:gsub("^%s+", ""):gsub("%s+$", "")
                 end
 
-                -- 使用iwinfo获取详细信息
-                local iwinfo_output = sys.exec("iwinfo " .. ifname .. " info 2>/dev/null")
-
-                -- 解析信道: "Channel: 12 (2.467 GHz)"
+                -- 优先从 iw dev 获取真实的信道
                 local channel = "-"
-                local channel_line = iwinfo_output:match("Channel:%s*([^\n]+)")
-                if channel_line then
-                    local ch = channel_line:match("(%d+)%s*%(")
-                    if ch then channel = ch end
+                local real_channel = iw_dev_output:match("channel%s+(%d+)")
+                if real_channel then
+                    channel = real_channel
+                end
+                
+                -- 使用iwinfo获取详细信息（信号、模式等）
+                local iwinfo_output = sys.exec("iwinfo " .. ifname .. " info 2>/dev/null")
+                
+                -- 如果iw dev没获取到信道，从iwinfo获取
+                if channel == "-" then
+                    local channel_line = iwinfo_output:match("Channel:%s*([^\n]+)")
+                    if channel_line then
+                        local ch = channel_line:match("(%d+)%s*%(")
+                        if ch then channel = ch end
+                    end
                 end
 
                 -- 解析信号: "Signal: -54 dBm"
@@ -8724,6 +8732,86 @@ local function is_package_installed(pkg_name)
     return false
 end
 
+-- 清理DNS加密依赖包（解决升级安装时旧版本未清理的问题）
+-- 当DNS加密功能未启用时，清理残留的依赖包文件
+local function cleanup_dns_packages_if_disabled()
+    local util = require("luci.util")
+    local nixio = require("nixio")
+    local uci = require("luci.model.uci").cursor()
+    
+    -- 检查DNS加密功能是否启用
+    local dns_enabled = uci:get("router_assistant", "dns_encryption", "enabled") == "1"
+    
+    -- 如果DNS加密功能已启用，不清理
+    if dns_enabled then
+        return false, "DNS加密功能已启用，跳过清理"
+    end
+    
+    -- 检查是否有残留的DNS依赖包
+    local has_residual = false
+    local residual_packages = {}
+    
+    local package_files = {
+        stubby = {"/usr/sbin/stubby", "/usr/bin/stubby"},
+        ["https-dns-proxy"] = {"/usr/sbin/https-dns-proxy", "/usr/bin/https-dns-proxy"},
+        libcares = {"/usr/lib/libcares.so.2"},
+        getdns = {"/usr/lib/libgetdns.so.10"},
+        libev = {"/usr/lib/libev.so.4"}
+    }
+    
+    for pkg_name, files in pairs(package_files) do
+        for _, file_path in ipairs(files) do
+            if util.exec("test -f '" .. file_path .. "' && echo yes || echo no"):match("yes") then
+                has_residual = true
+                table.insert(residual_packages, pkg_name)
+                break
+            end
+        end
+    end
+    
+    -- 如果没有残留的依赖包，不需要清理
+    if not has_residual then
+        return false, "未发现残留的DNS依赖包"
+    end
+    
+    nixio.syslog("info", "[DNS加密] 发现残留依赖包，开始清理: " .. table.concat(residual_packages, ", "))
+    
+    -- 停止DNS加密服务
+    util.exec("/etc/init.d/stubby stop 2>/dev/null")
+    util.exec("/etc/init.d/stubby disable 2>/dev/null")
+    util.exec("/etc/init.d/https-dns-proxy stop 2>/dev/null")
+    util.exec("/etc/init.d/https-dns-proxy disable 2>/dev/null")
+    
+    -- 删除 stubby 相关文件
+    util.exec("rm -f /usr/sbin/stubby 2>/dev/null")
+    util.exec("rm -f /usr/bin/stubby 2>/dev/null")
+    util.exec("rm -f /etc/init.d/stubby 2>/dev/null")
+    util.exec("rm -f /etc/config/stubby 2>/dev/null")
+    util.exec("rm -rf /etc/stubby 2>/dev/null")
+    util.exec("rm -f /usr/lib/opkg/info/stubby.* 2>/dev/null")
+    util.exec("rm -f /var/run/stubby.pid 2>/dev/null")
+    
+    -- 删除 https-dns-proxy 相关文件
+    util.exec("rm -f /usr/sbin/https-dns-proxy 2>/dev/null")
+    util.exec("rm -f /usr/bin/https-dns-proxy 2>/dev/null")
+    util.exec("rm -f /etc/init.d/https-dns-proxy 2>/dev/null")
+    util.exec("rm -f /etc/config/https-dns-proxy 2>/dev/null")
+    util.exec("rm -f /usr/lib/opkg/info/https-dns-proxy.* 2>/dev/null")
+    util.exec("rm -f /var/run/https-dns-proxy.pid 2>/dev/null")
+    
+    -- 删除库文件
+    util.exec("rm -f /usr/lib/libgetdns.so* 2>/dev/null")
+    util.exec("rm -f /usr/lib/opkg/info/getdns.* 2>/dev/null")
+    util.exec("rm -f /usr/lib/libcares.so* 2>/dev/null")
+    util.exec("rm -f /usr/lib/opkg/info/libcares.* 2>/dev/null")
+    util.exec("rm -f /usr/lib/libev.so* 2>/dev/null")
+    util.exec("rm -f /usr/lib/opkg/info/libev.* 2>/dev/null")
+    
+    nixio.syslog("info", "[DNS加密] 残留依赖包已清理")
+    
+    return true, "已清理残留的DNS依赖包: " .. table.concat(residual_packages, ", ")
+end
+
 -- 手动安装IPK包（不使用opkg）
 local function manual_install_ipk(ipk_path, pkg_name)
     local util = require("luci.util")
@@ -9065,6 +9153,13 @@ function api_get_dns_encryption_status()
     local response_data = nil
     collectgarbage("collect")
     local ok, err = pcall(function()
+        -- 清理残留的DNS依赖包（解决升级安装时旧版本未清理的问题）
+        local cleaned, cleanup_msg = cleanup_dns_packages_if_disabled()
+        if cleaned then
+            local nixio = require("nixio")
+            nixio.syslog("info", "[DNS加密] " .. cleanup_msg)
+        end
+        
         local service_status = get_dns_service_status()
         local config = get_current_dns_encryption_config()
         local status = "disabled"

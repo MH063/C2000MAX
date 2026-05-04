@@ -82,7 +82,47 @@ fi
 /etc/init.d/traffic-stats stop 2>/dev/null
 echo "路由管家: 旧版服务已停止"
 
-# --- 第二步：清理旧版运行时状态 ---
+# --- 第二步：清理旧版DNS加密依赖包（解决升级安装时旧版本未清理的问题）---
+echo "路由管家: 正在清理旧版DNS加密依赖包..."
+
+# 停止DNS加密服务
+/etc/init.d/stubby stop 2>/dev/null
+/etc/init.d/stubby disable 2>/dev/null
+/etc/init.d/https-dns-proxy stop 2>/dev/null
+/etc/init.d/https-dns-proxy disable 2>/dev/null
+
+# 删除 stubby 相关文件
+rm -f /usr/sbin/stubby 2>/dev/null
+rm -f /usr/bin/stubby 2>/dev/null
+rm -f /etc/init.d/stubby 2>/dev/null
+rm -f /etc/config/stubby 2>/dev/null
+rm -rf /etc/stubby 2>/dev/null
+rm -f /usr/lib/opkg/info/stubby.* 2>/dev/null
+rm -f /var/run/stubby.pid 2>/dev/null
+
+# 删除 https-dns-proxy 相关文件
+rm -f /usr/sbin/https-dns-proxy 2>/dev/null
+rm -f /usr/bin/https-dns-proxy 2>/dev/null
+rm -f /etc/init.d/https-dns-proxy 2>/dev/null
+rm -f /etc/config/https-dns-proxy 2>/dev/null
+rm -f /usr/lib/opkg/info/https-dns-proxy.* 2>/dev/null
+rm -f /var/run/https-dns-proxy.pid 2>/dev/null
+
+# 删除 getdns 库文件
+rm -f /usr/lib/libgetdns.so* 2>/dev/null
+rm -f /usr/lib/opkg/info/getdns.* 2>/dev/null
+
+# 删除 libcares 库文件
+rm -f /usr/lib/libcares.so* 2>/dev/null
+rm -f /usr/lib/opkg/info/libcares.* 2>/dev/null
+
+# 删除 libev 库文件
+rm -f /usr/lib/libev.so* 2>/dev/null
+rm -f /usr/lib/opkg/info/libev.* 2>/dev/null
+
+echo "路由管家: 旧版DNS加密依赖包已清理"
+
+# --- 第三步：清理旧版运行时状态 ---
 echo "路由管家: 正在清理旧版运行时状态..."
 
 # 清理 ipset（旧版可能残留无效的计数器数据）
