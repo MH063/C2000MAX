@@ -751,6 +751,17 @@ function index()
     entry({"admin", "status", "router_assistant", "get_custom_oui"}, call("api_get_custom_oui")).leaf = true
     entry({"admin", "status", "router_assistant", "add_custom_oui"}, post("api_add_custom_oui")).leaf = true
     entry({"admin", "status", "router_assistant", "remove_custom_oui"}, post("api_remove_custom_oui")).leaf = true
+    
+    -- DNS加密功能
+    entry({"admin", "status", "router_assistant", "get_dns_encryption_status"}, call("api_get_dns_encryption_status")).leaf = true
+    entry({"admin", "status", "router_assistant", "get_dns_encryption_config"}, call("api_get_dns_encryption_config")).leaf = true
+    entry({"admin", "status", "router_assistant", "save_dns_encryption_config"}, post("api_save_dns_encryption_config")).leaf = true
+    entry({"admin", "status", "router_assistant", "test_dns_encryption"}, post("api_test_dns_encryption")).leaf = true
+    entry({"admin", "status", "router_assistant", "get_dns_server_presets"}, call("api_get_dns_server_presets")).leaf = true
+    
+    -- 内置包管理
+    entry({"admin", "status", "router_assistant", "get_builtin_packages"}, call("api_get_builtin_packages")).leaf = true
+    entry({"admin", "status", "router_assistant", "install_builtin_package"}, post("api_install_builtin_package")).leaf = true
 end
 
 -- 缓存：所有无线接口的关联客户端 MAC 集合（无冒号大写格式）
@@ -8667,6 +8678,747 @@ function api_remove_security_whitelist()
         response_data = error_response(-1, "移除失败", tostring(err))
     end
     
+    luci.http.prepare_content("application/json")
+    luci.http.write_json(response_data)
+end
+
+-- ========== DNS加密功能 ==========
+DNS_PRESETS = {
+    domestic = {
+        {name = "阿里DNS (DoH)", type = "doh", url = "https://dns.alidns.com/dns-query", ips = {"223.5.5.5", "223.6.6.6"}, dnssec = false, description = "阿里云公共DNS"},
+        {name = "阿里DNS (DoT)", type = "dot", host = "dns.alidns.com", port = 853, ips = {"223.5.5.5", "223.6.6.6"}, dnssec = false, description = "阿里云DNS over TLS"},
+        {name = "腾讯DNSPod (DoH)", type = "doh", url = "https://doh.pub/dns-query", ips = {"119.29.29.29", "119.28.28.28"}, dnssec = false, description = "腾讯云DNSPod"},
+        {name = "腾讯DNSPod (DoT)", type = "dot", host = "dot.pub", port = 853, ips = {"119.29.29.29", "119.28.28.28"}, dnssec = false, description = "腾讯云DNS over TLS"},
+        {name = "宁屏DNS (DoH)", type = "doh", url = "https://dns.adguard-dns.com/dns-query", ips = {"94.140.14.14", "94.140.15.15"}, dnssec = true, description = "支持去广告和DNSSEC"}
+    },
+    international = {
+        {name = "Cloudflare DNS (DoH)", type = "doh", url = "https://cloudflare-dns.com/dns-query", ips = {"1.1.1.1", "1.0.0.1"}, dnssec = true, description = "隐私优先，无日志记录"},
+        {name = "Cloudflare DNS (DoT)", type = "dot", host = "cloudflare-dns.com", port = 853, ips = {"1.1.1.1", "1.0.0.1"}, dnssec = true, description = "Cloudflare DNS over TLS"},
+        {name = "Quad9 (DoH)", type = "doh", url = "https://dns.quad9.net/dns-query", ips = {"9.9.9.9", "149.112.112.112"}, dnssec = true, description = "自动屏蔽恶意域名"},
+        {name = "Quad9 (DoT)", type = "dot", host = "dns.quad9.net", port = 853, ips = {"9.9.9.9", "149.112.112.112"}, dnssec = true, description = "Quad9 DNS over TLS"},
+        {name = "Google DNS (DoH)", type = "doh", url = "https://dns.google/dns-query", ips = {"8.8.8.8", "8.8.4.4"}, dnssec = true, description = "Google Public DNS"},
+        {name = "Google DNS (DoT)", type = "dot", host = "dns.google", port = 853, ips = {"8.8.8.8", "8.8.4.4"}, dnssec = true, description = "Google DNS over TLS"}
+    }
+}
+
+local function is_service_running(service_name)
+    local util = require("luci.util")
+    local pid = util.exec("pidof " .. service_name .. " 2>/dev/null")
+    return pid and pid ~= ""
+end
+
+local function is_package_installed(pkg_name)
+    local util = require("luci.util")
+    local package_files = {
+        stubby = "/usr/sbin/stubby",
+        ["https-dns-proxy"] = "/usr/sbin/https-dns-proxy",
+        libcares = "/usr/lib/libcares.so.2",
+        getdns = "/usr/lib/libgetdns.so.10",
+        libev = "/usr/lib/libev.so.4"
+    }
+    local file_path = package_files[pkg_name]
+    if file_path then
+        local result = util.exec("test -f '" .. file_path .. "' && echo yes || echo no")
+        return result and result:match("yes") ~= nil
+    end
+    return false
+end
+
+-- 手动安装IPK包（不使用opkg）
+local function manual_install_ipk(ipk_path, pkg_name)
+    local util = require("luci.util")
+    local nixio = require("nixio")
+    local tmp_dir = "/tmp/ipk_install_" .. pkg_name
+    util.exec("rm -rf '" .. tmp_dir .. "' 2>/dev/null")
+    util.exec("mkdir -p '" .. tmp_dir .. "'")
+
+    local check_file = util.exec("test -f '" .. ipk_path .. "' && test -r '" .. ipk_path .. "' && echo yes || echo no")
+    if not check_file or not check_file:match("yes") then
+        nixio.syslog("err", "[DNS加密] IPK文件不存在或不可读: " .. ipk_path)
+        util.exec("rm -rf '" .. tmp_dir .. "' 2>/dev/null")
+        return false
+    end
+
+    local file_size = util.exec("stat -c%s '" .. ipk_path .. "' 2>/dev/null") or "0"
+    nixio.syslog("info", "[DNS加密] 开始安装: " .. pkg_name .. " (大小: " .. (file_size:gsub("%s+", "")) .. " bytes)")
+
+    local extract_cmd = string.format(
+        "cd '%s' && tar xzf '%s' 2>/dev/null && echo SUCCESS || echo FAILED",
+        tmp_dir, ipk_path
+    )
+    local result = util.exec(extract_cmd)
+
+    if not result or not result:match("SUCCESS") then
+        nixio.syslog("err", "[DNS加密] 解压IPK失败(tar.gz): " .. ipk_path)
+        util.exec("rm -rf '" .. tmp_dir .. "' 2>/dev/null")
+        return false
+    end
+
+    local list_result = util.exec("ls -la '" .. tmp_dir .. "' 2>/dev/null") or ""
+    nixio.syslog("info", "[DNS加密] 解压内容: " .. list_result:gsub("\n", "; "))
+
+    if util.exec("test -f '" .. tmp_dir .. "/data.tar.gz' && echo yes || echo no"):match("yes") then
+        util.exec("tar xzf '" .. tmp_dir .. "/data.tar.gz' -C / 2>/dev/null")
+        nixio.syslog("info", "[DNS加密] 已提取data.tar.gz")
+    else
+        nixio.syslog("warning", "[DNS加密] 未找到data.tar.gz，尝试直接查找文件...")
+    end
+
+    util.exec("mkdir -p /usr/lib/opkg/info 2>/dev/null")
+    if util.exec("test -f '" .. tmp_dir .. "/control.tar.gz' && echo yes || echo no"):match("yes") then
+        util.exec("tar xzf '" .. tmp_dir .. "/control.tar.gz' -C /usr/lib/opkg/info/ 2>/dev/null")
+        nixio.syslog("info", "[DNS加密] 已提取control.tar.gz")
+    end
+
+    local postinst = tmp_dir .. "/control/postinst"
+    if util.exec("test -f '" .. postinst .. "' && echo yes || echo no"):match("yes") then
+        util.exec("sh '" .. postinst .. "' install 2>/dev/null")
+        nixio.syslog("info", "[DNS加密] 已执行postinst脚本")
+    end
+
+    util.exec("rm -rf '" .. tmp_dir .. "' 2>/dev/null")
+    nixio.syslog("info", "[DNS加密] 手动安装完成: " .. pkg_name)
+    return true
+end
+
+-- 自动安装内置的DNS加密依赖包（采用人工手动安装方式）
+local function auto_install_dns_packages(packages)
+    local util = require("luci.util")
+    local nixio = require("nixio")
+    local pkg_dir = "/usr/share/router-assistant/packages"
+    for _, pkg_name in ipairs(packages) do
+        if not is_package_installed(pkg_name) then
+            local find_cmd = string.format(
+                "ls %s/%s*.ipk 2>/dev/null | head -1",
+                pkg_dir, pkg_name
+            )
+            local ipk_path = util.exec(find_cmd)
+            -- 先去除末尾空白字符
+            if ipk_path then
+                ipk_path = ipk_path:gsub("%s+$", "")
+            end
+            if ipk_path and ipk_path ~= "" and ipk_path:match("%.ipk$") then
+                if manual_install_ipk(ipk_path, pkg_name) then
+                    if is_package_installed(pkg_name) then
+                        nixio.syslog("info", "[DNS加密] 自动安装成功: " .. pkg_name)
+                    else
+                        nixio.syslog("err", "[DNS加密] 安装后验证失败: " .. pkg_name)
+                        return false
+                    end
+                else
+                    nixio.syslog("err", "[DNS加密] 手动安装失败: " .. pkg_name)
+                    return false
+                end
+            else
+                nixio.syslog("err", "[DNS加密] 找不到IPK包: " .. pkg_name)
+                return false
+            end
+        end
+    end
+    return true
+end
+
+-- 检查证书文件是否存在
+local function check_certificates()
+    local util = require("luci.util")
+    local cert_paths = {
+        "/etc/ssl/certs/ca-certificates.crt",
+        "/etc/ssl/cert.pem",
+        "/etc/ssl/certs/"
+    }
+    for _, path in ipairs(cert_paths) do
+        local result = util.exec("test -e " .. path .. " && echo yes || echo no")
+        if result and result:match("yes") then
+            return true
+        end
+    end
+    return false
+end
+
+local function get_dns_service_status()
+    local status = {
+        stubby = {installed = is_package_installed("stubby"), running = false, enabled = false},
+        https_dns_proxy = {installed = is_package_installed("https-dns-proxy"), running = false, enabled = false},
+        libcares = is_package_installed("libcares"),
+        getdns = is_package_installed("getdns"),
+        libev = is_package_installed("libev"),
+        certificates = check_certificates()
+    }
+    status.stubby.running = is_service_running("stubby")
+    status.https_dns_proxy.running = is_service_running("https-dns-proxy")
+    local util = require("luci.util")
+    local stubby_enabled = util.exec("uci get stubby.global.enabled 2>/dev/null")
+    status.stubby.enabled = stubby_enabled and stubby_enabled:match("1") ~= nil
+    local hdp_enabled = util.exec("uci get https-dns-proxy.config.enabled 2>/dev/null")
+    status.https_dns_proxy.enabled = hdp_enabled and hdp_enabled:match("1") ~= nil
+    return status
+end
+
+local function get_current_dns_encryption_config()
+    local uci = require("luci.model.uci").cursor()
+    local config = {enabled = false, type = "none", server = nil, custom_url = nil, custom_host = nil, dnssec = false}
+    local dns_encryption = uci:get("router_assistant", "dns_encryption")
+    if dns_encryption then
+        config.enabled = uci:get("router_assistant", "dns_encryption", "enabled") == "1"
+        config.type = uci:get("router_assistant", "dns_encryption", "type") or "none"
+        config.server = uci:get("router_assistant", "dns_encryption", "server")
+        config.custom_url = uci:get("router_assistant", "dns_encryption", "custom_url")
+        config.custom_host = uci:get("router_assistant", "dns_encryption", "custom_host")
+        config.dnssec = uci:get("router_assistant", "dns_encryption", "dnssec") == "1"
+    end
+    return config
+end
+
+local function configure_stubby(server_config)
+    local util = require("luci.util")
+    local nixio = require("nixio")
+    local uci = require("luci.model.uci").cursor()
+    if not server_config or server_config.type ~= "dot" then
+        return false, "无效的DoT服务器配置"
+    end
+    uci:set("stubby", "global", "stubby")
+    uci:set("stubby", "global", "enabled", "1")
+    uci:set("stubby", "global", "dnssec", server_config.dnssec and "1" or "0")
+    -- 配置stubby监听本地5353端口
+    uci:set("stubby", "global", "listen_address", "127.0.0.1@" .. DNS_DOT_PORT)
+    uci:delete("stubby", "upstream")
+    uci:set("stubby", "upstream", "resolver")
+    uci:set("stubby", "upstream", "address", server_config.host)
+    uci:set("stubby", "upstream", "port", tostring(server_config.port or 853))
+    uci:set("stubby", "upstream", "tls_auth_name", server_config.host)
+    -- 添加SPKI证书固定（如果提供）
+    if server_config.spki then
+        uci:set("stubby", "upstream", "spki", server_config.spki)
+    end
+    uci:commit("stubby")
+    util.exec("/etc/init.d/stubby restart 2>/dev/null")
+    nixio.syslog("info", "[DNS加密] stubby已配置，监听 127.0.0.1:" .. DNS_DOT_PORT)
+    return true
+end
+
+local function configure_https_dns_proxy(server_config)
+    local util = require("luci.util")
+    local nixio = require("nixio")
+    local uci = require("luci.model.uci").cursor()
+    if not server_config or server_config.type ~= "doh" then
+        return false, "无效的DoH服务器配置"
+    end
+    uci:set("https-dns-proxy", "config", "https-dns-proxy")
+    uci:set("https-dns-proxy", "config", "enabled", "1")
+    -- 配置https-dns-proxy监听本地5354端口
+    uci:set("https-dns-proxy", "config", "listen_addr", "127.0.0.1")
+    uci:set("https-dns-proxy", "config", "listen_port", tostring(DNS_DOH_PORT))
+    uci:delete("https-dns-proxy", "provider")
+    uci:set("https-dns-proxy", "provider", "https-dns-proxy")
+    uci:set("https-dns-proxy", "provider", "url", server_config.url)
+    if server_config.ips and #server_config.ips > 0 then
+        uci:set("https-dns-proxy", "provider", "bootstrap_dns", table.concat(server_config.ips, ","))
+    end
+    -- 启用DNSSEC验证（如果配置）
+    if server_config.dnssec then
+        uci:set("https-dns-proxy", "config", "dnssec", "1")
+    end
+    uci:commit("https-dns-proxy")
+    util.exec("/etc/init.d/https-dns-proxy restart 2>/dev/null")
+    nixio.syslog("info", "[DNS加密] https-dns-proxy已配置，监听 127.0.0.1:" .. DNS_DOH_PORT)
+    return true
+end
+
+local function stop_dns_encryption_services()
+    local util = require("luci.util")
+    local uci = require("luci.model.uci").cursor()
+    uci:set("stubby", "global", "enabled", "0")
+    uci:commit("stubby")
+    util.exec("/etc/init.d/stubby stop 2>/dev/null")
+    uci:set("https-dns-proxy", "config", "enabled", "0")
+    uci:commit("https-dns-proxy")
+    util.exec("/etc/init.d/https-dns-proxy stop 2>/dev/null")
+    return true
+end
+
+-- DNS加密服务端口配置
+local DNS_DOT_PORT = 5353  -- DoT (stubby) 监听端口
+local DNS_DOH_PORT = 5354  -- DoH (https-dns-proxy) 监听端口
+
+local function setup_dns_forward(enc_type)
+    local util = require("luci.util")
+    local nixio = require("nixio")
+    local uci = require("luci.model.uci").cursor()
+    
+    -- 配置dnsmasq使用本地DNS加密服务
+    uci:set("dhcp", "@dnsmasq[0]", "noresolv", "1")
+    uci:set("dhcp", "@dnsmasq[0]", "localuse", "1")
+    
+    -- 删除旧的server配置（包括错误的Firefox配置）
+    uci:delete("dhcp", "@dnsmasq[0]", "server")
+    
+    -- 根据加密类型选择端口
+    local listen_port = DNS_DOT_PORT
+    if enc_type == "doh" then
+        listen_port = DNS_DOH_PORT
+    end
+    
+    -- 添加DNS转发到本地加密DNS服务
+    uci:add_list("dhcp", "@dnsmasq[0]", "server", "127.0.0.1#" .. listen_port)
+    
+    uci:commit("dhcp")
+    util.exec("/etc/init.d/dnsmasq restart 2>/dev/null")
+    
+    nixio.syslog("info", "[DNS加密] dnsmasq已配置转发到 127.0.0.1#" .. listen_port .. " (类型: " .. (enc_type or "dot") .. ")")
+    return true
+end
+
+local function restore_default_dns()
+    local util = require("luci.util")
+    local nixio = require("nixio")
+    local uci = require("luci.model.uci").cursor()
+    
+    -- 恢复默认DNS设置
+    uci:delete("dhcp", "@dnsmasq[0]", "noresolv")
+    uci:delete("dhcp", "@dnsmasq[0]", "localuse")
+    uci:delete("dhcp", "@dnsmasq[0]", "server")
+    uci:commit("dhcp")
+    util.exec("/etc/init.d/dnsmasq restart 2>/dev/null")
+    
+    nixio.syslog("info", "[DNS加密] 已恢复默认DNS设置")
+    return true
+end
+
+-- 测试DNS解析功能
+local function test_dns_resolution()
+    local util = require("luci.util")
+    local test_domains = {"www.baidu.com", "www.qq.com", "www.google.com"}
+    local results = {}
+    for _, domain in ipairs(test_domains) do
+        local cmd = "timeout 3 nslookup " .. domain .. " 127.0.0.1 2>/dev/null"
+        local output = util.exec(cmd)
+        if output and output:match("Address") and not output:match("can't find") then
+            results[domain] = true
+        else
+            results[domain] = false
+        end
+    end
+    local success_count = 0
+    for _, v in pairs(results) do
+        if v then success_count = success_count + 1 end
+    end
+    return success_count, results
+end
+
+-- 验证DNSSEC是否生效
+local function verify_dnssec()
+    local util = require("luci.util")
+    local result = {
+        enabled = false,
+        validated = false,
+        message = ""
+    }
+    
+    -- 检查stubby是否启用DNSSEC
+    local stubby_dnssec = util.exec("uci get stubby.global.dnssec 2>/dev/null")
+    if stubby_dnssec and stubby_dnssec:match("1") then
+        result.enabled = true
+    end
+    
+    -- 使用dig或drill测试DNSSEC验证（如果可用）
+    local dig_cmd = "which dig 2>/dev/null && dig +dnssec dnssec-failed.org 2>/dev/null | grep -E 'SERVFAIL|RRSIG' | head -1"
+    local dig_output = util.exec(dig_cmd)
+    
+    if dig_output and dig_output ~= "" then
+        if dig_output:match("SERVFAIL") then
+            -- DNSSEC验证失败（预期行为，因为dnssec-failed.org是故意失败的）
+            result.validated = true
+            result.message = "DNSSEC验证正常工作（正确拒绝无效签名）"
+        elseif dig_output:match("RRSIG") then
+            result.validated = true
+            result.message = "DNSSEC签名已获取"
+        end
+    else
+        -- 使用nslookup作为备选
+        local nslookup_cmd = "timeout 3 nslookup -type=DNSKEY . 127.0.0.1 2>/dev/null | head -5"
+        local ns_output = util.exec(nslookup_cmd)
+        if ns_output and ns_output:match("DNSKEY") then
+            result.validated = true
+            result.message = "DNSSEC密钥可获取"
+        else
+            result.message = "无法验证DNSSEC状态（dig/nslookup工具可能不支持）"
+        end
+    end
+    
+    return result
+end
+
+function api_get_dns_server_presets()
+    local response_data = nil
+    collectgarbage("collect")
+    local ok, err = pcall(function()
+        response_data = success_response({domestic = DNS_PRESETS.domestic, international = DNS_PRESETS.international})
+    end)
+    if not ok then
+        response_data = error_response(-1, "获取DNS服务器列表失败", tostring(err))
+    end
+    luci.http.prepare_content("application/json")
+    luci.http.write_json(response_data)
+end
+
+function api_get_dns_encryption_status()
+    local response_data = nil
+    collectgarbage("collect")
+    local ok, err = pcall(function()
+        local service_status = get_dns_service_status()
+        local config = get_current_dns_encryption_config()
+        local status = "disabled"
+        local active_type = "none"
+        local active_server = nil
+        if config.enabled then
+            if config.type == "dot" and service_status.stubby.running then
+                status = "active"
+                active_type = "dot"
+                active_server = config.server
+            elseif config.type == "doh" and service_status.https_dns_proxy.running then
+                status = "active"
+                active_type = "doh"
+                active_server = config.server
+            else
+                status = "error"
+            end
+        end
+        local success_count, test_results = 0, {}
+        local dnssec_status = {enabled = false, validated = false, message = ""}
+        if status == "active" then
+            success_count, test_results = test_dns_resolution()
+            dnssec_status = verify_dnssec()
+        end
+        response_data = success_response({
+            status = status, type = active_type, server = active_server, dnssec = config.dnssec,
+            services = service_status,
+            resolution_test = {success_count = success_count, total = 3, details = test_results},
+            dnssec_status = dnssec_status
+        })
+    end)
+    if not ok then
+        response_data = error_response(-1, "获取DNS加密状态失败", tostring(err))
+    end
+    luci.http.prepare_content("application/json")
+    luci.http.write_json(response_data)
+end
+
+function api_get_dns_encryption_config()
+    local response_data = nil
+    collectgarbage("collect")
+    local ok, err = pcall(function()
+        local config = get_current_dns_encryption_config()
+        local service_status = get_dns_service_status()
+        response_data = success_response({config = config, services = service_status})
+    end)
+    if not ok then
+        response_data = error_response(-1, "获取DNS加密配置失败", tostring(err))
+    end
+    luci.http.prepare_content("application/json")
+    luci.http.write_json(response_data)
+end
+
+function api_save_dns_encryption_config()
+    if not require_csrf_token() then return end
+    local response_data = nil
+    collectgarbage("collect")
+    local ok, err = pcall(function()
+        local util = require("luci.util")
+        local uci = require("luci.model.uci").cursor()
+        local enabled = luci.http.formvalue("enabled") == "1"
+        local enc_type = luci.http.formvalue("type") or "none"
+        local server_name = luci.http.formvalue("server") or ""
+        local custom_url = luci.http.formvalue("custom_url") or ""
+        local custom_host = luci.http.formvalue("custom_host") or ""
+        local dnssec = luci.http.formvalue("dnssec") == "1"
+        uci:set("router_assistant", "dns_encryption", "config")
+        uci:set("router_assistant", "dns_encryption", "enabled", enabled and "1" or "0")
+        uci:set("router_assistant", "dns_encryption", "type", enc_type)
+        uci:set("router_assistant", "dns_encryption", "server", server_name)
+        uci:set("router_assistant", "dns_encryption", "custom_url", custom_url)
+        uci:set("router_assistant", "dns_encryption", "custom_host", custom_host)
+        uci:set("router_assistant", "dns_encryption", "dnssec", dnssec and "1" or "0")
+        uci:commit("router_assistant")
+        if not enabled then
+            stop_dns_encryption_services()
+            restore_default_dns()
+            response_data = success_response({message = "DNS加密已禁用，已恢复默认DNS设置"})
+            return
+        end
+        local server_config = nil
+        if server_name and server_name ~= "" and server_name ~= "custom" then
+            for _, preset_list in pairs(DNS_PRESETS) do
+                for _, preset in ipairs(preset_list) do
+                    if preset.name == server_name then
+                        server_config = preset
+                        break
+                    end
+                end
+                if server_config then break end
+            end
+        elseif server_name == "custom" then
+            if enc_type == "doh" and custom_url ~= "" then
+                server_config = {type = "doh", url = custom_url, dnssec = dnssec}
+            elseif enc_type == "dot" and custom_host ~= "" then
+                server_config = {type = "dot", host = custom_host:match("^([^:]+)"), port = tonumber(custom_host:match(":(%d+)$")) or 853, dnssec = dnssec}
+            end
+        end
+        if not server_config then
+            response_data = error_response(-1, "无效的DNS服务器配置")
+            return
+        end
+        local success, err_msg
+        if server_config.type == "dot" then
+            if not is_package_installed("stubby") or not is_package_installed("getdns") then
+                if not auto_install_dns_packages({"stubby", "getdns"}) then
+                    response_data = error_response(-1, "缺少stubby或getdns软件包，自动安装失败")
+                    return
+                end
+            end
+            success, err_msg = configure_stubby(server_config)
+        elseif server_config.type == "doh" then
+            if not is_package_installed("https-dns-proxy") or not is_package_installed("libcares") then
+                if not auto_install_dns_packages({"libcares", "https-dns-proxy"}) then
+                    response_data = error_response(-1, "缺少https-dns-proxy或libcares软件包，自动安装失败")
+                    return
+                end
+            end
+            success, err_msg = configure_https_dns_proxy(server_config)
+        end
+        if not success then
+            restore_default_dns()
+            response_data = error_response(-1, err_msg or "配置DNS加密服务失败")
+            return
+        end
+        setup_dns_forward(server_config.type)
+        local test_success, test_results = test_dns_resolution()
+        if test_success < 2 then
+            restore_default_dns()
+            response_data = error_response(-1, "DNS解析测试失败，已恢复默认DNS")
+            return
+        end
+        response_data = success_response({
+            message = "DNS加密配置成功", type = server_config.type, server = server_name,
+            resolution_test = {success_count = test_success, total = 3, details = test_results}
+        })
+    end)
+    if not ok then
+        response_data = error_response(-1, "保存DNS加密配置失败", tostring(err))
+    end
+    luci.http.prepare_content("application/json")
+    luci.http.write_json(response_data)
+end
+
+function api_test_dns_encryption()
+    if not require_csrf_token() then return end
+    local response_data = nil
+    collectgarbage("collect")
+    local ok, err = pcall(function()
+        local util = require("luci.util")
+        local test_type = luci.http.formvalue("type") or "doh"
+        local server_name = luci.http.formvalue("server") or ""
+        local custom_url = luci.http.formvalue("custom_url") or ""
+        local custom_host = luci.http.formvalue("custom_host") or ""
+        local server_config = nil
+        if server_name and server_name ~= "" and server_name ~= "custom" then
+            for _, preset_list in pairs(DNS_PRESETS) do
+                for _, preset in ipairs(preset_list) do
+                    if preset.name == server_name then
+                        server_config = preset
+                        break
+                    end
+                end
+                if server_config then break end
+            end
+        elseif server_name == "custom" then
+            if test_type == "doh" and custom_url ~= "" then
+                server_config = {type = "doh", url = custom_url}
+            elseif test_type == "dot" and custom_host ~= "" then
+                server_config = {type = "dot", host = custom_host:match("^([^:]+)"), port = tonumber(custom_host:match(":(%d+)$")) or 853}
+            end
+        end
+        if not server_config then
+            response_data = error_response(-1, "无效的测试配置")
+            return
+        end
+        local result = {success = false, latency = 0, message = ""}
+        local start_time = os.clock()
+        if test_type == "dot" then
+            local host = server_config.host or "cloudflare-dns.com"
+            local port = server_config.port or 853
+            local test_cmd = "timeout 5 openssl s_client -connect " .. host .. ":" .. port .. " -servername " .. host .. " 2>&1 | head -20"
+            local output = util.exec(test_cmd)
+            if output and output:match("Verify return code") then
+                if output:match("ok") or output:match("Verify return code: 0") then
+                    result.success = true
+                    result.message = "DoT连接成功，证书验证通过"
+                else
+                    result.message = "DoT连接成功，但证书验证失败"
+                end
+            else
+                result.message = "DoT连接失败"
+            end
+        elseif test_type == "doh" then
+            local url = server_config.url or "https://cloudflare-dns.com/dns-query"
+            local test_cmd = "timeout 5 curl -s -o /dev/null -w '%{http_code}' -H 'accept: application/dns-message' '" .. url .. "?dns=AAABAAABAAAAAAAAA3d3dwdleGFtcGxlA2NvbQAAAQAB' 2>/dev/null"
+            local http_code = util.exec(test_cmd)
+            if http_code and (http_code:match("200") or http_code:match("204")) then
+                result.success = true
+                result.message = "DoH连接成功"
+            else
+                result.message = "DoH连接失败，HTTP状态码: " .. (http_code or "无响应")
+            end
+        end
+        result.latency = math.floor((os.clock() - start_time) * 1000)
+        response_data = success_response({test_type = test_type, server = server_name, result = result})
+    end)
+    if not ok then
+        response_data = error_response(-1, "测试DNS加密连接失败", tostring(err))
+    end
+    luci.http.prepare_content("application/json")
+    luci.http.write_json(response_data)
+end
+
+-- 获取内置包列表
+function api_get_builtin_packages()
+    local response_data = nil
+    collectgarbage("collect")
+    local ok, err = pcall(function()
+        local util = require("luci.util")
+        local pkg_dir = "/usr/share/router-assistant/packages"
+        local packages = {}
+        
+        -- 定义内置包信息
+        local pkg_info = {
+            stubby = {
+                name = "stubby",
+                display_name = "Stubby (DoT客户端)",
+                description = "DNS over TLS客户端，提供加密的DNS查询服务",
+                check_file = "/usr/sbin/stubby",
+                category = "dns"
+            },
+            ["https-dns-proxy"] = {
+                name = "https-dns-proxy",
+                display_name = "HTTPS-DNS-Proxy (DoH客户端)",
+                description = "DNS over HTTPS客户端，通过HTTPS协议加密DNS查询",
+                check_file = "/usr/sbin/https-dns-proxy",
+                category = "dns"
+            },
+            libcares = {
+                name = "libcares",
+                display_name = "libcares (DNS解析库)",
+                description = "异步DNS解析库，https-dns-proxy的依赖库",
+                check_file = "/usr/lib/libcares.so.2",
+                category = "library"
+            },
+            getdns = {
+                name = "getdns",
+                display_name = "getdns (DNS库)",
+                description = "现代DNS API库，stubby的依赖库",
+                check_file = "/usr/lib/libgetdns.so.10",
+                category = "library"
+            },
+            libev = {
+                name = "libev",
+                display_name = "libev (事件循环库)",
+                description = "高性能事件循环库，https-dns-proxy的依赖库",
+                check_file = "/usr/lib/libev.so.4",
+                category = "library"
+            }
+        }
+        
+        -- 扫描IPK文件
+        if util.exec("test -d '" .. pkg_dir .. "' && echo yes || echo no"):match("yes") then
+            local find_cmd = "ls " .. pkg_dir .. "/*.ipk 2>/dev/null"
+            local output = util.exec(find_cmd)
+            if output and output ~= "" then
+                for line in output:gmatch("[^\r\n]+") do
+                    local ipk_name = line:match("([^/]+)%.ipk$")
+                    if ipk_name then
+                        -- 提取包基础名称（处理带版本号的文件名，如 getdns_1.7.0-1_aarch64_cortex-a53）
+                        local pkg_base = ipk_name:match("^([^_]+)")
+                        -- 特殊处理 https-dns-proxy（包含连字符）
+                        if ipk_name:match("^https%-dns%-proxy") then
+                            pkg_base = "https-dns-proxy"
+                        end
+                        local info = pkg_info[pkg_base]
+                        if info then
+                            local installed = false
+                            if util.exec("test -f '" .. info.check_file .. "' && echo yes || echo no"):match("yes") then
+                                installed = true
+                            end
+                            table.insert(packages, {
+                                name = info.name,
+                                display_name = info.display_name,
+                                description = info.description,
+                                ipk_file = ipk_name .. ".ipk",
+                                installed = installed,
+                                category = info.category
+                            })
+                        end
+                    end
+                end
+            end
+        end
+        
+        response_data = success_response({packages = packages})
+    end)
+    if not ok then
+        response_data = error_response(-1, "获取内置包列表失败", tostring(err))
+    end
+    luci.http.prepare_content("application/json")
+    luci.http.write_json(response_data)
+end
+
+-- 安装指定内置包
+function api_install_builtin_package()
+    if not require_csrf_token() then return end
+    local response_data = nil
+    collectgarbage("collect")
+    local ok, err = pcall(function()
+        local util = require("luci.util")
+        local nixio = require("nixio")
+        local pkg_name = luci.http.formvalue("package") or ""
+        
+        if pkg_name == "" then
+            response_data = error_response(-1, "未指定要安装的包")
+            return
+        end
+        
+        local pkg_dir = "/usr/share/router-assistant/packages"
+        local find_cmd = string.format("ls %s/%s*.ipk 2>/dev/null | head -1", pkg_dir, pkg_name)
+        local ipk_path = util.exec(find_cmd)
+        
+        -- 先去除末尾空白字符（换行符等）
+        if ipk_path then
+            ipk_path = ipk_path:gsub("%s+$", "")
+        end
+        
+        -- 调试日志
+        nixio.syslog("info", "[内置包] 查找命令: " .. find_cmd)
+        nixio.syslog("info", "[内置包] 查找结果: " .. (ipk_path or "nil"))
+        
+        if not ipk_path or ipk_path == "" or not ipk_path:match("%.ipk$") then
+            response_data = error_response(-1, "找不到IPK文件: " .. pkg_name .. "，请确认文件存在于 " .. pkg_dir)
+            return
+        end
+        
+        if manual_install_ipk(ipk_path, pkg_name) then
+            if is_package_installed(pkg_name) then
+                nixio.syslog("info", "[内置包] 安装成功: " .. pkg_name)
+                response_data = success_response({message = "安装成功", package = pkg_name, installed = true})
+            else
+                nixio.syslog("err", "[内置包] 安装后验证失败: " .. pkg_name)
+                response_data = error_response(-1, "安装后验证失败，请检查文件完整性", pkg_name)
+            end
+        else
+            nixio.syslog("err", "[内置包] 安装失败: " .. pkg_name)
+            response_data = error_response(-1, "安装失败，请检查日志", pkg_name)
+        end
+    end)
+    if not ok then
+        response_data = error_response(-1, "安装内置包失败", tostring(err))
+    end
     luci.http.prepare_content("application/json")
     luci.http.write_json(response_data)
 end

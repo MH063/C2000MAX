@@ -2276,6 +2276,83 @@ window.DEBUG_MODE = false;
             display: none;
         }
     }
+
+    /* DNS加密配置样式 */
+    .dns-server-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+        gap: 10px;
+    }
+    .dns-server-item {
+        padding: 12px;
+        background: var(--bg-primary);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        cursor: pointer;
+        transition: all 0.2s ease;
+    }
+    .dns-server-item:hover {
+        border-color: var(--accent-cyan);
+        background: rgba(0, 212, 255, 0.05);
+    }
+    .dns-server-item.selected {
+        border-color: var(--accent-cyan);
+        background: rgba(0, 212, 255, 0.1);
+    }
+    .dns-server-item .name {
+        font-weight: 500;
+        font-size: 13px;
+        color: var(--text-primary);
+        margin-bottom: 4px;
+    }
+    .dns-server-item .type {
+        font-size: 11px;
+        color: var(--accent-cyan);
+        margin-bottom: 4px;
+    }
+    .dns-server-item .desc {
+        font-size: 11px;
+        color: var(--text-secondary);
+    }
+    .dns-server-item .dnssec-badge {
+        display: inline-block;
+        padding: 2px 6px;
+        background: rgba(0, 255, 136, 0.1);
+        color: var(--accent-green);
+        border-radius: 4px;
+        font-size: 10px;
+        margin-top: 4px;
+    }
+    .dns-server-tab {
+        background: transparent;
+        border: 1px solid var(--border-color);
+        color: var(--text-secondary);
+    }
+    .dns-server-tab.active {
+        background: rgba(0, 212, 255, 0.1);
+        border-color: var(--accent-cyan);
+        color: var(--accent-cyan);
+    }
+    .service-status-badge {
+        display: inline-block;
+        padding: 4px 10px;
+        border-radius: 4px;
+        font-size: 11px;
+        background: rgba(128, 128, 128, 0.2);
+        color: var(--text-secondary);
+    }
+    .service-status-badge.installed {
+        background: rgba(0, 255, 136, 0.1);
+        color: var(--accent-green);
+    }
+    .service-status-badge.not-installed {
+        background: rgba(255, 82, 82, 0.1);
+        color: var(--accent-red);
+    }
+    .service-status-badge.running {
+        background: rgba(0, 255, 136, 0.15);
+        color: var(--accent-green);
+    }
 </style>
 
 <div class="rm-container">
@@ -3292,6 +3369,163 @@ window.DEBUG_MODE = false;
             </div>
         </div>
 
+        <!-- DNS加密配置卡片 -->
+        <div class="rm-card" style="margin-top: 20px;">
+            <div class="rm-card-header">
+                <div class="rm-card-title">DNS加密配置</div>
+                <div class="rm-card-actions">
+                    <span id="dns-encryption-status-tag" style="display:inline-block;padding:4px 12px;border-radius:4px;font-size:12px;font-weight:500;background:rgba(128,128,128,0.2);color:var(--text-secondary);">检测中</span>
+                </div>
+            </div>
+            <div class="rm-card-body">
+                <div id="dns-encryption-overview" style="margin-bottom:20px;padding:15px;background:var(--bg-secondary);border-radius:8px;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:15px;">
+                        <div style="flex:1;min-width:200px;">
+                            <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+                                <div id="dns-encryption-indicator" style="width:12px;height:12px;border-radius:50%;background:var(--text-secondary);"></div>
+                                <span id="dns-encryption-status-text" style="font-weight:500;color:var(--text-primary);">检测中...</span>
+                            </div>
+                            <div id="dns-encryption-detail" style="font-size:12px;color:var(--text-secondary);">
+                                <span id="dns-encryption-type-text">-</span>
+                                <span id="dns-encryption-server-text" style="margin-left:8px;"></span>
+                            </div>
+                        </div>
+                        <div style="display:flex;gap:10px;">
+                            <button class="rm-btn rm-btn-secondary" onclick="refreshDnsEncryptionStatus()">刷新状态</button>
+                            <button class="rm-btn" onclick="testDnsEncryptionConnection()" style="background:rgba(0,212,255,0.1);border-color:rgba(0,212,255,0.3);color:var(--accent-cyan);">测试连接</button>
+                        </div>
+                    </div>
+                </div>
+                <div id="dns-encryption-config-form">
+                    <div style="margin-bottom:15px;">
+                        <label style="display:flex;align-items:center;gap:10px;cursor:pointer;">
+                            <input type="checkbox" id="dns-encryption-enabled" onchange="toggleDnsEncryptionConfig()" style="width:18px;height:18px;cursor:pointer;">
+                            <span style="font-weight:500;color:var(--text-primary);">启用DNS加密</span>
+                            <span style="font-size:11px;color:var(--text-secondary);">为局域网所有设备提供加密DNS服务</span>
+                        </label>
+                    </div>
+                    <div id="dns-encryption-options" style="display:none;padding:15px;background:rgba(0,212,255,0.03);border-radius:8px;border:1px solid rgba(0,212,255,0.15);">
+                        <div style="margin-bottom:15px;">
+                            <label style="display:block;margin-bottom:8px;font-size:12px;color:var(--text-secondary);">加密类型</label>
+                            <select id="dns-encryption-type" class="rm-select" onchange="onDnsEncryptionTypeChange()" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border-color);background:var(--bg-secondary);color:var(--text-primary);">
+                                <option value="none">请选择加密类型</option>
+                                <option value="dot">DNS over TLS (DoT) - 更稳定</option>
+                                <option value="doh">DNS over HTTPS (DoH) - 更隐蔽</option>
+                            </select>
+                        </div>
+                        <div id="dns-server-select-section" style="display:none;margin-bottom:15px;">
+                            <label style="display:block;margin-bottom:8px;font-size:12px;color:var(--text-secondary);">DNS服务器</label>
+                            <div style="display:flex;gap:10px;margin-bottom:10px;">
+                                <button class="rm-btn dns-server-tab active" onclick="switchDnsServerTab('domestic')" id="dns-tab-domestic" style="flex:1;padding:8px;font-size:12px;">国内DNS</button>
+                                <button class="rm-btn dns-server-tab" onclick="switchDnsServerTab('international')" id="dns-tab-international" style="flex:1;padding:8px;font-size:12px;">国际DNS</button>
+                                <button class="rm-btn dns-server-tab" onclick="switchDnsServerTab('custom')" id="dns-tab-custom" style="flex:1;padding:8px;font-size:12px;">自定义</button>
+                            </div>
+                            <div id="dns-server-domestic" class="dns-server-list">
+                                <div class="dns-server-grid" id="dns-server-domestic-list"></div>
+                            </div>
+                            <div id="dns-server-international" class="dns-server-list" style="display:none;">
+                                <div class="dns-server-grid" id="dns-server-international-list"></div>
+                            </div>
+                            <div id="dns-server-custom" class="dns-server-list" style="display:none;">
+                                <div style="margin-bottom:10px;">
+                                    <label style="display:block;margin-bottom:5px;font-size:11px;color:var(--text-secondary);">DoH URL地址</label>
+                                    <input type="text" id="dns-custom-url" class="rm-input" placeholder="https://dns.example.com/dns-query" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border-color);background:var(--bg-primary);color:var(--text-primary);">
+                                </div>
+                                <div>
+                                    <label style="display:block;margin-bottom:5px;font-size:11px;color:var(--text-secondary);">DoT 服务器地址 (host:port)</label>
+                                    <input type="text" id="dns-custom-host" class="rm-input" placeholder="dns.example.com:853" style="width:100%;padding:10px;border-radius:6px;border:1px solid var(--border-color);background:var(--bg-primary);color:var(--text-primary);">
+                                </div>
+                            </div>
+                        </div>
+                        <div id="dns-dnssec-section" style="display:none;margin-bottom:15px;">
+                            <label style="display:flex;align-items:center;gap:10px;cursor:pointer;">
+                                <input type="checkbox" id="dns-dnssec-enabled" style="width:16px;height:16px;cursor:pointer;">
+                                <span style="font-size:12px;color:var(--text-primary);">启用DNSSEC验证</span>
+                                <span style="font-size:11px;color:var(--text-secondary);">验证DNS响应的真实性</span>
+                            </label>
+                            <div id="dns-dnssec-status" style="margin-top:8px;padding:8px;background:rgba(0,255,136,0.05);border-radius:4px;font-size:11px;color:var(--text-secondary);display:none;">
+                                <span id="dns-dnssec-status-text">DNSSEC状态: 检测中...</span>
+                            </div>
+                        </div>
+                        <div style="display:flex;gap:10px;justify-content:flex-end;">
+                            <button class="rm-btn rm-btn-secondary" onclick="resetDnsEncryptionConfig()">重置</button>
+                            <button class="rm-btn rm-btn-primary" onclick="saveDnsEncryptionConfig()">保存配置</button>
+                        </div>
+                    </div>
+                </div>
+                <div id="dns-service-status" style="margin-top:15px;padding:12px;background:var(--bg-secondary);border-radius:8px;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                        <div style="font-size:12px;color:var(--text-secondary);">服务依赖状态</div>
+                        <button class="rm-btn rm-btn-primary" onclick="showBuiltinPackageModal()" style="padding:4px 12px;font-size:11px;">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px;vertical-align:middle;">
+                                <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+                                <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
+                                <line x1="12" y1="22.08" x2="12" y2="12"/>
+                            </svg>
+                            管理内置包
+                        </button>
+                    </div>
+                    <div style="display:flex;flex-wrap:wrap;gap:10px;">
+                        <span id="service-stubby-status" class="service-status-badge">stubby: 检测中</span>
+                        <span id="service-https-dns-proxy-status" class="service-status-badge">https-dns-proxy: 检测中</span>
+                        <span id="service-libcares-status" class="service-status-badge">libcares: 检测中</span>
+                        <span id="service-getdns-status" class="service-status-badge">getdns: 检测中</span>
+                        <span id="service-libev-status" class="service-status-badge">libev: 检测中</span>
+                        <span id="service-certificates-status" class="service-status-badge">TLS证书: 检测中</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- 内置包管理弹窗 -->
+    <div id="builtin-package-modal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:9999;align-items:center;justify-content:center;">
+        <div style="background:var(--bg-primary);border-radius:12px;width:90%;max-width:600px;max-height:80vh;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,0.3);border:1px solid var(--border-color);">
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:16px 20px;border-bottom:1px solid var(--border-color);">
+                <div style="font-size:16px;font-weight:600;color:var(--text-primary);">内置包管理</div>
+                <button onclick="closeBuiltinPackageModal()" style="background:none;border:none;color:var(--text-secondary);cursor:pointer;padding:4px;">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <line x1="18" y1="6" x2="6" y2="18"/>
+                        <line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                </button>
+            </div>
+            <div style="padding:20px;overflow-y:auto;max-height:calc(80vh - 60px);">
+                <div style="display:flex;gap:10px;margin-bottom:16px;">
+                    <div style="flex:1;padding:10px;background:rgba(0,212,255,0.05);border-radius:8px;text-align:center;border:1px solid rgba(0,212,255,0.1);">
+                        <div style="font-size:20px;font-weight:600;color:var(--accent-cyan);" id="modal-pkg-total">0</div>
+                        <div style="font-size:11px;color:var(--text-secondary);">内置包总数</div>
+                    </div>
+                    <div style="flex:1;padding:10px;background:rgba(0,255,136,0.05);border-radius:8px;text-align:center;border:1px solid rgba(0,255,136,0.1);">
+                        <div style="font-size:20px;font-weight:600;color:var(--accent-green);" id="modal-pkg-installed">0</div>
+                        <div style="font-size:11px;color:var(--text-secondary);">已安装</div>
+                    </div>
+                    <div style="flex:1;padding:10px;background:rgba(255,170,0,0.05);border-radius:8px;text-align:center;border:1px solid rgba(255,170,0,0.1);">
+                        <div style="font-size:20px;font-weight:600;color:var(--accent-orange);" id="modal-pkg-pending">0</div>
+                        <div style="font-size:11px;color:var(--text-secondary);">待安装</div>
+                    </div>
+                </div>
+                
+                <div id="modal-packages-loading" class="rm-loading" style="padding:40px;">
+                    <div class="rm-loading-spinner"></div>
+                    <p>正在加载内置包列表...</p>
+                </div>
+                <div id="modal-packages-empty" style="display:none;text-align:center;padding:40px;color:var(--text-secondary);">
+                    <p>未找到内置包</p>
+                </div>
+                <div id="modal-packages-list" style="display:none;">
+                    <div id="modal-packages-dns-section" style="margin-bottom:20px;">
+                        <div style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid var(--border-color);">DNS加密组件</div>
+                        <div id="modal-packages-dns-list"></div>
+                    </div>
+                    <div id="modal-packages-library-section" style="margin-bottom:20px;">
+                        <div style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid var(--border-color);">依赖库</div>
+                        <div id="modal-packages-library-list"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- 网络拓扑图标签页 -->
@@ -8316,6 +8550,10 @@ document.addEventListener('DOMContentLoaded', function() {
     // 默认开启ARP自动监控
     startArpAutoMonitor();
     console.log('[ARP Monitor] 自动监控已启动，间隔: ' + (ARP_MONITOR_INTERVAL / 1000) + '秒');
+    
+    // 加载DNS加密状态
+    loadDnsEncryptionStatus();
+    loadDnsServerPresets();
 
     // 模态框事件冒泡控制：防止点击模态框内容时触发关闭
     var noteModal = document.getElementById('note-modal');
@@ -8334,6 +8572,513 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 });
+
+// ========== DNS加密功能 ==========
+var dnsPresetsData = { domestic: [], international: [] };
+var selectedDnsServer = null;
+
+function loadDnsEncryptionStatus() {
+    console.log('[DNS加密] 加载状态...');
+    fetch('<%=luci.dispatcher.build_url("admin/status/router_assistant/get_dns_encryption_status")%>')
+        .then(function(res) { return res.json(); })
+        .then(function(res) {
+            console.log('[DNS加密] 状态结果:', res);
+            if (res.code === 0 && res.data) {
+                updateDnsEncryptionUI(res.data);
+            } else {
+                console.error('[DNS加密] 获取状态失败:', res.message);
+                setDnsEncryptionStatusUI('error', '获取状态失败');
+            }
+        })
+        .catch(function(err) {
+            console.error('[DNS加密] 请求失败:', err);
+            setDnsEncryptionStatusUI('error', '请求失败');
+        });
+}
+
+function loadDnsServerPresets() {
+    fetch('<%=luci.dispatcher.build_url("admin/status/router_assistant/get_dns_server_presets")%>')
+        .then(function(res) { return res.json(); })
+        .then(function(res) {
+            if (res.code === 0 && res.data) {
+                dnsPresetsData = res.data;
+                renderDnsServerList('domestic', res.data.domestic);
+                renderDnsServerList('international', res.data.international);
+            }
+        })
+        .catch(function(err) {
+            console.error('[DNS加密] 加载预设失败:', err);
+        });
+}
+
+function renderDnsServerList(category, servers) {
+    var container = document.getElementById('dns-server-' + category + '-list');
+    if (!container || !servers) return;
+    var html = '';
+    servers.forEach(function(server) {
+        var dnssecBadge = server.dnssec ? '<span class="dnssec-badge">DNSSEC</span>' : '';
+        html += '<div class="dns-server-item" onclick="selectDnsServer(\'' + category + '\', \'' + server.name + '\', \'' + server.type + '\')" data-name="' + server.name + '" data-type="' + server.type + '">' +
+            '<div class="name">' + server.name + '</div>' +
+            '<div class="type">' + (server.type === 'dot' ? 'DoT' : 'DoH') + '</div>' +
+            '<div class="desc">' + server.description + '</div>' +
+            dnssecBadge +
+            '</div>';
+    });
+    container.innerHTML = html;
+}
+
+function updateDnsEncryptionUI(data) {
+    var statusTag = document.getElementById('dns-encryption-status-tag');
+    var indicator = document.getElementById('dns-encryption-indicator');
+    var statusText = document.getElementById('dns-encryption-status-text');
+    var typeText = document.getElementById('dns-encryption-type-text');
+    var serverText = document.getElementById('dns-encryption-server-text');
+    var enabledCheckbox = document.getElementById('dns-encryption-enabled');
+    var optionsDiv = document.getElementById('dns-encryption-options');
+    
+    if (data.status === 'active') {
+        setDnsEncryptionStatusUI('active', '已启用');
+        if (enabledCheckbox) enabledCheckbox.checked = true;
+        if (optionsDiv) optionsDiv.style.display = 'block';
+        if (data.type === 'dot') {
+            typeText.textContent = 'DoT (DNS over TLS)';
+        } else if (data.type === 'doh') {
+            typeText.textContent = 'DoH (DNS over HTTPS)';
+        }
+        serverText.textContent = data.server || '';
+        var typeSelect = document.getElementById('dns-encryption-type');
+        if (typeSelect) typeSelect.value = data.type;
+        showDnsServerSelectSection(data.type);
+        
+        // 显示DNSSEC状态
+        var dnssecStatusDiv = document.getElementById('dns-dnssec-status');
+        var dnssecStatusText = document.getElementById('dns-dnssec-status-text');
+        if (dnssecStatusDiv && dnssecStatusText && data.dnssec_status) {
+            dnssecStatusDiv.style.display = 'block';
+            var dnssecMsg = data.dnssec_status.message || 'DNSSEC状态未知';
+            if (data.dnssec_status.validated) {
+                dnssecStatusText.style.color = 'var(--accent-green)';
+                dnssecStatusText.textContent = '✓ ' + dnssecMsg;
+            } else {
+                dnssecStatusText.style.color = 'var(--text-secondary)';
+                dnssecStatusText.textContent = '⚠ ' + dnssecMsg;
+            }
+        }
+    } else if (data.status === 'error') {
+        setDnsEncryptionStatusUI('error', '配置错误');
+    } else {
+        setDnsEncryptionStatusUI('disabled', '未启用');
+        if (enabledCheckbox) enabledCheckbox.checked = false;
+        if (optionsDiv) optionsDiv.style.display = 'none';
+    }
+    updateServiceStatusUI(data.services);
+}
+
+function setDnsEncryptionStatusUI(status, text) {
+    var statusTag = document.getElementById('dns-encryption-status-tag');
+    var indicator = document.getElementById('dns-encryption-indicator');
+    var statusText = document.getElementById('dns-encryption-status-text');
+    if (statusTag) {
+        statusTag.textContent = text;
+        statusTag.className = '';
+        if (status === 'active') {
+            statusTag.style.background = 'rgba(0, 255, 136, 0.15)';
+            statusTag.style.color = 'var(--accent-green)';
+        } else if (status === 'error') {
+            statusTag.style.background = 'rgba(255, 82, 82, 0.15)';
+            statusTag.style.color = 'var(--accent-red)';
+        } else {
+            statusTag.style.background = 'rgba(128, 128, 128, 0.2)';
+            statusTag.style.color = 'var(--text-secondary)';
+        }
+    }
+    if (indicator) {
+        if (status === 'active') {
+            indicator.style.background = 'var(--accent-green)';
+        } else if (status === 'error') {
+            indicator.style.background = 'var(--accent-red)';
+        } else {
+            indicator.style.background = 'var(--text-secondary)';
+        }
+    }
+    if (statusText) {
+        statusText.textContent = text;
+    }
+}
+
+function updateServiceStatusUI(services) {
+    if (!services) return;
+    var serviceMap = {
+        'service-stubby-status': { data: services.stubby, name: 'stubby' },
+        'service-https-dns-proxy-status': { data: services.https_dns_proxy, name: 'https-dns-proxy' },
+        'service-libcares-status': { data: { installed: services.libcares }, name: 'libcares' },
+        'service-getdns-status': { data: { installed: services.getdns }, name: 'getdns' },
+        'service-libev-status': { data: { installed: services.libev }, name: 'libev' },
+        'service-certificates-status': { data: { installed: services.certificates }, name: 'TLS证书' }
+    };
+    for (var id in serviceMap) {
+        var el = document.getElementById(id);
+        var info = serviceMap[id];
+        if (el && info.data) {
+            el.className = 'service-status-badge';
+            if (info.data.installed) {
+                if (info.data.running) {
+                    el.className += ' running';
+                    el.textContent = info.name + ': 运行中';
+                } else {
+                    el.className += ' installed';
+                    el.textContent = info.name + ': 已安装';
+                }
+            } else {
+                el.className += ' not-installed';
+                el.textContent = info.name + ': 未安装';
+            }
+        }
+    }
+}
+
+function toggleDnsEncryptionConfig() {
+    var checkbox = document.getElementById('dns-encryption-enabled');
+    var optionsDiv = document.getElementById('dns-encryption-options');
+    if (checkbox && optionsDiv) {
+        optionsDiv.style.display = checkbox.checked ? 'block' : 'none';
+    }
+}
+
+function onDnsEncryptionTypeChange() {
+    var typeSelect = document.getElementById('dns-encryption-type');
+    var type = typeSelect ? typeSelect.value : 'none';
+    showDnsServerSelectSection(type);
+}
+
+function showDnsServerSelectSection(type) {
+    var section = document.getElementById('dns-server-select-section');
+    var dnssecSection = document.getElementById('dns-dnssec-section');
+    if (type && type !== 'none') {
+        if (section) section.style.display = 'block';
+        if (dnssecSection) dnssecSection.style.display = 'block';
+    } else {
+        if (section) section.style.display = 'none';
+        if (dnssecSection) dnssecSection.style.display = 'none';
+    }
+}
+
+function switchDnsServerTab(tab) {
+    var tabs = ['domestic', 'international', 'custom'];
+    tabs.forEach(function(t) {
+        var tabBtn = document.getElementById('dns-tab-' + t);
+        var content = document.getElementById('dns-server-' + t);
+        if (tabBtn && content) {
+            if (t === tab) {
+                tabBtn.classList.add('active');
+                content.style.display = 'block';
+            } else {
+                tabBtn.classList.remove('active');
+                content.style.display = 'none';
+            }
+        }
+    });
+}
+
+function selectDnsServer(category, name, type) {
+    selectedDnsServer = { category: category, name: name, type: type };
+    var container = document.getElementById('dns-server-' + category + '-list');
+    if (container) {
+        container.querySelectorAll('.dns-server-item').forEach(function(item) {
+            item.classList.remove('selected');
+            if (item.dataset.name === name) {
+                item.classList.add('selected');
+            }
+        });
+    }
+    var typeSelect = document.getElementById('dns-encryption-type');
+    if (typeSelect) typeSelect.value = type;
+    var servers = dnsPresetsData[category] || [];
+    for (var i = 0; i < servers.length; i++) {
+        if (servers[i].name === name && servers[i].dnssec) {
+            var dnssecCheckbox = document.getElementById('dns-dnssec-enabled');
+            if (dnssecCheckbox) dnssecCheckbox.checked = true;
+            break;
+        }
+    }
+    console.log('[DNS加密] 已选择服务器:', name, '类型:', type);
+}
+
+function refreshDnsEncryptionStatus() {
+    loadDnsEncryptionStatus();
+    showToast('DNS加密状态已刷新', 'success');
+}
+
+function testDnsEncryptionConnection() {
+    var typeSelect = document.getElementById('dns-encryption-type');
+    var type = typeSelect ? typeSelect.value : 'doh';
+    if (!type || type === 'none') {
+        showToast('请先选择加密类型', 'error');
+        return;
+    }
+    var server = selectedDnsServer ? selectedDnsServer.name : '';
+    var customUrl = document.getElementById('dns-custom-url');
+    var customHost = document.getElementById('dns-custom-host');
+    var formData = new FormData();
+    formData.append('type', type);
+    formData.append('server', server);
+    formData.append('custom_url', customUrl ? customUrl.value : '');
+    formData.append('custom_host', customHost ? customHost.value : '');
+    showToast('正在测试DNS加密连接...', 'info');
+    fetch('<%=luci.dispatcher.build_url("admin/status/router_assistant/test_dns_encryption")%>', {
+        method: 'POST',
+        body: formData
+    })
+    .then(function(res) { return res.json(); })
+    .then(function(res) {
+        console.log('[DNS加密] 测试结果:', res);
+        if (res.code === 0 && res.data && res.data.result) {
+            var result = res.data.result;
+            if (result.success) {
+                showToast(result.message + ' (延迟: ' + result.latency + 'ms)', 'success');
+            } else {
+                showToast(result.message, 'error');
+            }
+        } else {
+            showToast('测试失败: ' + (res.message || '未知错误'), 'error');
+        }
+    })
+    .catch(function(err) {
+        console.error('[DNS加密] 测试请求失败:', err);
+        showToast('测试请求失败', 'error');
+    });
+}
+
+function saveDnsEncryptionConfig() {
+    var enabledCheckbox = document.getElementById('dns-encryption-enabled');
+    var typeSelect = document.getElementById('dns-encryption-type');
+    var dnssecCheckbox = document.getElementById('dns-dnssec-enabled');
+    var customUrl = document.getElementById('dns-custom-url');
+    var customHost = document.getElementById('dns-custom-host');
+    var enabled = enabledCheckbox ? enabledCheckbox.checked : false;
+    var type = typeSelect ? typeSelect.value : 'none';
+    var dnssec = dnssecCheckbox ? dnssecCheckbox.checked : false;
+    var server = selectedDnsServer ? selectedDnsServer.name : '';
+    if (enabled && (!type || type === 'none')) {
+        showToast('请选择加密类型', 'error');
+        return;
+    }
+    if (enabled && !server && type !== 'none') {
+        var activeTab = document.querySelector('.dns-server-tab.active');
+        if (activeTab && activeTab.id === 'dns-tab-custom') {
+            server = 'custom';
+        } else {
+            showToast('请选择DNS服务器', 'error');
+            return;
+        }
+    }
+    var formData = new FormData();
+    formData.append('enabled', enabled ? '1' : '0');
+    formData.append('type', type);
+    formData.append('server', server);
+    formData.append('custom_url', customUrl ? customUrl.value : '');
+    formData.append('custom_host', customHost ? customHost.value : '');
+    formData.append('dnssec', dnssec ? '1' : '0');
+    showToast('正在保存DNS加密配置...', 'info');
+    fetch('<%=luci.dispatcher.build_url("admin/status/router_assistant/save_dns_encryption_config")%>', {
+        method: 'POST',
+        body: formData
+    })
+    .then(function(res) { return res.json(); })
+    .then(function(res) {
+        console.log('[DNS加密] 保存结果:', res);
+        if (res.code === 0) {
+            showToast(res.data.message || 'DNS加密配置已保存', 'success');
+            loadDnsEncryptionStatus();
+        } else {
+            showToast('保存失败: ' + (res.message || '未知错误'), 'error');
+        }
+    })
+    .catch(function(err) {
+        console.error('[DNS加密] 保存请求失败:', err);
+        showToast('保存请求失败', 'error');
+    });
+}
+
+function resetDnsEncryptionConfig() {
+    var enabledCheckbox = document.getElementById('dns-encryption-enabled');
+    var typeSelect = document.getElementById('dns-encryption-type');
+    var dnssecCheckbox = document.getElementById('dns-dnssec-enabled');
+    var customUrl = document.getElementById('dns-custom-url');
+    var customHost = document.getElementById('dns-custom-host');
+    if (enabledCheckbox) enabledCheckbox.checked = false;
+    if (typeSelect) typeSelect.value = 'none';
+    if (dnssecCheckbox) dnssecCheckbox.checked = false;
+    if (customUrl) customUrl.value = '';
+    if (customHost) customHost.value = '';
+    selectedDnsServer = null;
+    document.querySelectorAll('.dns-server-item').forEach(function(item) {
+        item.classList.remove('selected');
+    });
+    toggleDnsEncryptionConfig();
+    showDnsServerSelectSection('none');
+}
+
+/**
+ * 显示内置包管理弹窗
+ */
+function showBuiltinPackageModal() {
+    var modal = document.getElementById('builtin-package-modal');
+    if (modal) {
+        modal.style.display = 'flex';
+        loadBuiltinPackages();
+    }
+}
+
+/**
+ * 关闭内置包管理弹窗
+ */
+function closeBuiltinPackageModal() {
+    var modal = document.getElementById('builtin-package-modal');
+    if (modal) {
+        modal.style.display = 'none';
+    }
+}
+
+/**
+ * 加载内置包列表（弹窗版）
+ */
+function loadBuiltinPackages() {
+    console.log('[内置包] 加载列表...');
+    var loadingEl = document.getElementById('modal-packages-loading');
+    var emptyEl = document.getElementById('modal-packages-empty');
+    var listEl = document.getElementById('modal-packages-list');
+    var dnsListEl = document.getElementById('modal-packages-dns-list');
+    var libListEl = document.getElementById('modal-packages-library-list');
+    
+    if (loadingEl) loadingEl.style.display = 'block';
+    if (emptyEl) emptyEl.style.display = 'none';
+    if (listEl) listEl.style.display = 'none';
+    
+    fetch('<%=luci.dispatcher.build_url("admin/status/router_assistant/get_builtin_packages")%>')
+        .then(function(res) { return res.json(); })
+        .then(function(res) {
+            console.log('[内置包] 列表数据:', res);
+            if (loadingEl) loadingEl.style.display = 'none';
+            
+            if (res.code !== 0 || !res.data || !res.data.packages || res.data.packages.length === 0) {
+                if (emptyEl) emptyEl.style.display = 'block';
+                return;
+            }
+            
+            var packages = res.data.packages;
+            var installedCount = 0;
+            var dnsHtml = '';
+            var libHtml = '';
+            
+            packages.forEach(function(pkg) {
+                if (pkg.installed) installedCount++;
+                
+                var statusClass = pkg.installed ? 'installed' : 'not-installed';
+                var statusText = pkg.installed ? '已安装' : '未安装';
+                var btnDisabled = pkg.installed ? 'disabled' : '';
+                var btnText = pkg.installed ? '已安装' : '安装';
+                var btnClass = pkg.installed ? 'rm-btn-secondary' : 'rm-btn-primary';
+                
+                var pkgHtml = '<div style="display:flex;align-items:center;justify-content:space-between;padding:10px;background:var(--bg-secondary);border-radius:6px;margin-bottom:6px;">' +
+                    '<div style="flex:1;">' +
+                        '<div style="font-weight:500;color:var(--text-primary);margin-bottom:2px;font-size:13px;">' + escapeHtml(pkg.display_name) + '</div>' +
+                        '<div style="font-size:11px;color:var(--text-secondary);">' + escapeHtml(pkg.description) + '</div>' +
+                        '<div style="margin-top:4px;">' +
+                            '<span class="service-status-badge ' + statusClass + '">' + statusText + '</span>' +
+                            '<span style="font-size:10px;color:var(--text-secondary);margin-left:6px;">' + escapeHtml(pkg.ipk_file) + '</span>' +
+                        '</div>' +
+                    '</div>' +
+                    '<div style="margin-left:10px;">' +
+                        '<button class="rm-btn ' + btnClass + '" onclick="installBuiltinPackage(\'' + pkg.name + '\')" ' + btnDisabled + ' id="modal-pkg-btn-' + pkg.name + '" style="padding:4px 12px;font-size:11px;">' + btnText + '</button>' +
+                    '</div>' +
+                '</div>';
+                
+                if (pkg.category === 'dns') {
+                    dnsHtml += pkgHtml;
+                } else {
+                    libHtml += pkgHtml;
+                }
+            });
+            
+            if (dnsListEl) dnsListEl.innerHTML = dnsHtml || '<div style="color:var(--text-secondary);font-size:11px;">暂无DNS组件</div>';
+            if (libListEl) libListEl.innerHTML = libHtml || '<div style="color:var(--text-secondary);font-size:11px;">暂无依赖库</div>';
+            
+            // 更新弹窗统计
+            var totalEl = document.getElementById('modal-pkg-total');
+            var installedEl = document.getElementById('modal-pkg-installed');
+            var pendingEl = document.getElementById('modal-pkg-pending');
+            if (totalEl) totalEl.textContent = packages.length;
+            if (installedEl) installedEl.textContent = installedCount;
+            if (pendingEl) pendingEl.textContent = packages.length - installedCount;
+            
+            if (listEl) listEl.style.display = 'block';
+        })
+        .catch(function(err) {
+            console.error('[内置包] 加载失败:', err);
+            if (loadingEl) loadingEl.style.display = 'none';
+            if (emptyEl) {
+                emptyEl.style.display = 'block';
+                emptyEl.querySelector('p').textContent = '加载失败，请刷新重试';
+            }
+        });
+}
+
+/**
+ * 安装指定内置包（弹窗版）
+ */
+function installBuiltinPackage(pkgName) {
+    var btn = document.getElementById('modal-pkg-btn-' + pkgName);
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = '安装中...';
+    }
+    
+    showToast('正在安装 ' + pkgName + '...', 'info');
+    console.log('[内置包] 开始安装:', pkgName);
+    
+    var formData = new FormData();
+    formData.append('package', pkgName);
+    if (typeof LUCI_TOKEN !== 'undefined' && LUCI_TOKEN) {
+        formData.append('token', LUCI_TOKEN);
+    }
+    
+    fetch('<%=luci.dispatcher.build_url("admin/status/router_assistant/install_builtin_package")%>', {
+        method: 'POST',
+        body: formData
+    })
+    .then(function(res) { return res.json(); })
+    .then(function(res) {
+        console.log('[内置包] 安装结果:', res);
+        if (res.code === 0) {
+            showToast(res.data.message || '安装成功', 'success');
+            loadBuiltinPackages();
+            // 刷新DNS加密状态
+            loadDnsEncryptionStatus();
+        } else {
+            showToast('安装失败: ' + (res.message || '未知错误'), 'error');
+            if (btn) {
+                btn.disabled = false;
+                btn.textContent = '安装';
+            }
+        }
+    })
+    .catch(function(err) {
+        console.error('[内置包] 安装请求失败:', err);
+        showToast('安装请求失败', 'error');
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = '安装';
+        }
+    });
+}
+
+/**
+ * 刷新内置包列表
+ */
+function refreshBuiltinPackages() {
+    loadBuiltinPackages();
+}
 </script>
 
 <%+footer%>

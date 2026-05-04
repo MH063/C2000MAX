@@ -61,11 +61,22 @@ cat > "$PKG_DIR/CONTROL/postinst" << 'ENDPOSTINST'
 #!/bin/sh
 
 # ============================================================
-# 路由管家 - 安装后脚本 (版本: __PKG_VERSION__)
-# 功能：清理旧版数据 + 初始化新版本
+# 路由管家 - 安装后脚本
+# 功能：初始化服务 + 安装依赖包
 # ============================================================
 
 echo "路由管家: 正在执行安装后脚本..."
+
+# 修复旧版本prerm脚本的local关键字问题（如果存在）
+OLD_PRERM="/usr/lib/opkg/info/路由管家.prerm"
+if [ -f "$OLD_PRERM" ]; then
+    if grep -q "local server_idx\|local srv=" "$OLD_PRERM" 2>/dev/null; then
+        echo "路由管家: 修复旧版prerm脚本..."
+        sed -i 's/local server_idx/server_idx/g' "$OLD_PRERM"
+        sed -i 's/local srv=/srv=/g' "$OLD_PRERM"
+        echo "路由管家: prerm脚本已修复"
+    fi
+fi
 
 # --- 第一步：停止旧版服务 ---
 /etc/init.d/traffic-stats stop 2>/dev/null
@@ -299,6 +310,65 @@ HOTPLUG
 chmod +x /etc/hotplug.d/firewall/99-traffic-stats
 echo "路由管家: 防火墙重启钩子已创建"
 
+# --- 手动安装DNS加密依赖包（不使用opkg）---
+echo "路由管家: 检查DNS加密依赖包..."
+PKG_DIR="/usr/share/router-assistant/packages"
+if [ -d "$PKG_DIR" ]; then
+    for ipk in "$PKG_DIR"/*.ipk; do
+        [ -f "$ipk" ] || continue
+        pkg_name=$(basename "$ipk" .ipk)
+        pkg_base=$(echo "$pkg_name" | sed 's/_.*//')
+        
+        # 检查关键文件是否存在（而非查询opkg数据库）
+        case $pkg_base in
+            stubby) check_file="/usr/sbin/stubby" ;;
+            https-dns-proxy) check_file="/usr/sbin/https-dns-proxy" ;;
+            libcares) check_file="/usr/lib/libcares.so.2" ;;
+            getdns) check_file="/usr/lib/libgetdns.so.10" ;;
+            libev) check_file="/usr/lib/libev.so.4" ;;
+            *) check_file="" ;;
+        esac
+        
+        if [ -n "$check_file" ] && [ ! -f "$check_file" ]; then
+            echo "路由管家: 手动安装依赖 $pkg_base ..."
+            
+            # 创建临时目录
+            tmp_dir="/tmp/ipk_install_$pkg_base"
+            rm -rf "$tmp_dir" 2>/dev/null
+            mkdir -p "$tmp_dir"
+            
+            # 解压IPK文件
+            if cd "$tmp_dir" && tar xzf "$ipk" 2>/dev/null; then
+                # 提取程序数据到根目录
+                [ -f data.tar.gz ] && tar xzf data.tar.gz -C / 2>/dev/null
+                
+                # 提取控制信息
+                mkdir -p /usr/lib/opkg/info 2>/dev/null
+                [ -f control.tar.gz ] && tar xzf control.tar.gz -C /usr/lib/opkg/info/ 2>/dev/null
+                
+                # 执行安装后脚本
+                [ -f control/postinst ] && sh control/postinst install 2>/dev/null
+                
+                echo "路由管家: $pkg_base 安装完成"
+            else
+                echo "路由管家: 警告 - $pkg_base 解压失败"
+            fi
+            
+            # 清理临时目录
+            rm -rf "$tmp_dir" 2>/dev/null
+        else
+            echo "路由管家: $pkg_base 已安装，跳过"
+        fi
+    done
+else
+    echo "路由管家: 未找到依赖包目录"
+fi
+
+# 设置timeout命令权限
+if [ -f "/usr/libexec/router_assistant/timeout_aarch64" ]; then
+    chmod 755 /usr/libexec/router_assistant/timeout_aarch64
+fi
+
 echo "路由管家: 安装后脚本执行完成"
 
 exit 0
@@ -388,6 +458,95 @@ fi
 # 清理 /tmp 下的临时数据
 rm -rf /tmp/router_assistant 2>/dev/null
 
+# 恢复DNS配置（防止卸载后DNS无法解析）
+echo "路由管家: 恢复DNS配置..."
+if [ -f "/etc/config/dhcp" ]; then
+    # 删除DNS加密相关的dnsmasq配置
+    uci -q delete dhcp.@dnsmasq[0].noresolv
+    uci -q delete dhcp.@dnsmasq[0].localuse
+    
+    # 删除所有server配置（包括127.0.0.1#5353和错误的配置）
+    # 先获取所有server值，然后逐个删除
+    server_idx=0
+    while uci -q get dhcp.@dnsmasq[0].server >/dev/null 2>&1; do
+        srv=$(uci -q get dhcp.@dnsmasq[0].server)
+        if [ -n "$srv" ]; then
+            echo "路由管家: 删除server配置: $srv"
+            uci -q delete dhcp.@dnsmasq[0].server
+        else
+            break
+        fi
+        server_idx=$((server_idx + 1))
+        # 防止无限循环
+        if [ $server_idx -gt 10 ]; then
+            break
+        fi
+    done
+    
+    # 确保resolvfile设置正确（使用默认的DNS）
+    uci -q set dhcp.@dnsmasq[0].resolvfile='/tmp/resolv.conf.d/resolv.conf.auto'
+    
+    uci commit dhcp
+    /etc/init.d/dnsmasq restart 2>/dev/null
+    echo "路由管家: DNS配置已恢复，使用默认DNS"
+fi
+
+# 停止DNS加密服务
+/etc/init.d/stubby stop 2>/dev/null
+/etc/init.d/stubby disable 2>/dev/null
+/etc/init.d/https-dns-proxy stop 2>/dev/null
+/etc/init.d/https-dns-proxy disable 2>/dev/null
+echo "路由管家: DNS加密服务已停止"
+
+# 删除DNS加密依赖包文件（手动安装的非opkg包，需手动清理）
+echo "路由管家: 正在删除DNS加密依赖包..."
+
+# 删除 stubby 相关文件（可能安装在/usr/bin或/usr/sbin）
+rm -f /usr/sbin/stubby 2>/dev/null
+rm -f /usr/bin/stubby 2>/dev/null
+rm -f /etc/init.d/stubby 2>/dev/null
+rm -f /etc/config/stubby 2>/dev/null
+rm -f /etc/stubby/stubby.yml 2>/dev/null
+rm -rf /etc/stubby 2>/dev/null
+rm -f /usr/lib/opkg/info/stubby.* 2>/dev/null
+# 删除stubby可能创建的PID文件和日志
+rm -f /var/run/stubby.pid 2>/dev/null
+rm -f /var/log/stubby.log 2>/dev/null
+echo "路由管家: stubby 已删除"
+
+# 删除 https-dns-proxy 相关文件（可能安装在/usr/bin或/usr/sbin）
+rm -f /usr/sbin/https-dns-proxy 2>/dev/null
+rm -f /usr/bin/https-dns-proxy 2>/dev/null
+rm -f /etc/init.d/https-dns-proxy 2>/dev/null
+rm -f /etc/config/https-dns-proxy 2>/dev/null
+rm -f /usr/lib/opkg/info/https-dns-proxy.* 2>/dev/null
+# 删除https-dns-proxy可能创建的PID文件和日志
+rm -f /var/run/https-dns-proxy.pid 2>/dev/null
+rm -f /var/log/https-dns-proxy.log 2>/dev/null
+echo "路由管家: https-dns-proxy 已删除"
+
+# 删除 getdns 库文件
+rm -f /usr/lib/libgetdns.so* 2>/dev/null
+rm -f /usr/lib/opkg/info/getdns.* 2>/dev/null
+echo "路由管家: getdns 已删除"
+
+# 删除 libcares 库文件
+rm -f /usr/lib/libcares.so* 2>/dev/null
+rm -f /usr/lib/opkg/info/libcares.* 2>/dev/null
+echo "路由管家: libcares 已删除"
+
+# 删除 libev 库文件
+rm -f /usr/lib/libev.so* 2>/dev/null
+rm -f /usr/lib/opkg/info/libev.* 2>/dev/null
+echo "路由管家: libev 已删除"
+
+# 删除DNS加密依赖包目录
+rm -rf /usr/share/router-assistant/packages 2>/dev/null
+
+# 清理可能残留的DNS加密相关配置
+rm -f /tmp/resolv.conf.d/resolv.conf.auto 2>/dev/null
+# 重启dnsmasq使DNS配置生效（在恢复DNS配置后已经重启，这里确保服务状态正确）
+
 # 清理防火墙重启钩子
 rm -f /etc/hotplug.d/firewall/99-traffic-stats 2>/dev/null
 rm -f /etc/hotplug.d/firewall/98-rate-limit-restore 2>/dev/null
@@ -475,6 +634,23 @@ else
     echo "Warning: oui_database.json not found"
 fi
 
+# 复制DNS加密依赖包
+mkdir -p "$PKG_DIR/data/usr/share/router-assistant/packages"
+if [ -d "$SCRIPT_DIR/files/packages" ]; then
+    cp "$SCRIPT_DIR/files/packages/"*.ipk "$PKG_DIR/data/usr/share/router-assistant/packages/" 2>/dev/null
+    IPK_COUNT=$(ls "$PKG_DIR/data/usr/share/router-assistant/packages/"*.ipk 2>/dev/null | wc -l)
+    echo "DNS加密依赖包: $IPK_COUNT 个IPK文件已包含"
+    
+    # 复制timeout_aarch64
+    if [ -f "$SCRIPT_DIR/files/packages/timeout_aarch64" ]; then
+        cp "$SCRIPT_DIR/files/packages/timeout_aarch64" "$PKG_DIR/data/usr/libexec/router_assistant/timeout_aarch64"
+        chmod 755 "$PKG_DIR/data/usr/libexec/router_assistant/timeout_aarch64"
+        echo "timeout_aarch64 included"
+    fi
+else
+    echo "Warning: files/packages directory not found"
+fi
+
 echo "Data files copied"
 find "$PKG_DIR/data" -type f | wc -l
 echo "files in data directory"
@@ -490,24 +666,30 @@ echo "=== Step 4: Creating IPK (gzip compressed tar format) ==="
 
 cd "$PKG_DIR"
 
-echo "2.0" > debian-binary
+printf '2.0\n' > debian-binary
 
 IPK_FILE="$OUTPUT_DIR/${PKG_DISPLAY_VERSION}.ipk"
 rm -f "$IPK_FILE"
 
+# 使用gzip格式（与温度监控.ipk相同）
 tar -cf "$IPK_FILE" debian-binary control.tar.gz data.tar.gz
 gzip "$IPK_FILE"
 mv "$IPK_FILE.gz" "$IPK_FILE"
 
-echo "IPK created"
+echo "IPK created: $IPK_FILE"
 ls -lh "$IPK_FILE"
 
 echo "=== Verifying IPK format ==="
 file "$IPK_FILE"
+echo "=== debian-binary content ==="
+cat -A debian-binary | head -1
 
 cd "$SCRIPT_DIR"
 rm -rf "$PKG_DIR"
 
 echo ""
 echo "=== Done ==="
-echo "Output: $IPK_FILE"
+echo "Output (中文): $IPK_FILE"
+echo "Output (English): $IPK_FILE_EN"
+echo ""
+echo "提示: 如果中文文件名安装失败，请使用英文版本: $IPK_FILE_EN"

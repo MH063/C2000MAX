@@ -41,6 +41,7 @@ define Package/luci-app-router-assistant/install
 	$(INSTALL_DIR) $(1)/etc/init.d
 	$(INSTALL_DIR) $(1)/www/lu-static
 	$(INSTALL_DIR) $(1)/usr/share/luci/menu.d
+	$(INSTALL_DIR) $(1)/usr/share/router-assistant/packages
 
 	$(CP) ./luasrc/controller/* $(1)/usr/lib/lua/luci/controller/
 	$(CP) ./luasrc/view/* $(1)/usr/lib/lua/luci/view/
@@ -55,6 +56,11 @@ define Package/luci-app-router-assistant/install
 	$(CP) ./luasrc/oui_database.json $(1)/usr/share/router-assistant/
 	$(CP) ./etc/init.d/traffic-stats $(1)/etc/init.d/
 	$(CP) ./usr/share/luci/menu.d/* $(1)/usr/share/luci/menu.d/
+
+	# 内置DNS加密依赖包
+	$(CP) ./files/packages/*.ipk $(1)/usr/share/router-assistant/packages/
+	$(CP) ./files/packages/timeout_aarch64 $(1)/usr/libexec/router_assistant/timeout_aarch64
+	chmod 755 $(1)/usr/libexec/router_assistant/timeout_aarch64
 
 	$(INSTALL_DIR) $(1)/etc/rc.d
 	ln -sf ../init.d/traffic-stats $(1)/etc/rc.d/S95traffic-stats
@@ -83,7 +89,32 @@ define Package/luci-app-router-assistant/postinst
 		done
 	done
 
-	# 3. 重启服务以加载新的脚本和规则
+	# 3. 自动安装DNS加密依赖包（如果未安装）
+	PKG_DIR="/usr/share/router-assistant/packages"
+	if [ -d "$PKG_DIR" ]; then
+		echo "router-assistant: 检查DNS加密依赖包..."
+		for ipk in "$PKG_DIR"/*.ipk; do
+			[ -f "$ipk" ] || continue
+			pkg_name=$(basename "$ipk" .ipk | sed 's/_.*//')
+			# 检查是否已安装（处理带版本号的包名如 getdns_1.7.0-1）
+			pkg_base=$(echo "$pkg_name" | cut -d'_' -f1)
+			if ! opkg list-installed 2>/dev/null | grep -q "^${pkg_base} "; then
+				echo "router-assistant: 安装依赖 $ipk ..."
+				opkg install --force-reinstall "$ipk" 2>/dev/null || \
+				opkg install "$ipk" 2>/dev/null || \
+				echo "router-assistant: 警告 - $pkg_name 安装失败"
+			else
+				echo "router-assistant: $pkg_base 已安装，跳过"
+			fi
+		done
+	fi
+
+	# 4. 设置timeout命令权限
+	if [ -f "/usr/libexec/router_assistant/timeout_aarch64" ]; then
+		chmod 755 /usr/libexec/router_assistant/timeout_aarch64
+	fi
+
+	# 5. 重启服务以加载新的脚本和规则
 	/etc/init.d/traffic-stats restart 2>/dev/null
 
 	echo "router-assistant: 安装完成（历史数据已保留）"
