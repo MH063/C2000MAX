@@ -33,6 +33,18 @@ echo "✓ 流量统计服务已停止"
 /etc/init.d/stubby disable 2>/dev/null || true
 /etc/init.d/https-dns-proxy stop 2>/dev/null || true
 /etc/init.d/https-dns-proxy disable 2>/dev/null || true
+
+# 强制杀死残留进程（init.d stop可能无法完全停止）
+sleep 1
+killall stubby 2>/dev/null || true
+killall https-dns-proxy 2>/dev/null || true
+sleep 1
+if pidof stubby >/dev/null 2>&1; then
+    kill -9 $(pidof stubby) 2>/dev/null || true
+fi
+if pidof https-dns-proxy >/dev/null 2>&1; then
+    kill -9 $(pidof https-dns-proxy) 2>/dev/null || true
+fi
 echo "✓ DNS加密服务已停止"
 
 # 删除DNS加密依赖包文件（手动安装的非opkg包，需手动清理）
@@ -207,10 +219,14 @@ fi
 # 清理防火墙钩子
 rm -f /etc/hotplug.d/firewall/99-traffic-stats 2>/dev/null
 rm -f /etc/hotplug.d/firewall/98-rate-limit-restore 2>/dev/null
+# 清理 firewall.user 中的钩子（清理所有路由管家相关的行及其前后的空行）
+sed -i '/# 路由管家/d' /etc/firewall.user 2>/dev/null || true
 sed -i '/traffic-stats restart/d' /etc/firewall.user 2>/dev/null || true
 sed -i '/路由管家.*防火墙启动后自动重启流量统计/d' /etc/firewall.user 2>/dev/null || true
 sed -i '/flow_offloading/d' /etc/firewall.user 2>/dev/null || true
 sed -i '/路由管家.*关闭 Flow Offloading/d' /etc/firewall.user 2>/dev/null || true
+# 清理可能残留的空行（连续多个空行合并为一个）
+sed -i '/^$/N;/^\n$/D' /etc/firewall.user 2>/dev/null || true
 echo "✓ 防火墙钩子已清理"
 
 # 最终清理临时安装目录

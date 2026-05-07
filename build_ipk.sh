@@ -91,6 +91,18 @@ echo "路由管家: 正在清理旧版DNS加密依赖包..."
 /etc/init.d/https-dns-proxy stop 2>/dev/null
 /etc/init.d/https-dns-proxy disable 2>/dev/null
 
+# 强制杀死残留进程（init.d stop可能无法完全停止）
+sleep 1
+killall stubby 2>/dev/null
+killall https-dns-proxy 2>/dev/null
+sleep 1
+if pidof stubby >/dev/null 2>&1; then
+    kill -9 $(pidof stubby) 2>/dev/null
+fi
+if pidof https-dns-proxy >/dev/null 2>&1; then
+    kill -9 $(pidof https-dns-proxy) 2>/dev/null
+fi
+
 # 删除 stubby 相关文件
 rm -f /usr/sbin/stubby 2>/dev/null
 rm -f /usr/bin/stubby 2>/dev/null
@@ -330,8 +342,8 @@ echo "路由管家: 正在创建防火墙重启钩子..."
 # 方法1: 使用 firewall.user（最可靠）
 if ! grep -q "traffic-stats restart" /etc/firewall.user 2>/dev/null; then
     echo "" >> /etc/firewall.user
-    echo "# 路由管家: 防火墙启动后自动重启流量统计" >> /etc/firewall.user
-    echo "/etc/init.d/traffic-stats restart &" >> /etc/firewall.user
+    echo "# 路由管家: 防火墙启动后延迟重启流量统计（避免竞态条件）" >> /etc/firewall.user
+    echo "(sleep 5 && /etc/init.d/traffic-stats restart) >/dev/null 2>&1 &" >> /etc/firewall.user
     echo "路由管家: firewall.user 钩子已添加"
 fi
 
@@ -339,11 +351,12 @@ fi
 mkdir -p /etc/hotplug.d/firewall
 cat > /etc/hotplug.d/firewall/99-traffic-stats << 'HOTPLUG'
 #!/bin/sh
-# 防火墙重启后自动重启流量统计服务
+# 防火墙重启后延迟重启流量统计服务（避免与防火墙初始化冲突）
 case "$ACTION" in
     restart|start|ifup)
-        logger -t traffic-stats "Firewall $ACTION detected, restarting traffic-stats..."
-        /etc/init.d/traffic-stats restart &
+        logger -t traffic-stats "Firewall $ACTION detected, scheduling traffic-stats restart in 5s..."
+        # 延迟5秒执行，确保防火墙规则完全加载
+        (sleep 5 && /etc/init.d/traffic-stats restart) >/dev/null 2>&1 &
         ;;
 esac
 HOTPLUG
@@ -405,8 +418,52 @@ else
 fi
 
 # 设置timeout命令权限
-if [ -f "/usr/libexec/router_assistant/timeout_aarch64" ]; then
-    chmod 755 /usr/libexec/router_assistant/timeout_aarch64
+if [ -f "/usr/libexec/router_assistant/timeout" ]; then
+    chmod 755 /usr/libexec/router_assistant/timeout
+    echo "路由管家: timeout权限已设置"
+fi
+
+# 设置 OpenSSL 3.0.0 库文件权限并更新链接缓存
+if [ -f "/usr/lib/libssl.so.3" ]; then
+    chmod 755 /usr/lib/libssl.so.3
+    echo "路由管家: libssl.so.3 权限已设置"
+fi
+if [ -f "/usr/lib/libcrypto.so.3" ]; then
+    chmod 755 /usr/lib/libcrypto.so.3
+    echo "路由管家: libcrypto.so.3 权限已设置"
+fi
+
+# 更新动态链接库缓存
+if command -v ldconfig >/dev/null 2>&1; then
+    ldconfig
+    echo "路由管家: 动态链接库缓存已更新"
+fi
+
+# --- 第九步：初始化 DNSSEC 安全验证工具 ---
+echo "路由管家: 正在初始化 DNSSEC 安全验证工具..."
+
+DNSSEC_DIR="/usr/share/router-assistant"
+if [ -d "$DNSSEC_DIR" ]; then
+    # 设置 DNSSEC 脚本权限
+    if [ -f "$DNSSEC_DIR/check_dnssec.sh" ]; then
+        chmod 755 "$DNSSEC_DIR/check_dnssec.sh"
+        echo "路由管家: check_dnssec.sh 权限已设置 (DNSSEC状态检测)"
+    fi
+    
+    if [ -f "$DNSSEC_DIR/getdns_query_tool.sh" ]; then
+        chmod 755 "$DNSSEC_DIR/getdns_query_tool.sh"
+        echo "路由管家: getdns_query_tool.sh 权限已设置 (getdns专业验证)"
+    fi
+    
+    if [ -f "$DNSSEC_DIR/monitor_dnssec.sh" ]; then
+        chmod 755 "$DNSSEC_DIR/monitor_dnssec.sh"
+        echo "路由管家: monitor_dnssec.sh 权限已设置 (DNSSEC持续监控)"
+    fi
+    
+    echo "路由管家: ✅ DNSSEC安全验证工具已就绪"
+    echo "路由管家: 使用方法: sh $DNSSEC_DIR/check_dnssec.sh"
+else
+    echo "路由管家: ⚠️  DNSSEC工具目录不存在: $DNSSEC_DIR"
 fi
 
 echo "路由管家: 安装后脚本执行完成"
@@ -536,6 +593,19 @@ fi
 /etc/init.d/stubby disable 2>/dev/null
 /etc/init.d/https-dns-proxy stop 2>/dev/null
 /etc/init.d/https-dns-proxy disable 2>/dev/null
+
+# 强制杀死残留进程（init.d stop可能无法完全停止）
+sleep 1
+killall stubby 2>/dev/null
+killall https-dns-proxy 2>/dev/null
+sleep 1
+# 如果进程仍在运行，强制 kill -9
+if pidof stubby >/dev/null 2>&1; then
+    kill -9 $(pidof stubby) 2>/dev/null
+fi
+if pidof https-dns-proxy >/dev/null 2>&1; then
+    kill -9 $(pidof https-dns-proxy) 2>/dev/null
+fi
 echo "路由管家: DNS加密服务已停止"
 
 # 删除DNS加密依赖包文件（手动安装的非opkg包，需手动清理）
@@ -583,6 +653,30 @@ echo "路由管家: libev 已删除"
 # 删除DNS加密依赖包目录
 rm -rf /usr/share/router-assistant/packages 2>/dev/null
 
+# 停止 DNSSEC 监控进程（如果正在运行）
+if [ -f /tmp/dnssec_monitor.pid ]; then
+    MONITOR_PID=$(cat /tmp/dnssec_monitor.pid)
+    if kill -0 $MONITOR_PID 2>/dev/null; then
+        kill $MONITOR_PID 2>/dev/null
+        sleep 1
+        kill -9 $MONITOR_PID 2>/dev/null
+        echo "路由管家: DNSSEC监控进程已停止 (PID: $MONITOR_PID)"
+    fi
+    rm -f /tmp/dnssec_monitor.pid
+fi
+
+# 删除 DNSSEC 安全验证工具脚本
+rm -f /usr/share/router-assistant/check_dnssec.sh 2>/dev/null
+rm -f /usr/share/router-assistant/getdns_query_tool.sh 2>/dev/null
+rm -f /usr/share/router-assistant/monitor_dnssec.sh 2>/dev/null
+echo "路由管家: DNSSEC安全验证工具已删除"
+
+# 清理 DNSSEC 日志文件
+rm -f /tmp/dnssec_check.log 2>/dev/null
+rm -f /tmp/dnssec_monitor.log 2>/dev/null
+rm -f /tmp/dnssec_alerts.log 2>/dev/null
+echo "路由管家: DNSSEC日志文件已清理"
+
 # 清理可能残留的DNS加密相关配置
 rm -f /tmp/resolv.conf.d/resolv.conf.auto 2>/dev/null
 # 重启dnsmasq使DNS配置生效（在恢复DNS配置后已经重启，这里确保服务状态正确）
@@ -590,11 +684,14 @@ rm -f /tmp/resolv.conf.d/resolv.conf.auto 2>/dev/null
 # 清理防火墙重启钩子
 rm -f /etc/hotplug.d/firewall/99-traffic-stats 2>/dev/null
 rm -f /etc/hotplug.d/firewall/98-rate-limit-restore 2>/dev/null
-# 清理 firewall.user 中的钩子
+# 清理 firewall.user 中的钩子（清理所有路由管家相关的行及其前后的空行）
+sed -i '/# 路由管家/d' /etc/firewall.user 2>/dev/null
 sed -i '/traffic-stats restart/d' /etc/firewall.user 2>/dev/null
 sed -i '/路由管家.*防火墙启动后自动重启流量统计/d' /etc/firewall.user 2>/dev/null
 sed -i '/flow_offloading/d' /etc/firewall.user 2>/dev/null
 sed -i '/路由管家.*关闭 Flow Offloading/d' /etc/firewall.user 2>/dev/null
+# 清理可能残留的空行（连续多个空行合并为一个）
+sed -i '/^$/N;/^\n$/D' /etc/firewall.user 2>/dev/null
 echo "路由管家: 防火墙钩子已清理"
 
 echo "路由管家: 卸载前脚本执行完成"
@@ -633,14 +730,6 @@ else
     echo "Warning: collect_traffic.lua not found at $SCRIPT_DIR/scripts/collect_traffic.lua"
 fi
 
-if [ -f "$SCRIPT_DIR/scripts/timeout_aarch64" ]; then
-    cp "$SCRIPT_DIR/scripts/timeout_aarch64" "$PKG_DIR/data/usr/libexec/router_assistant/timeout"
-    chmod 755 "$PKG_DIR/data/usr/libexec/router_assistant/timeout"
-    echo "Timeout binary included"
-else
-    echo "Warning: timeout_aarch64 not found at $SCRIPT_DIR/scripts/timeout_aarch64"
-fi
-
 if [ -f "$SCRIPT_DIR/usr/share/icons/router_assistant.svg" ]; then
     mkdir -p "$PKG_DIR/data/usr/share/icons"
     cp "$SCRIPT_DIR/usr/share/icons/router_assistant.svg" "$PKG_DIR/data/usr/share/icons/"
@@ -674,6 +763,34 @@ else
     echo "Warning: oui_database.json not found"
 fi
 
+# 复制 DNSSEC 验证工具脚本（纵深防御功能）
+echo "=== 复制 DNSSEC 安全验证工具 ==="
+if [ -f "$SCRIPT_DIR/check_dnssec.sh" ]; then
+    cp "$SCRIPT_DIR/check_dnssec.sh" "$PKG_DIR/data/usr/share/router-assistant/"
+    chmod 755 "$PKG_DIR/data/usr/share/router-assistant/check_dnssec.sh"
+    echo "✅ check_dnssec.sh 已包含 (DNSSEC状态检测)"
+else
+    echo "⚠️  Warning: check_dnssec.sh not found"
+fi
+
+if [ -f "$SCRIPT_DIR/getdns_query_tool.sh" ]; then
+    cp "$SCRIPT_DIR/getdns_query_tool.sh" "$PKG_DIR/data/usr/share/router-assistant/"
+    chmod 755 "$PKG_DIR/data/usr/share/router-assistant/getdns_query_tool.sh"
+    echo "✅ getdns_query_tool.sh 已包含 (getdns专业验证)"
+else
+    echo "⚠️  Warning: getdns_query_tool.sh not found"
+fi
+
+if [ -f "$SCRIPT_DIR/monitor_dnssec.sh" ]; then
+    cp "$SCRIPT_DIR/monitor_dnssec.sh" "$PKG_DIR/data/usr/share/router-assistant/"
+    chmod 755 "$PKG_DIR/data/usr/share/router-assistant/monitor_dnssec.sh"
+    echo "✅ monitor_dnssec.sh 已包含 (DNSSEC持续监控)"
+else
+    echo "⚠️  Warning: monitor_dnssec.sh not found"
+fi
+
+echo "DNSSEC安全验证工具已集成完成"
+
 # 复制DNS加密依赖包
 mkdir -p "$PKG_DIR/data/usr/share/router-assistant/packages"
 if [ -d "$SCRIPT_DIR/files/packages" ]; then
@@ -681,11 +798,24 @@ if [ -d "$SCRIPT_DIR/files/packages" ]; then
     IPK_COUNT=$(ls "$PKG_DIR/data/usr/share/router-assistant/packages/"*.ipk 2>/dev/null | wc -l)
     echo "DNS加密依赖包: $IPK_COUNT 个IPK文件已包含"
     
-    # 复制timeout_aarch64
+    # 复制timeout工具（只保留一个文件，节省空间）
     if [ -f "$SCRIPT_DIR/files/packages/timeout_aarch64" ]; then
-        cp "$SCRIPT_DIR/files/packages/timeout_aarch64" "$PKG_DIR/data/usr/libexec/router_assistant/timeout_aarch64"
-        chmod 755 "$PKG_DIR/data/usr/libexec/router_assistant/timeout_aarch64"
-        echo "timeout_aarch64 included"
+        cp "$SCRIPT_DIR/files/packages/timeout_aarch64" "$PKG_DIR/data/usr/libexec/router_assistant/timeout"
+        chmod 755 "$PKG_DIR/data/usr/libexec/router_assistant/timeout"
+        echo "timeout工具已包含（49KB）"
+    fi
+    
+    # 复制 OpenSSL 3.0.0 库文件（DNS 加密依赖）
+    mkdir -p "$PKG_DIR/data/usr/lib"
+    if [ -f "$SCRIPT_DIR/files/packages/libssl.so.3" ]; then
+        cp "$SCRIPT_DIR/files/packages/libssl.so.3" "$PKG_DIR/data/usr/lib/"
+        chmod 755 "$PKG_DIR/data/usr/lib/libssl.so.3"
+        echo "libssl.so.3 已包含（749KB）"
+    fi
+    if [ -f "$SCRIPT_DIR/files/packages/libcrypto.so.3" ]; then
+        cp "$SCRIPT_DIR/files/packages/libcrypto.so.3" "$PKG_DIR/data/usr/lib/"
+        chmod 755 "$PKG_DIR/data/usr/lib/libcrypto.so.3"
+        echo "libcrypto.so.3 已包含（4.7MB）"
     fi
 else
     echo "Warning: files/packages directory not found"

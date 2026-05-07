@@ -365,6 +365,79 @@ stop() {
     echo "traffic-stats: 正在调用 clear_blocklist_rules..."
     clear_blocklist_rules
 
+    # 清理DNS加密依赖包（卸载时总是执行，不检测文件是否存在）
+    echo "traffic-stats: 正在清理DNS加密依赖包..."
+    
+    # 停止DNS加密服务
+    /etc/init.d/stubby stop 2>/dev/null
+    /etc/init.d/stubby disable 2>/dev/null
+    /etc/init.d/https-dns-proxy stop 2>/dev/null
+    /etc/init.d/https-dns-proxy disable 2>/dev/null
+    
+    # 强制杀死残留进程
+    sleep 1
+    killall stubby 2>/dev/null
+    killall https-dns-proxy 2>/dev/null
+    sleep 1
+    if pidof stubby >/dev/null 2>&1; then
+        kill -9 $(pidof stubby) 2>/dev/null
+    fi
+    if pidof https-dns-proxy >/dev/null 2>&1; then
+        kill -9 $(pidof https-dns-proxy) 2>/dev/null
+    fi
+    
+    # 删除DNS加密依赖包文件
+    rm -f /usr/sbin/stubby 2>/dev/null
+    rm -f /usr/bin/stubby 2>/dev/null
+    rm -f /etc/init.d/stubby 2>/dev/null
+    rm -f /etc/config/stubby 2>/dev/null
+    rm -rf /etc/stubby 2>/dev/null
+    rm -f /usr/lib/opkg/info/stubby.* 2>/dev/null
+    rm -f /var/run/stubby.pid 2>/dev/null
+    
+    rm -f /usr/sbin/https-dns-proxy 2>/dev/null
+    rm -f /usr/bin/https-dns-proxy 2>/dev/null
+    rm -f /etc/init.d/https-dns-proxy 2>/dev/null
+    rm -f /etc/config/https-dns-proxy 2>/dev/null
+    rm -f /usr/lib/opkg/info/https-dns-proxy.* 2>/dev/null
+    rm -f /var/run/https-dns-proxy.pid 2>/dev/null
+    
+    rm -f /usr/lib/libgetdns.so* 2>/dev/null
+    rm -f /usr/lib/opkg/info/getdns.* 2>/dev/null
+    rm -f /usr/lib/libcares.so* 2>/dev/null
+    rm -f /usr/lib/opkg/info/libcares.* 2>/dev/null
+    rm -f /usr/lib/libev.so* 2>/dev/null
+    rm -f /usr/lib/opkg/info/libev.* 2>/dev/null
+    
+    # 恢复DNS配置
+    if [ -f "/etc/config/dhcp" ]; then
+        uci -q delete dhcp.@dnsmasq[0].noresolv 2>/dev/null
+        uci -q delete dhcp.@dnsmasq[0].localuse 2>/dev/null
+        server_idx=0
+        while uci -q get dhcp.@dnsmasq[0].server >/dev/null 2>&1; do
+            srv=$(uci -q get dhcp.@dnsmasq[0].server)
+            if [ -n "$srv" ]; then
+                uci -q delete dhcp.@dnsmasq[0].server
+            else
+                break
+            fi
+            server_idx=$((server_idx + 1))
+            if [ $server_idx -gt 10 ]; then
+                break
+            fi
+        done
+        uci -q set dhcp.@dnsmasq[0].resolvfile='/tmp/resolv.conf.d/resolv.conf.auto'
+        uci commit dhcp
+        /etc/init.d/dnsmasq restart 2>/dev/null
+    fi
+    
+    # 清理防火墙钩子
+    rm -f /etc/hotplug.d/firewall/99-traffic-stats 2>/dev/null
+    rm -f /etc/hotplug.d/firewall/98-rate-limit-restore 2>/dev/null
+    sed -i '/traffic-stats restart/d' /etc/firewall.user 2>/dev/null
+    
+    echo "traffic-stats: DNS加密依赖包已清理"
+
     echo "traffic-stats: 服务已停止"
 }
 

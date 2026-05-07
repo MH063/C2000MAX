@@ -1632,6 +1632,17 @@ window.DEBUG_MODE = false;
         color: var(--text-primary);
     }
 
+    .rm-btn-warning {
+        background: transparent;
+        border: 1px solid var(--accent-orange);
+        color: var(--accent-orange);
+    }
+
+    .rm-btn-warning:hover {
+        background: rgba(255, 170, 0, 0.1);
+        color: var(--accent-orange);
+    }
+
     .rm-btn-danger {
         background: transparent;
         border: 1px solid var(--accent-red);
@@ -3445,6 +3456,24 @@ window.DEBUG_MODE = false;
                             </label>
                             <div id="dns-dnssec-status" style="margin-top:8px;padding:8px;background:rgba(0,255,136,0.05);border-radius:4px;font-size:11px;color:var(--text-secondary);display:none;">
                                 <span id="dns-dnssec-status-text">DNSSEC状态: 检测中...</span>
+                            </div>
+                        </div>
+                        <div id="dns-strict-mode-section" style="display:none;margin-bottom:15px;">
+                            <label style="display:flex;align-items:center;gap:10px;cursor:pointer;">
+                                <input type="checkbox" id="dns-strict-mode-enabled" style="width:16px;height:16px;cursor:pointer;">
+                                <span style="font-size:12px;color:var(--text-primary);">强制TLS身份验证（Strict Mode）</span>
+                                <span style="font-size:11px;color:var(--text-secondary);">验证DNS服务器TLS证书，防止中间人攻击</span>
+                            </label>
+                            <div id="dns-strict-mode-status" style="margin-top:8px;padding:8px;background:rgba(255,193,7,0.05);border-radius:4px;font-size:11px;color:var(--text-secondary);display:none;">
+                                <span id="dns-strict-mode-status-text">证书验证状态: 检测中...</span>
+                            </div>
+                            <div style="margin-top:8px;padding:8px;background:rgba(0,212,255,0.05);border-radius:4px;font-size:11px;color:var(--text-secondary);">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:4px;">
+                                    <circle cx="12" cy="12" r="10"/>
+                                    <line x1="12" y1="16" x2="12" y2="12"/>
+                                    <line x1="12" y1="8" x2="12.01" y2="8"/>
+                                </svg>
+                                Strict Mode启用后，系统将验证DNS服务器的TLS证书（如 cloudflare-dns.com、dns.quad9.net），确保连接安全。
                             </div>
                         </div>
                         <div style="display:flex;gap:10px;justify-content:flex-end;">
@@ -8576,6 +8605,7 @@ document.addEventListener('DOMContentLoaded', function() {
 // ========== DNS加密功能 ==========
 var dnsPresetsData = { domestic: [], international: [] };
 var selectedDnsServer = null;
+var dnsServiceStatus = null;
 
 function loadDnsEncryptionStatus() {
     console.log('[DNS加密] 加载状态...');
@@ -8602,8 +8632,14 @@ function loadDnsServerPresets() {
         .then(function(res) {
             if (res.code === 0 && res.data) {
                 dnsPresetsData = res.data;
-                renderDnsServerList('domestic', res.data.domestic);
-                renderDnsServerList('international', res.data.international);
+                
+                // 默认选择 DoH 类型（更稳定）
+                currentDnsEncryptionType = 'doh';
+                
+                // 根据默认类型过滤并渲染服务器列表
+                renderDnsServerListFiltered('doh');
+                
+                console.log('[DNS加密] 已加载预设，默认类型: DoH');
             }
         })
         .catch(function(err) {
@@ -8664,6 +8700,24 @@ function updateDnsEncryptionUI(data) {
                 dnssecStatusText.textContent = '⚠ ' + dnssecMsg;
             }
         }
+        
+        // 显示Strict Mode状态
+        var strictModeCheckbox = document.getElementById('dns-strict-mode-enabled');
+        var strictModeStatusDiv = document.getElementById('dns-strict-mode-status');
+        var strictModeStatusText = document.getElementById('dns-strict-mode-status-text');
+        if (strictModeCheckbox) {
+            strictModeCheckbox.checked = data.strict_mode || false;
+        }
+        if (strictModeStatusDiv && strictModeStatusText) {
+            strictModeStatusDiv.style.display = 'block';
+            if (data.strict_mode) {
+                strictModeStatusText.style.color = 'var(--accent-green)';
+                strictModeStatusText.textContent = '✓ Strict Mode已启用（TLS证书验证生效）';
+            } else {
+                strictModeStatusText.style.color = 'var(--text-secondary)';
+                strictModeStatusText.textContent = '⚠ Strict Mode未启用（TLS证书未验证）';
+            }
+        }
     } else if (data.status === 'error') {
         setDnsEncryptionStatusUI('error', '配置错误');
     } else {
@@ -8708,6 +8762,7 @@ function setDnsEncryptionStatusUI(status, text) {
 
 function updateServiceStatusUI(services) {
     if (!services) return;
+    dnsServiceStatus = services;
     var serviceMap = {
         'service-stubby-status': { data: services.stubby, name: 'stubby' },
         'service-https-dns-proxy-status': { data: services.https_dns_proxy, name: 'https-dns-proxy' },
@@ -8740,26 +8795,118 @@ function updateServiceStatusUI(services) {
 function toggleDnsEncryptionConfig() {
     var checkbox = document.getElementById('dns-encryption-enabled');
     var optionsDiv = document.getElementById('dns-encryption-options');
-    if (checkbox && optionsDiv) {
-        optionsDiv.style.display = checkbox.checked ? 'block' : 'none';
+    if (!checkbox || !optionsDiv) return;
+    
+    if (checkbox.checked) {
+        var missingPackages = checkDnsEncryptionDependencies();
+        if (missingPackages.length > 0) {
+            checkbox.checked = false;
+            var pkgList = missingPackages.join('、');
+            showToast('缺少必要组件: ' + pkgList + '，请先安装', 'error');
+            setTimeout(function() {
+                showBuiltinPackageModal();
+            }, 500);
+            return;
+        }
+        optionsDiv.style.display = 'block';
+    } else {
+        optionsDiv.style.display = 'none';
     }
+}
+
+function checkDnsEncryptionDependencies() {
+    var missing = [];
+    if (!dnsServiceStatus) {
+        return ['stubby', 'https-dns-proxy', 'getdns', 'libcares'];
+    }
+    var hasDotSupport = dnsServiceStatus.stubby && dnsServiceStatus.stubby.installed && 
+                        dnsServiceStatus.getdns;
+    var hasDohSupport = dnsServiceStatus.https_dns_proxy && dnsServiceStatus.https_dns_proxy.installed && 
+                        dnsServiceStatus.libcares;
+    if (!hasDotSupport && !hasDohSupport) {
+        if (!dnsServiceStatus.stubby || !dnsServiceStatus.stubby.installed) {
+            missing.push('stubby');
+        }
+        if (!dnsServiceStatus.getdns) {
+            missing.push('getdns');
+        }
+        if (!dnsServiceStatus.https_dns_proxy || !dnsServiceStatus.https_dns_proxy.installed) {
+            missing.push('https-dns-proxy');
+        }
+        if (!dnsServiceStatus.libcares) {
+            missing.push('libcares');
+        }
+    }
+    return missing;
 }
 
 function onDnsEncryptionTypeChange() {
     var typeSelect = document.getElementById('dns-encryption-type');
     var type = typeSelect ? typeSelect.value : 'none';
+    
+    // 保存当前选择的加密类型到全局变量
+    currentDnsEncryptionType = type;
+    
+    // 根据类型重新渲染服务器列表（过滤不匹配的服务器）
+    renderDnsServerListFiltered(type);
+    
     showDnsServerSelectSection(type);
+}
+
+// 当前选择的加密类型
+var currentDnsEncryptionType = 'none';
+
+// 根据加密类型过滤并渲染服务器列表
+function renderDnsServerListFiltered(type) {
+    if (!type || type === 'none') return;
+    
+    ['domestic', 'international'].forEach(function(category) {
+        var servers = dnsPresetsData[category] || [];
+        // 过滤：只显示与当前加密类型匹配的服务器
+        var filteredServers = servers.filter(function(server) {
+            return server.type === type;
+        });
+        
+        var container = document.getElementById('dns-server-' + category + '-list');
+        if (!container) return;
+        
+        if (filteredServers.length === 0) {
+            container.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-secondary);font-size:13px;">暂无' + (type === 'doh' ? 'DoH' : 'DoT') + '类型的' + (category === 'domestic' ? '国内' : '国际') + 'DNS服务器</div>';
+            return;
+        }
+        
+        var html = '';
+        filteredServers.forEach(function(server) {
+            var dnssecBadge = server.dnssec ? '<span class="dnssec-badge">DNSSEC</span>' : '';
+            html += '<div class="dns-server-item" onclick="selectDnsServer(\'' + category + '\', \'' + server.name + '\', \'' + server.type + '\')" data-name="' + server.name + '" data-type="' + server.type + '">' +
+                '<div class="name">' + server.name + '</div>' +
+                '<div class="type">' + (server.type === 'dot' ? 'DoT' : 'DoH') + '</div>' +
+                '<div class="desc">' + server.description + '</div>' +
+                dnssecBadge +
+                '</div>';
+        });
+        container.innerHTML = html;
+        
+        // 自动选择第一个匹配的服务器
+        if (filteredServers.length > 0 && (!selectedDnsServer || selectedDnsServer.type !== type)) {
+            var defaultServer = filteredServers[0];
+            selectDnsServer(category, defaultServer.name, defaultServer.type);
+        }
+    });
 }
 
 function showDnsServerSelectSection(type) {
     var section = document.getElementById('dns-server-select-section');
     var dnssecSection = document.getElementById('dns-dnssec-section');
+    var strictModeSection = document.getElementById('dns-strict-mode-section');
     if (type && type !== 'none') {
         if (section) section.style.display = 'block';
         if (dnssecSection) dnssecSection.style.display = 'block';
+        if (strictModeSection) strictModeSection.style.display = 'block';
     } else {
         if (section) section.style.display = 'none';
         if (dnssecSection) dnssecSection.style.display = 'none';
+        if (strictModeSection) strictModeSection.style.display = 'none';
     }
 }
 
@@ -8795,9 +8942,18 @@ function selectDnsServer(category, name, type) {
     if (typeSelect) typeSelect.value = type;
     var servers = dnsPresetsData[category] || [];
     for (var i = 0; i < servers.length; i++) {
-        if (servers[i].name === name && servers[i].dnssec) {
-            var dnssecCheckbox = document.getElementById('dns-dnssec-enabled');
-            if (dnssecCheckbox) dnssecCheckbox.checked = true;
+        if (servers[i].name === name) {
+            // 自动设置DNSSEC
+            if (servers[i].dnssec) {
+                var dnssecCheckbox = document.getElementById('dns-dnssec-enabled');
+                if (dnssecCheckbox) dnssecCheckbox.checked = true;
+            }
+            // 自动设置Strict Mode（根据服务器预设）
+            var strictModeCheckbox = document.getElementById('dns-strict-mode-enabled');
+            if (strictModeCheckbox) {
+                strictModeCheckbox.checked = servers[i].strict_mode || false;
+                console.log('[DNS加密] 自动设置Strict Mode:', servers[i].strict_mode, '服务器:', name);
+            }
             break;
         }
     }
@@ -8834,20 +8990,29 @@ function testDnsEncryptionConnection() {
     })
     .then(function(res) { return res.json(); })
     .then(function(res) {
-        console.log('[DNS加密] 测试结果:', res);
+        if (window.DEBUG_MODE) console.log('[DNS加密] 测试结果:', res);
         if (res.code === 0 && res.data && res.data.result) {
             var result = res.data.result;
-            if (result.success) {
-                showToast(result.message + ' (延迟: ' + result.latency + 'ms)', 'success');
+            var detailMsg = '';
+            if (result.details && result.details.length > 0) {
+                detailMsg = '\n📋 ' + result.details.join('；');
+            }
+            // 根据status字段显示不同颜色
+            var status = result.status || 'info';
+            if (status === 'success') {
+                showToast(result.message + detailMsg, 'success', 5000);
+            } else if (status === 'warning') {
+                showToast(result.message + detailMsg, 'warning', 6000);
             } else {
-                showToast(result.message, 'error');
+                // info状态：显示为信息提示（青色），不是错误
+                showToast(result.message + detailMsg, 'info', 6000);
             }
         } else {
-            showToast('测试失败: ' + (res.message || '未知错误'), 'error');
+            showToast('测试失败: ' + (res.message || '未知错误'), 'error', 5000);
         }
     })
     .catch(function(err) {
-        console.error('[DNS加密] 测试请求失败:', err);
+        if (window.DEBUG_MODE) console.error('[DNS加密] 测试请求失败:', err);
         showToast('测试请求失败', 'error');
     });
 }
@@ -8856,11 +9021,13 @@ function saveDnsEncryptionConfig() {
     var enabledCheckbox = document.getElementById('dns-encryption-enabled');
     var typeSelect = document.getElementById('dns-encryption-type');
     var dnssecCheckbox = document.getElementById('dns-dnssec-enabled');
+    var strictModeCheckbox = document.getElementById('dns-strict-mode-enabled');
     var customUrl = document.getElementById('dns-custom-url');
     var customHost = document.getElementById('dns-custom-host');
     var enabled = enabledCheckbox ? enabledCheckbox.checked : false;
     var type = typeSelect ? typeSelect.value : 'none';
     var dnssec = dnssecCheckbox ? dnssecCheckbox.checked : false;
+    var strictMode = strictModeCheckbox ? strictModeCheckbox.checked : false;
     var server = selectedDnsServer ? selectedDnsServer.name : '';
     if (enabled && (!type || type === 'none')) {
         showToast('请选择加密类型', 'error');
@@ -8882,6 +9049,7 @@ function saveDnsEncryptionConfig() {
     formData.append('custom_url', customUrl ? customUrl.value : '');
     formData.append('custom_host', customHost ? customHost.value : '');
     formData.append('dnssec', dnssec ? '1' : '0');
+    formData.append('strict_mode', strictMode ? '1' : '0');
     if (typeof LUCI_TOKEN !== 'undefined' && LUCI_TOKEN) {
         formData.append('token', LUCI_TOKEN);
     }
@@ -8910,11 +9078,13 @@ function resetDnsEncryptionConfig() {
     var enabledCheckbox = document.getElementById('dns-encryption-enabled');
     var typeSelect = document.getElementById('dns-encryption-type');
     var dnssecCheckbox = document.getElementById('dns-dnssec-enabled');
+    var strictModeCheckbox = document.getElementById('dns-strict-mode-enabled');
     var customUrl = document.getElementById('dns-custom-url');
     var customHost = document.getElementById('dns-custom-host');
     if (enabledCheckbox) enabledCheckbox.checked = false;
     if (typeSelect) typeSelect.value = 'none';
     if (dnssecCheckbox) dnssecCheckbox.checked = false;
+    if (strictModeCheckbox) strictModeCheckbox.checked = false;
     if (customUrl) customUrl.value = '';
     if (customHost) customHost.value = '';
     selectedDnsServer = null;
@@ -8982,9 +9152,11 @@ function loadBuiltinPackages() {
                 
                 var statusClass = pkg.installed ? 'installed' : 'not-installed';
                 var statusText = pkg.installed ? '已安装' : '未安装';
-                var btnDisabled = pkg.installed ? 'disabled' : '';
-                var btnText = pkg.installed ? '已安装' : '安装';
-                var btnClass = pkg.installed ? 'rm-btn-secondary' : 'rm-btn-primary';
+                // 已安装的包也允许重新安装（解决升级安装时旧版本未清理的问题）
+                var btnDisabled = '';
+                var btnText = pkg.installed ? '重新安装' : '安装';
+                var btnClass = pkg.installed ? 'rm-btn-warning' : 'rm-btn-primary';
+                var btnTitle = pkg.installed ? '点击可清理旧文件后重新安装' : '';
                 
                 var pkgHtml = '<div style="display:flex;align-items:center;justify-content:space-between;padding:10px;background:var(--bg-secondary);border-radius:6px;margin-bottom:6px;">' +
                     '<div style="flex:1;">' +
@@ -8995,8 +9167,8 @@ function loadBuiltinPackages() {
                             '<span style="font-size:10px;color:var(--text-secondary);margin-left:6px;">' + escapeHtml(pkg.ipk_file) + '</span>' +
                         '</div>' +
                     '</div>' +
-                    '<div style="margin-left:10px;">' +
-                        '<button class="rm-btn ' + btnClass + '" onclick="installBuiltinPackage(\'' + pkg.name + '\')" ' + btnDisabled + ' id="modal-pkg-btn-' + pkg.name + '" style="padding:4px 12px;font-size:11px;">' + btnText + '</button>' +
+                    '<div style="margin-left:10px;display:flex;gap:6px;">' +
+                        '<button class="rm-btn ' + btnClass + '" onclick="installBuiltinPackage(\'' + pkg.name + '\')" ' + btnDisabled + ' id="modal-pkg-btn-' + pkg.name + '" style="padding:4px 12px;font-size:11px;" title="' + btnTitle + '">' + btnText + '</button>' +
                     '</div>' +
                 '</div>';
                 
