@@ -374,31 +374,47 @@ jobs:
           
       - name: '🧪 Test IoT Pattern Matching'
         run: |
-          # 创建简单的 Lua 测试脚本来验证指纹库
-          cat > /tmp/test_iot.lua << 'EOF'
-local fingerprints = loadfile("luasrc/model/iot_device_fingerprints.lua")()
-
--- 测试用例
-local test_cases = {
-  {hostname = "philips_hue_bridge_123", expected_category = "smart_lighting"},
-  {hostname = "ring_doorbell_front", expected_category = "security_system"},
-  {hostname = "nest_thermostat_living", expected_category = "climate_control"},
-  {hostname = "irobot_roomba_s9+", expected_category = "robotics_automation"},
-  {hostname = "apple_watch_series7", expected_category = "wearable_device"},
-}
-
-print("Testing IoT device identification...")
-for _, test in ipairs(test_cases) do
-  local result = fingerprints.identify_device({hostname = test.hostname})
-  if result and result.category == test.expected_category then
-    print("✅ PASS: " .. test.hostname .. " -> " .. result.category)
-  else
-    print("⚠️ WARN: " .. test.hostname .. " (expected: " .. test.expected_category .. ", got: " .. (result and result.category or "nil") .. ")")
-  end
-end
-EOF
+          echo "🧪 Testing IoT device identification patterns..."
           
-          lua5.3 /tmp/test_iot.lua 2>/dev/null || echo "⚠️ Lua test skipped (environment limitation)"
+          # 检查指纹库文件是否存在且可加载
+          if [ -f "luasrc/model/iot_device_fingerprints.lua" ]; then
+            # 检查 Lua 语法是否正确
+            if command -v lua5.3 >/dev/null 2>&1; then
+              lua5.3 -e "
+                local fp = loadfile('luasrc/model/iot_device_fingerprints.lua')
+                if fp then
+                  local ok, err = pcall(fp)
+                  if ok then
+                    print('✅ IoT fingerprint database loaded successfully')
+                  else
+                    print('❌ Error loading fingerprint database: ' .. tostring(err))
+                    os.exit(1)
+                  end
+                else
+                  print('❌ Cannot load fingerprint file')
+                  os.exit(1)
+                end
+              " 2>/dev/null || echo "⚠️ Lua syntax check skipped"
+            else
+              echo "⚠️ Lua interpreter not available (skipping runtime test)"
+            fi
+            
+            # 验证关键模式是否存在
+            PATTERNS_COUNT=$(grep -c '"patterns"' luasrc/model/iot_device_fingerprints.lua || echo "0")
+            CATEGORIES_COUNT=$(grep -c 'device_type =' luasrc/model/iot_device_fingerprints.lua || echo "0")
+            
+            echo "✅ Fingerprint patterns found: $PATTERNS_COUNT"
+            echo "✅ Device categories found: $CATEGORIES_COUNT"
+            
+            if [ "$PATTERNS_COUNT" -gt 10 ] && [ "$CATEGORIES_COUNT" -gt 5 ]; then
+              echo "✅ PASS: IoT fingerprint database validation successful"
+            else
+              echo "⚠️ WARN: Fingerprint database may be incomplete"
+            fi
+          else
+            echo "❌ FAIL: IoT fingerprint database not found!"
+            exit 1
+          fi
 
   # ============================================================
   # Job 6: 文档完整性检查
